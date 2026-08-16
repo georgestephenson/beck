@@ -52,16 +52,29 @@ session server memory exceeds ~50 KB in Phase 1, stop and redesign the session r
 Three familiar objections to log-centric systems, all deserved: DBAs can't see "the database";
 GDPR/right-to-erasure collides with an immutable log; "the log grows forever."
 
-**Mitigation**: read models are ordinary Postgres tables, browsable via pgwire — the outside world
-sees tables, not theory ([`05`](05-tier-lowering.md) §5.3); erasure via **crypto-shredding**
-(per-subject envelope encryption; deleting the key erases the subject across log, snapshots and
-backups) — a worked design in Phase 4, not a FAQ answer. Per [`10`](10-decisions.md) D3 the default
-is `retain=forever` (the ledger is the truth), so log growth is managed by *tiering*, not
-truncation — old segments archive to Parquet on object storage, doubling as the analytical corpus —
-and permanent upcaster chains are kept honest by the genesis-replay CI gate; stores that want
-bounded liability opt down to `retain=<window>` (snapshot-and-compact as "this world's garbage
-collection"). Position the substrate as boring on purpose: "your data is in Postgres; Beck is how
-it got there."
+**Mitigation — and the three objections are not in the same state.** The first is answered and
+built: an outside tool connects over pgwire and sees one table per collection
+([`23`](23-incremental-views-report.md)) — the surface [`101`](101-the-public-surface.md) §101.2
+names `@public(sql)` — though not as this section originally wrote it, because a
+read model is the arrangement the view engine already maintains rather than a second copy in
+Postgres ([`10`](10-decisions.md) D26) — so a DBA sees tables, and there is no projection that can
+lag behind the page. The second is designed: erasure by **structural shredding** — per-subject
+encrypted payloads under a permanently readable envelope skeleton, with folds applying typed
+tombstones — D4 as [`14`](14-review-findings.md) F1 and [`10`](10-decisions.md) D14 refined it,
+because total shredding and genesis replay cannot both hold. A worked design in Phase 4, not a FAQ
+answer.
+
+**The third is the one still open, and it was open in the plan as well as in the code.** Per
+[`10`](10-decisions.md) D3 the default is `retain=forever` (the ledger is the truth), so log growth
+is to be managed by *tiering* rather than truncation — old segments archived to Parquet on object
+storage, doubling as the analytical corpus for DataFusion ([`05`](05-tier-lowering.md) §5.3) — with
+stores that want bounded liability opting down to `retain=<window>` (snapshot-and-compact as "this
+world's garbage collection"). **None of that is built**: no archive, no tiering, and no retention,
+since `durable` takes one argument ([`03`](03-type-and-effect-system.md) §3.7). What *is* built is
+the snapshot path, gated against the fold it optimises
+(`the_snapshot_path_agrees_with_a_fold_from_genesis`, `beck-cli/tests/replay.rs`), so the log is
+replayable at any length — merely never shorter. [`08`](08-roadmap.md) §8.5.4 gives it a position.
+Position the substrate as boring on purpose: "your data is in Postgres; Beck is how it got there."
 
 ### R7 — The merge ceiling
 
@@ -186,3 +199,13 @@ awaiting George: F1 (erasure vs genesis-replay semantics), F3 (abuse-quota defau
 7. Backpressure surfacing: v1 hides it in the runtime contract; when a client can't keep up with
    its patch stream, what does the *language* say (drop-to-latest for signals is sound — is it
    ever wrong)?
+8. A **visualization vocabulary**, which nothing in `docs/` designs. It is worth asking because the
+   pieces around it are built and point at it: read models make an application's own state
+   queryable ([`23`](23-incremental-views-report.md)), a dashboard is already `page : Signal[Html]`
+   over live views ([`19`](19-phase-1-report.md) §19.8), and [`05`](05-tier-lowering.md) §5.5's
+   discipline of keeping `ui:` free of HTML-isms is exactly what would let a chart be a *value*
+   rather than a canvas. So the interactive half of a BI tool is nearly a consequence of the design,
+   and the marks are missing. The open question is which of three things they are: a library over
+   the existing vocabulary, an addition to the `ui:` core, or — once the macro interpreter lands
+   ([`08`](08-roadmap.md) §8.5.4) — the typed literal macro [`02`](02-syntax.md) §2.5 already
+   forecasts. Not blocking, and not scheduled: no phase claims a chart.

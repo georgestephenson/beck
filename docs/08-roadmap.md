@@ -179,6 +179,12 @@ read it.**
   per-element function that captured the accumulator and is reapplied on every event. The order is
   §99.9's and its **first item is a gate that goes red today**, not an operator. This is what §8.4's
   Phase 5 TPC-H row has always been conditioned on, and it had never been assigned.
+- **The log's own lifecycle, and the substrate that reads it** ([`10`](10-decisions.md) D3's
+  obligations, [`09`](09-risks-and-open-questions.md) R6): segment archival to Parquet on object
+  storage, bounded retention for the stores that opt down from `retain=forever`, and **DataFusion**
+  over the archive ([`05`](05-tier-lowering.md) §5.3's analytical row,
+  [`07`](07-dependencies.md) §7.4's pinned choice). Committed in five documents and scheduled in
+  none until now; §8.5.4 carries the order and the reason it is a gate rather than a preference.
 - **The decision record** ([`100`](100-placement-at-runtime.md) §100.5): a queryable account of what
   the compiler and runtime *chose* and why, projected as a read model so `psql` and any BI tool
   already read it. A facility rather than a feature of one caller — fusion, the plan solver
@@ -342,7 +348,7 @@ body calls.
 | **3** | The **expressiveness** work, which needs nothing that is not built: SICP stage 1 and the **Felleisen macro-expressibility table**. Also: the compile-speed budgets §13.7 lists, on the rustc-perf model | Chapter 1's line-count comparison against the pinned Scheme baseline. **Done** ([`63`](63-expressiveness-report.md), [`64`](64-compile-speed-report.md)) |
 | **3** (with the standard library and the native backends) | **Are We Fast Yet** and **CLBG** harnesses | The three-way differential ([`13`](13-testing.md) §13.1) and the first honest compute number. **Both arrived** ([`53`](53-are-we-fast-yet-report.md), [`46`](46-standard-library-report.md) §46.13, [`93`](93-the-native-backends-report.md) §93.5). What is still not published is a comparison against **another language** on those suites; [`compiler/xlang/`](../compiler/xlang/README.md) is the one place a Beck number sits beside another language's |
 | **4** | **TechEmpower** (the five tests that map without argument; the two that assume update-in-place stated as run against a read model), **js-framework-benchmark** (three columns — Mode A at a stated RTT, Mode A at RTT 0, Mode B — never averaged), **YCSB** against the log, **Lighthouse/Core Web Vitals** as gates on the example apps. SICP stages 2–3. **The DDIA matrix** ([`15`](15-scale-and-distribution.md) §15.6) — beside the Jepsen and simulation work that discharges its rows, never before it, because a matrix written ahead of its tests is the table of intentions it exists not to be | The whole-system numbers, unflattering, with the methodology notes of §25.2 attached to each. This is [`01`](01-vision-and-premise.md) §1.5 item 3 measured by somebody else's harness rather than ours |
-| **5** | **TPC-H/ClickBench** on read models once §5.3's engine exists — which is **Phase 4's data-tier bullet** ([`99`](99-the-data-tier-means-of-combination.md)), named here because it had never been assigned to a phase and TPC-H is 22 join-heavy queries: a scheduled measurement whose prerequisite nothing builds is the "table of intentions" this row's own DDIA entry warns against; the incremental-view workload §25.2 records as having *no* standard, which we would be defining rather than borrowing. SICP stage 4 | The Phase 5 suite above, and the expressiveness result — including the rows §25.5 forecasts Beck will lose (§2.4–2.5 generic operations, chapter 4's evaluator), which are published or the exercise was not run honestly |
+| **5** | **TPC-H/ClickBench** on read models once §5.3's engines exist — **two of them, where this row long named one**. TPC-H's 22 join-heavy queries wait on the view algebra's means of combination (**Phase 4's data-tier bullet**, [`99`](99-the-data-tier-means-of-combination.md)); **ClickBench scans a fixed dataset no fold holds in memory**, so it waits instead on the archive substrate §5.3's analytical row names — Phase 4's log-lifecycle bullet, and §8.5.4's G item. Each was assigned to a phase only after being named here, which is the point: a scheduled measurement whose prerequisite nothing builds is the "table of intentions" this row's own DDIA entry warns against; the incremental-view workload §25.2 records as having *no* standard, which we would be defining rather than borrowing. SICP stage 4 | The Phase 5 suite above, and the expressiveness result — including the rows §25.5 forecasts Beck will lose (§2.4–2.5 generic operations, chapter 4's evaluator), which are published or the exercise was not run honestly |
 
 Two things this table deliberately does not do. It does not put **TPC-C** anywhere: it assumes
 update-in-place OLTP, which is not Beck's data model, and entering it would be a claim we do not
@@ -475,6 +481,22 @@ rows.
   never after — [`12`](12-standards-and-conformance.md) §12.9 stated this as present for as long
   as the document existed, and no `.tla` file has ever existed. G-class means it now sits directly
   in front of the Phase 4 operator work.
+- **The log's own lifecycle, and the substrate that reads it** (G, and **last** because what it
+  gates is): segment archival to Parquet on object storage, bounded retention for stores that opt
+  down from `retain=forever`, and DataFusion over the archive. Five documents commit to this — D3's
+  obligations ([`10`](10-decisions.md)), R6's mitigation ([`09`](09-risks-and-open-questions.md)),
+  [`05`](05-tier-lowering.md) §5.3's analytical row, [`07`](07-dependencies.md) §7.4's pinned
+  dependency choice, and [`12`](12-standards-and-conformance.md)'s chartered Arrow/Parquet row — and
+  **not one of them gave it a position in an order**, which is the failure this section opens by
+  describing. Nothing is built: there is no `datafusion`, `parquet` or `arrow` dependency in the
+  workspace, `durable` takes one argument so neither `retain=` nor `snapshot=` parses
+  ([`03`](03-type-and-effect-system.md) §3.7), and the `compact` the engine does have is the
+  arrangement trace's rather than the log's ([`23`](23-incremental-views-report.md) §23.11). **G
+  rather than S** because §8.4 already schedules ClickBench against read models for Phase 5, and
+  ClickBench scans a fixed dataset that no `durable` fold holds in memory: without the archive that
+  row is unrunnable rather than merely unflattering. The **retention** half is separable and S — a
+  language surface and a store policy, with no benchmark waiting on it — and it is the half D3 makes
+  optional, since `retain=forever` is the default and tiering is what keeps that affordable.
 
 Behind those, the Phase 4 gates arranged before Phase 4 rather than during it: **DST proper** on the
 seams §8.5.2 names, then the TLA+ gate above, the operator, the replay tooling and the choreography.

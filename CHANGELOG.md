@@ -12,6 +12,35 @@ Newest first.
 
 ## Unreleased
 
+### The log's lifecycle gets a position in the order
+
+- **Segment archival, retention and the analytical substrate are scheduled** (`docs/08` Phase 4
+  and §8.5.4, class **G**). Five documents commit to tiering the log to Parquet on object storage
+  and running DataFusion over the archive — D3's obligations (`docs/10`), R6's mitigation
+  (`docs/09`), `docs/05` §5.3's analytical row, `docs/07` §7.4's pinned dependency choice, and
+  `docs/12`'s chartered Arrow/Parquet row — and none of them gave it a position in an order, which
+  is the exact failure §8.5 opens by describing. Nothing is built: no `datafusion`, `parquet` or
+  `arrow` dependency in the workspace, and the `compact` the engine does have is the arrangement
+  trace's rather than the log's (`docs/23` §23.11).
+- **§8.4's Phase 5 benchmark row named one prerequisite and depends on two.** `docs/05` §5.3
+  contains two engines; the row conditioned TPC-H *and* ClickBench on the incremental one
+  (`docs/99`). ClickBench scans a fixed dataset no `durable` fold holds in memory, so it waits on
+  the archive instead — which makes the substrate a gate in front of an already-scheduled
+  measurement rather than a preference. Corrected in `docs/08` §8.4 and `docs/25`'s read-model row.
+- **`durable(retain=90.days, snapshot=hourly)` does not exist**, and `docs/03` §3.7 described it in
+  the present tense. `durable : Signal[A] -> Signal[A]` takes one argument and neither keyword
+  parses; snapshot cadence is `AppConfig::snapshot_every` plus a derived `SnapshotSchedule` node,
+  and there is no retention at all. Corrected in place.
+- **`docs/09` R6 still said read models are ordinary Postgres tables**, which D26 reversed: a read
+  model is the arrangement the view engine maintains, projected as relations, so nothing is written
+  on the append path and no projection can lag. The three objections R6 answers are now separated by
+  state — built, designed, and open — with the erasure clause naming structural shredding (F1/D14's
+  refinement of D4) rather than the crypto-shredding it superseded.
+- **A visualization vocabulary is recorded as an open question** (`docs/09` §9.6 item 8), not as a
+  plan. Read models plus `page : Signal[Html]` make the interactive half of a BI surface nearly a
+  consequence of the design, and nothing in `docs/` designs the marks; the question is whether they
+  are a library, a `ui:` addition, or §2.5's typed literal macro once the macro interpreter lands.
+
 ### The public surface (design)
 
 - **[`docs/101`](docs/101-the-public-surface.md) and D28**: the boundary between a Beck backend and
