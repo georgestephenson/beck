@@ -207,6 +207,7 @@ dependencies = [
  "beck-rt",
  "beck-syntax",
  "beck-wasm",
+ "beck-wasmgen",
  "blake3",
  "clap",
  "futures-util",
@@ -404,6 +405,15 @@ dependencies = [
  "beck-eval",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "beck-wasmgen"
+version = "0.3.0"
+dependencies = [
+ "beck-core",
+ "beck-diag",
+ "beck-llvm",
 ]
 
 [[package]]

@@ -255,10 +255,14 @@ enum Cmd {
     /// stays with the evaluator, and this prints which went which way.
     ///
     /// `--backend llvm` (the default) needs `clang` on the path, or `BECK_CLANG` pointing at one.
-    /// `--backend cranelift` needs only a linker, because Cranelift is a crate.
+    /// `--backend cranelift` needs only a linker, because Cranelift is a crate. `--backend wasm`
+    /// needs nothing at all and produces nothing this command can run: a WebAssembly module is
+    /// loaded by whoever is going to call it, which for Mode B is a browser, so it writes the
+    /// module and its listing and stops.
     Native {
         file: PathBuf,
-        /// Which code generator: `llvm` for release code, `cranelift` for a fast build (§7.3).
+        /// Which code generator: `llvm` for release code, `cranelift` for a fast build (§7.3),
+        /// `wasm` for the tier a person is sitting in front of (§5.1).
         #[arg(long, default_value = "llvm")]
         backend: String,
         /// Keep the generated IR and the executable here instead of in a temporary directory.
@@ -1250,6 +1254,38 @@ fn native(
     let placed = placed.ok_or_else(|| anyhow::anyhow!("{} does not compile", file.display()))?;
     let program = placed.program;
 
+    // The WebAssembly emitter answers before the two that produce an executable, because it does
+    // not produce one: there is no runtime in `beck` that could run a module, and the honest thing
+    // is to write the artefact and say where it went rather than to invent a host for it here.
+    if backend == "wasm" {
+        let module = beck_wasmgen::module(&program);
+        println!(
+            "wasm: {} definitions compiled, {} refused",
+            module.functions.len(),
+            module.refusals.len()
+        );
+        for r in &module.refusals {
+            println!("  refused {}: {}", r.name, r.reason);
+        }
+        if call.is_some() {
+            bail!(
+                "`--call` needs something that runs the artefact, and a WebAssembly module is \
+                 loaded by whoever is going to call it — a browser, for Mode B. Use `--out` and \
+                 load the module there"
+            );
+        }
+        let Some(dir) = out else {
+            return Ok(());
+        };
+        std::fs::create_dir_all(dir)?;
+        let wasm = dir.join("module.wasm");
+        let wat = dir.join("module.wat");
+        std::fs::write(&wasm, &module.wasm)?;
+        std::fs::write(&wat, &module.text)?;
+        println!("\n{}\n{}", wasm.display(), wat.display());
+        return Ok(());
+    }
+
     // One command, two code generators, and the report says which produced the artefact. The two
     // are held to answering the same thing by `cranelift.rs`, so choosing between them is a choice
     // about *build* time rather than about what the program means.
@@ -1278,7 +1314,7 @@ fn native(
                     .map_err(|e| anyhow::anyhow!(e))?,
             )
         }
-        other => bail!("`{other}` is not a code generator: `llvm` or `cranelift`"),
+        other => bail!("`{other}` is not a code generator: `llvm`, `cranelift` or `wasm`"),
     };
     print!("{}", compiled.report());
     if out.is_some() {

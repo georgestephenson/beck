@@ -1134,12 +1134,14 @@ upcalls included, so a fold blocked on a peer blocks a view that wants the same 
 the fold from a sequencer task and a view from a connection task, so this is a real constraint the day
 anything but a benchmark uses this backend, and it is the first thing a second version changes.
 
-**Mode B's codegen**, which is *not* a remainder of this work. Cranelift compiles Cranelift IR to machine
-code, which is the opposite direction from the WebAssembly a browser needs — Wasmtime uses Cranelift to
-compile wasm, not to produce it. A Mode B code generator is a **third** emitter against a wasm target
-([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)), and
-[`94`](94-the-client-report.md) §94.12's measurement says what it would buy: a code generator divides the
-constant and leaves the growth.
+**Mode B's codegen**, which is *not* a remainder of this work, and whose scalar half is now
+[`103`](103-the-wasm-emitter-report.md). Cranelift compiles Cranelift IR to machine code, which is the
+opposite direction from the WebAssembly a browser needs — Wasmtime uses Cranelift to compile wasm, not to
+produce it — so it is a **third** emitter against a wasm target, and it is written. What it shares with
+this chapter is the monomorphiser, the trap codes, the layout module and these fixtures; what it does not
+share is the heap, which it does not lay out, so it compiles **0 of the corpus's 195 definitions**.
+[`94`](94-the-client-report.md) §94.12's measurement still says what a finished one would buy: a code
+generator divides the constant and leaves the growth.
 
 **`beck dev`**, which is what a fast code generator is *for* — there is no watch loop, no hot reload and no
 incremental recompile, so §93.5's build-time number is a time nothing is yet waiting on. No `--opt-level`
