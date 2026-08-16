@@ -24,23 +24,30 @@
 //! Resolution itself lives in `beck-types`: a binding is a candidate for a reference exactly when
 //! `binding.scopes ⊆ reference.scopes`, and the most specific candidate wins.
 //!
-//! # What Phase 1 supports
+//! # What a macro body may do
 //!
-//! Template macros: a body of `let`s and a final `return quote: …` with `$x` unquotes and `$*xs`
-//! splices, expanded to a fixpoint. Macro bodies that need arbitrary compile-time *computation* —
-//! §2.4's `derive`, which builds impls by iterating over a model's fields — are served here by
-//! compiler-provided macros (`ui`) rather than by a general Beck interpreter running at compile
-//! time. That interpreter is Phase 2 work; the hygiene machinery it will run on is not.
+//! Anything a pure Beck function may do. [`interp`] is the compile-time interpreter §2.4 calls for
+//! — bindings, `if`, `for`, `while`, lambdas, calls to the module's own `def`s and to the pure
+//! part of the prelude — in a **capability-restricted** environment: there is no name for a file,
+//! a socket, a clock or a process, and the prelude's effectful primitives are refused by name so
+//! that reaching for one is a diagnostic rather than a spelling mistake.
+//!
+//! `quote:` is the form whose value is *syntax*, and `$e` inside one is an ordinary expression
+//! whose value is reflected back into the template — so `$x` where `x` is a parameter is the
+//! caller's code, and `$(n * 2)` is a literal. That is the whole difference from the template
+//! expander this used to be: a `let` in a macro body now *computes* rather than substituting.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use beck_diag::depth::Nesting;
 use beck_diag::{Diagnostic, Diagnostics, Span};
-use beck_syntax::{sym, Head, Lit, Node, Scope, Symbol};
+use beck_syntax::{sym, Lit, Node, Scope, Symbol};
 
+pub mod interp;
 mod ui;
 
+pub use interp::{Val, BUILTINS, MAX_STEPS, RESTRICTED};
 pub use ui::expand_ui;
 
 /// How deep a macro may expand before the expander decides it is not going to terminate.
@@ -89,7 +96,13 @@ struct MacroDef {
 
 pub struct Expander<'a> {
     macros: HashMap<Arc<str>, MacroDef>,
+    /// The module's own `def`s, callable from a macro body (§2.4's "reads of the declared module
+    /// graph").
+    defs: HashMap<Arc<str>, interp::FnDef>,
     next_scope: u32,
+    /// What is left of [`interp::MAX_STEPS`] for the whole module, and whether it ran out.
+    steps: u64,
+    steps_spent: bool,
     /// What is left of [`MAX_EXPANSION`], in nodes, for the whole module.
     fuel: u64,
     /// Whether the budget ran out, so the diagnostic is reported once rather than at every call
@@ -103,9 +116,21 @@ pub struct Expander<'a> {
 
 /// Expand every macro in a module to a fixpoint.
 pub fn expand_module(module: &Node, diags: &mut Diagnostics) -> Node {
+    expand_module_measured(module, diags).0
+}
+
+/// Expand a module, and say how much of the interpreter's step budget is left.
+///
+/// The second half is what makes [`interp::MAX_STEPS`]'s doc comment a measurement rather than an
+/// assertion: `macro_interp.rs` expands the most expensive macro body here and prints what it
+/// cost. Nothing in the compiler reads it.
+pub fn expand_module_measured(module: &Node, diags: &mut Diagnostics) -> (Node, u64) {
     let mut ex = Expander {
         macros: HashMap::new(),
+        defs: HashMap::new(),
         next_scope: 1,
+        steps: interp::MAX_STEPS,
+        steps_spent: false,
         fuel: MAX_EXPANSION,
         spent: false,
         nesting: Nesting::new(),
@@ -124,21 +149,57 @@ pub fn expand_module(module: &Node, diags: &mut Diagnostics) -> Node {
         if item.is_form(sym::MACRO) {
             continue;
         }
-        items.push(ex.expand(item, 0));
+        let expanded = ex.expand(item, 0);
+        // `splice([…])` at the top of a module is several items where one was written — §2.4's
+        // `derive` returns the definition it decorated *and* the impls it generated.
+        if expanded.is_form(sym::DO) {
+            items.extend(expanded.args.iter().cloned());
+            continue;
+        }
+        items.push(expanded);
     }
-    Node::form_sym(
-        module
-            .head_sym()
-            .cloned()
-            .unwrap_or_else(|| Symbol::new(sym::MODULE)),
-        items,
-        module.span(),
+    let steps_left = ex.steps;
+    (
+        Node::form_sym(
+            module
+                .head_sym()
+                .cloned()
+                .unwrap_or_else(|| Symbol::new(sym::MODULE)),
+            items,
+            module.span(),
+        ),
+        steps_left,
     )
 }
 
 impl<'a> Expander<'a> {
     fn collect_macros(&mut self, module: &Node) {
+        // A module with no macros in it pays nothing for the interpreter: collecting the `def`s
+        // copies a body each, which is proportional to the whole module, and the overwhelming
+        // majority of modules have nothing that could ever call one.
+        let has_macros = module.args.iter().any(|i| i.is_form(sym::MACRO));
+
         for item in &module.args {
+            // A `def` is callable from a macro body, as the definition was *written*: expansion
+            // has not run yet, so a `def` whose body calls a macro is not compile-time callable.
+            // The alternative would be an expansion order that depends on who calls what.
+            if has_macros
+                && item.is_form(sym::DEF)
+                && item.args.len() >= 6
+                && item.args[2].is_form(sym::PARAMS)
+            {
+                if let (Some(name), Some(body)) = (item.args[0].as_var(), item.args.last()) {
+                    self.defs.insert(
+                        name.name.clone(),
+                        interp::FnDef {
+                            params: interp::param_names(&item.args[2]),
+                            body: body.clone(),
+                            span: item.span(),
+                        },
+                    );
+                }
+                continue;
+            }
             if !item.is_form(sym::MACRO) || item.args.len() < 3 {
                 continue;
             }
@@ -303,13 +364,13 @@ impl<'a> Expander<'a> {
             positional.push(unquote_arg(a).add_scope(scope));
         }
 
-        let mut env: HashMap<Arc<str>, Node> = HashMap::new();
+        let mut env: HashMap<Arc<str>, Val> = HashMap::new();
         let mut pos = positional.into_iter();
         for p in &def.params {
             let bound = named.remove(p).or_else(|| pos.next());
             match bound {
                 Some(v) => {
-                    env.insert(p.clone(), v);
+                    env.insert(p.clone(), Val::Syntax(v));
                 }
                 None => {
                     self.diags.push(
@@ -336,8 +397,7 @@ impl<'a> Expander<'a> {
             return None;
         }
 
-        let template = self.macro_result(def, &env)?;
-        let out = self.instantiate(&template, &env);
+        let out = self.macro_result(def, env)?;
         // The flip: call-site identifiers lose the scope they gained, template identifiers gain it.
         Some(
             out.flip_scope(scope)
@@ -345,119 +405,18 @@ impl<'a> Expander<'a> {
         )
     }
 
-    /// Run the macro body far enough to reach the `quote` it returns.
+    /// Run the macro body, and take the syntax it returned.
     ///
-    /// Phase 1's macro bodies are `let`-then-`return`; a `let` binds a name to a template fragment,
-    /// which covers the shapes §2.4 shows and is honest about the rest.
-    fn macro_result(&mut self, def: &MacroDef, env: &HashMap<Arc<str>, Node>) -> Option<Node> {
-        let mut local = env.clone();
-        for stmt in &def.body.args {
-            if stmt.is_form(sym::LET) && stmt.args.len() == 2 {
-                if let Some(name) = stmt.args[0].as_var() {
-                    let value = self.instantiate(&stmt.args[1], &local);
-                    local.insert(name.name.clone(), value);
-                    continue;
-                }
-            }
-            if stmt.is_form(sym::RETURN) {
-                let Some(returned) = stmt.args.first() else {
-                    self.diags.push(Diagnostic::error(
-                        "B0204",
-                        format!("macro `{}` returns nothing", def.name),
-                        stmt.span(),
-                    ));
-                    return None;
-                };
-                // `return quote: …` yields the template; `return $x` yields a fragment directly.
-                if returned.is_form(sym::QUOTE) && returned.args.len() == 1 {
-                    let mut body = returned.args[0].clone();
-                    // A one-statement `quote:` block is that statement, not a block.
-                    if body.is_form(sym::DO) && body.args.len() == 1 {
-                        body = body.args[0].clone();
-                    }
-                    return Some(body);
-                }
-                return Some(returned.clone());
-            }
-            self.diags.push(
-                Diagnostic::error(
-                    "B0205",
-                    format!("unsupported statement in the body of macro `{}`", def.name),
-                    stmt.span(),
-                )
-                .with_note(
-                    "Phase 1 macro bodies are `let` bindings and a final `return quote: …`; \
-                     arbitrary compile-time computation arrives with the macro interpreter",
-                ),
-            );
-            return None;
-        }
-        self.diags.push(Diagnostic::error(
-            "B0204",
-            format!("macro `{}` returns nothing", def.name),
-            def.span,
-        ));
-        None
-    }
-
-    /// Substitute `$x` and `$*xs` inside a template.
-    fn instantiate(&mut self, template: &Node, env: &HashMap<Arc<str>, Node>) -> Node {
-        if template.is_form(sym::UNQUOTE) && template.args.len() == 1 {
-            let inner = &template.args[0];
-            if let Some(v) = inner.as_var() {
-                if let Some(bound) = env.get(&v.name) {
-                    return bound.clone();
-                }
-                self.diags.push(
-                    Diagnostic::error(
-                        "B0206",
-                        format!("`${v}` is not a macro parameter"),
-                        template.span(),
-                    )
-                    .with_primary_label("unquoting an unbound name"),
-                );
-                return template.clone();
-            }
-            return self.instantiate(inner, env);
-        }
-
-        let mut args = Vec::with_capacity(template.args.len());
-        for a in &template.args {
-            // `$*xs` splices a list's elements into the surrounding form. Like `$xs`, the operand
-            // is a *macro parameter*, so it is looked up rather than instantiated.
-            if a.is_form(sym::SPLICE) && a.args.len() == 1 {
-                let spliced = match a.args[0].as_var().and_then(|v| env.get(&v.name)) {
-                    Some(bound) => bound.clone(),
-                    None => self.instantiate(&a.args[0], env),
-                };
-                if spliced.is_form(sym::LIST) || spliced.is_form(sym::DO) {
-                    args.extend(spliced.args.iter().cloned());
-                } else {
-                    args.push(spliced);
-                }
-                continue;
-            }
-            args.push(self.instantiate(a, env));
-        }
-
-        // A quoted `$f(...)` whose head is itself unquoted.
-        let head = match &template.head {
-            Head::Sym(s) => match env.get(&s.name) {
-                Some(bound) if template.applied && !bound.applied => match &bound.head {
-                    Head::Sym(bs) => Head::Sym(bs.clone()),
-                    _ => Head::Sym(s.clone()),
-                },
-                _ => Head::Sym(s.clone()),
-            },
-            Head::Lit(l) => Head::Lit(l.clone()),
-        };
-
-        Node {
-            head,
-            args,
-            applied: template.applied,
-            meta: template.meta.clone(),
-        }
+    /// The body is ordinary Beck ([`interp`]); the module's step budget is threaded through here
+    /// rather than owned by the interpreter, because a module compiles once and its macros share
+    /// what that compile is allowed to cost.
+    fn macro_result(&mut self, def: &MacroDef, env: HashMap<Arc<str>, Val>) -> Option<Node> {
+        let mut interp =
+            interp::Interp::new(&self.defs, &mut *self.diags, self.steps, self.steps_spent);
+        let out = interp.run_body(&def.name, &def.body, env, def.span);
+        self.steps = interp.steps;
+        self.steps_spent = interp.exhausted;
+        out
     }
 }
 
@@ -597,6 +556,24 @@ mod tests {
              \x20   return loopy(1)\n",
         );
         assert!(d.iter().any(|x| x.code == "B0201"));
+    }
+
+    #[test]
+    fn a_let_in_a_macro_body_computes_rather_than_substituting() {
+        // The one semantic change the interpreter made to a body that already worked: a `let`
+        // whose right-hand side is not a `quote` used to be instantiated as a *template*, so
+        // `n = 2 + 3` bound the syntax `2 + 3`. It now binds `5`, and `$n` is the literal.
+        let (out, d, map) = expand(
+            "macro five(x):\n\
+             \x20   n = 2 + 3\n\
+             \x20   return quote:\n\
+             \x20       $n + $x\n\
+             \n\
+             def f() -> Int:\n\
+             \x20   return five(1)\n",
+        );
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        assert!(crate::ui::tests_strip(&out).contains("(+ 5 1)"), "{out}");
     }
 
     #[test]

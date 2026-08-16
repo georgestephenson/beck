@@ -324,6 +324,7 @@ name = "beck-macro"
 version = "0.3.0"
 dependencies = [
  "beck-diag",
+ "beck-prim",
  "beck-syntax",
 ]
 
