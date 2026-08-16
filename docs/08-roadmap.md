@@ -561,14 +561,18 @@ rows.
      destination otherwise. Gated by `browser.rs::a_patched_in_chart_is_still_a_chart`, which
      asserts the **laid-out width** of a patched `rect` in two positions — a fix that reads only the
      tag fails the second ([`104`](104-styling-and-the-component-library.md) §104.9). Lane B.
-  2. **A vocabulary for `ui:`** (G): known events, known attributes, a diagnostic with a suggestion
-     and an escape hatch for a genuine custom attribute. **G** because §12.4's three accessibility
-     checks — alt text, accessible name, input label — are already scheduled in the standards
-     ledger below over the same typed tree, and a tree that accepts `on_keydown` and `cls=` in
-     silence cannot honestly carry an accessibility claim; the two are one artefact and should be
-     one change. `DEFECTS.md::ui-vocabulary`. Lane C, with a `beck-macro` half — and the vocabulary
-     is a **table**, not expander code, because typed macros above retire the compiler-provided
-     `ui:` special case (D22) and a user-written `ui:` has to be held to the same names.
+  2. **A vocabulary for `ui:`** (G). **Done.** `beck_macro::vocabulary` is the table — five events,
+     the HTML and SVG attribute names, and the elements §12.4's checks read — with `B0217` refusing
+     an event the client does not listen for, `B0218` an attribute HTML does not have, and
+     `data_…`/`aria_…` admitted by prefix, because the escape hatch for an attribute that is
+     genuinely yours is HTML's own. It was **G** because §12.4's three accessibility checks are
+     scheduled over the same typed tree and a tree that accepted `on_keydown` and `cls=` in silence
+     could not honestly carry an accessibility claim; those three now read `ELEMENTS` rather than
+     bringing a table. The events are held to the client's own listener table by a test that reads
+     `beck-patch.js`, in both directions
+     ([`104`](104-styling-and-the-component-library.md) §104.8). A **table** rather than expander
+     code, because typed macros above retire the compiler-provided `ui:` special case (D22) and a
+     user-written `ui:` has to be held to the same names. Lane C, with a `beck-macro` half.
   3. **`class=` takes a list, and `Class` is a type** (F): the prerequisite for everything else in
      the styling half, and what makes the editor's existing completion, hover and rename answer for
      utilities without an extension ([`65`](65-the-editor-report.md)). Lane A.

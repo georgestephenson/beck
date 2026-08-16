@@ -1,0 +1,12 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(&edited(\"class=done_class(t)\", \"cls=done_class(t)\"))"
+---
+error[B0218]: `cls` is not an HTML attribute
+  --> t.beck:112:34
+    |
+112 |                     li(key=t.id, cls=done_class(t)):
+    |                                  ^^^^^^^^^^^^^^^^^ `li` would carry this to the browser, which ignores it
+    |
+  = note: an attribute of your own is spelled `data_…`, which is HTML's own extension point and reaches the page as `data-…`
+  = help: did you mean `class`?

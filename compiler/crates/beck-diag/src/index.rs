@@ -365,6 +365,24 @@ pub const INDEX: &[CodeEntry] = &[
          for `adr/0012`'s reason: a diagnostic that depends on the build profile is not a \
          diagnostic.",
     ),
+    e(
+        "B0217",
+        Stage::Macros,
+        "that is not an event the client listens for",
+        "A handler is a declarative attribute carrying a command, and the client interprets a \
+         closed set of them — `on_click`, `on_enter`, `on_submit`, `on_input`, `on_change`. Any \
+         other name reaches the browser as an attribute wired to nothing, which is why this is a \
+         refusal rather than a lint: there is no such thing as a custom event here.",
+    ),
+    e(
+        "B0218",
+        Stage::Macros,
+        "that is not an HTML attribute",
+        "A `ui:` element carries its keyword arguments to the page as attributes, and a name HTML \
+         does not have is one the browser ignores — a page that quietly does less than it says. An \
+         attribute of your own is spelled `data_…`, which is HTML's own extension point; `aria_…` \
+         is admitted the same way.",
+    ),
     // ------------------------------------------------------- B03xx: names, types and effects
     e(
         "B0300",

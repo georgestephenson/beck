@@ -31,6 +31,7 @@ use beck_diag::{Diagnostic, Diagnostics, Span};
 use beck_syntax::{sym, Node};
 
 use crate::str_lit;
+use crate::vocabulary;
 
 /// Expand `(ui (kw do (quote (do …))))` into an `Html`-valued expression.
 pub fn expand_ui(call: &Node, diags: &mut Diagnostics) -> Node {
@@ -99,7 +100,7 @@ fn node_expr(n: &Node, diags: &mut Diagnostics) -> Node {
                 if a.args[0].as_var().map(|s| s.as_str()) == Some("do") {
                     continue;
                 }
-                attrs.push(attr_expr(a));
+                attrs.push(attr_expr(a, &tag, diags));
             }
         }
         let children = match block_of(n) {
@@ -158,7 +159,13 @@ fn element_tag(n: &Node) -> Option<String> {
     Some(head.to_string())
 }
 
-fn attr_expr(kw: &Node) -> Node {
+/// One `name=value` on an element, and the two places a name is held to a vocabulary.
+///
+/// The check is here rather than beside the table because what it needs is a *span*: a name that
+/// does not exist is a diagnostic pointing at where somebody wrote it, and everything the reader
+/// needs — what it might have meant, and what the alternative is — is in the message rather than
+/// in a rule they have to go and read. [`crate::vocabulary`] is where the names live and why.
+fn attr_expr(kw: &Node, tag: &str, diags: &mut Diagnostics) -> Node {
     let span = kw.span();
     let name = kw.args[0]
         .as_var()
@@ -171,10 +178,47 @@ fn attr_expr(kw: &Node) -> Node {
     }
     // `on_click=Toggle(id=…)` — a handler is a declarative attribute carrying a command.
     if let Some(event) = name.strip_prefix("on_") {
+        if !vocabulary::is_event(event) {
+            let known = vocabulary::EVENTS
+                .iter()
+                .map(|(e, what)| format!("`on_{e}` ({what})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut d = Diagnostic::error(
+                "B0217",
+                format!("`{name}` is not an event the client listens for"),
+                span,
+            )
+            .with_primary_label("this would be an attribute wired to nothing")
+            .with_note(format!("the client interprets {known}"));
+            if let Some(near) = vocabulary::event_suggestion(event) {
+                d = d.with_fix(format!("did you mean `on_{near}`?"));
+            }
+            diags.push(d);
+            return Node::form("html_on", vec![str_lit(event, span), value], span);
+        }
         return Node::form("html_on", vec![str_lit(event, span), value], span);
     }
     // `data_b_k` reads better in Python than `data-b-k`, and hyphens are what HTML wants.
     let attr_name = name.replace('_', "-");
+    if !vocabulary::is_attribute(&attr_name) {
+        let mut d = Diagnostic::error(
+            "B0218",
+            format!("`{attr_name}` is not an HTML attribute"),
+            span,
+        )
+        .with_primary_label(format!(
+            "`{tag}` would carry this to the browser, which ignores it"
+        ))
+        .with_note(
+            "an attribute of your own is spelled `data_…`, which is HTML's own extension point \
+             and reaches the page as `data-…`",
+        );
+        if let Some(near) = vocabulary::suggestion(&attr_name) {
+            d = d.with_fix(format!("did you mean `{}`?", near.replace('-', "_")));
+        }
+        diags.push(d);
+    }
     Node::form("html_attr", vec![str_lit(attr_name, span), value], span)
 }
 

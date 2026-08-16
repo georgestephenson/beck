@@ -46,6 +46,7 @@ use beck_syntax::{sym, Lit, Node, Scope, Symbol};
 
 pub mod interp;
 mod ui;
+pub mod vocabulary;
 
 pub use interp::{Val, BUILTINS, MAX_STEPS, RESTRICTED};
 pub use ui::expand_ui;

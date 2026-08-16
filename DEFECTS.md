@@ -26,37 +26,6 @@ not you are the one to fix it.
 
 ---
 
-## `ui-vocabulary` — `ui:` checks no attribute or event name
-
-**What is wrong.** The `ui:` macro turns any `name=value` into an attribute and any `on_x=` into
-`data-b-x`, with no vocabulary of its own. It does not know which attributes HTML has, which events
-the client listens for, or that `class` is special. A misspelling is not a compile error, not a lint,
-and not visible in a snapshot review: it is a page that quietly does less than it says.
-
-**Measured.** `span(on_keydown=…, on_mouseenter=…)` gives `ok: 9 definitions, 4 signals` from
-`beck check`, passes `beck test`, and ships `data-b-keydown` and `data-b-mouseenter` to the browser,
-where `beck-rt/client/beck-patch.js` listens for five events and neither is one of them. The page
-snapshot — the gate added precisely because it "asserts every attribute"
-([`docs/22`](docs/22-phase-3-report.md) §22.10) — records both dead attributes as the expected
-output. The same hole passes `cls="done"`, which is the spelling
-[`docs/01`](docs/01-vision-and-premise.md) §1.3's sketch uses, and the browser ignores it.
-
-**The gate a fix owes.** A refused-program test per case — an unknown event name, an unknown
-attribute name, `cls` specifically — and a test that the escape hatch for a genuine custom attribute
-still compiles. Check that each would have gone red *before* the fix.
-
-**Fix it as a table rather than as expander code.** `ui:` is a compiler-provided special case
-standing in for a user-written macro, and typed macros retire it
-([`docs/08`](docs/08-roadmap.md) §8.5.4, [`docs/10`](docs/10-decisions.md) D22) — so a vocabulary
-buried in today's expander would be written twice, and the second copy is the one that would drift.
-
-**Where it is argued.** [`docs/104`](docs/104-styling-and-the-component-library.md) §104.8, Wall 2.
-Scheduled in [`docs/08`](docs/08-roadmap.md) §8.5.4 as a **G** item, because
-[`docs/12`](docs/12-standards-and-conformance.md) §12.4's three accessibility checks are already
-scheduled over the same tree and are dishonest until this exists.
-
----
-
 ## `non-durable-fold` — a decided construct is unbuilt, and the failure is silent
 
 **What is wrong.** [`docs/10`](docs/10-decisions.md) D1 provides for non-durable folds — "high-churn

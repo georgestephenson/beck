@@ -385,7 +385,7 @@ Three candidate answers, in increasing order of ambition, and this document does
 serious component is held to — want arrows, `Home`, `End`, `Escape`, `Space`, `PageUp`/`PageDown`
 and typeahead, plus `focus` and `blur`.
 
-That gap is expected for a young client. What is not expected is that **the compiler does not know
+That gap is expected for a young client. What was not expected is that **the compiler did not know
 about it**:
 
 ```
@@ -401,10 +401,10 @@ and the page snapshot the harness then records as *correct* contains
 <span data-b-keydown="{&quot;c&quot;:&quot;Toggle&quot;…}" data-b-mouseenter="{…}">bread</span>
 ```
 
-Two dead attributes, shipped to the browser on every render, wired to nothing. `beck check` is
-happy, `beck test` is happy, and the snapshot — the gate [`22`](22-phase-3-report.md) §22.10 added
+Two dead attributes, shipped to the browser on every render, wired to nothing. `beck check` was
+happy, `beck test` was happy, and the snapshot — the gate [`22`](22-phase-3-report.md) §22.10 added
 precisely because "`contains` asserts one string somebody thought to name and a snapshot asserts
-every attribute" — has pinned the defect as the expected output.
+every attribute" — had pinned the defect as the expected output.
 
 The same hole swallows attribute names, and the spelling it swallows is one a reader will arrive
 with: [`01`](01-vision-and-premise.md) §1.3 writes `cls=`, faithfully, because the original sketch
@@ -415,15 +415,41 @@ happens to somebody who copies it is measured:
 <li cls="done" data-b-k="1">
 ```
 
-`cls` is not an HTML attribute. The page loses its styling, the browser ignores it, and every gate
-stays green. **The `ui:` macro has no vocabulary**, so a typo in a handler name or an attribute name
-is not a compile error, not a lint, and not visible in a snapshot review — it is a page that quietly
-does less than it says.
+`cls` is not an HTML attribute. The page lost its styling, the browser ignored it, and every gate
+stayed green. **The `ui:` macro had no vocabulary**, so a typo in a handler name or an attribute
+name was not a compile error, not a lint, and not visible in a snapshot review — it was a page that
+quietly did less than it said.
 
-This is [`82`](82-the-edge-report.md) §82.10's pattern again — a gate that cannot fail, written by
-people who knew what they meant. The fix is small and owed — a known set of events (which
-the client's own listener table already is) and a known set of attributes, with a diagnostic and an
-escape hatch for genuine custom attributes.
+That was [`82`](82-the-edge-report.md) §82.10's pattern again — a gate that cannot fail, written by
+people who knew what they meant.
+
+**Fixed.** `beck_macro::vocabulary` is the table: five events, the HTML and SVG attribute names, and
+the elements §12.4's checks will read. `B0217` refuses an event the client does not listen for and
+`B0218` an attribute HTML does not have, with **`data_…` and `aria_…` admitted by prefix** — the
+escape hatch for an attribute that is genuinely yours is HTML's own, so there was none to invent.
+
+Three things about the fix are worth more than the table.
+
+- **It is a table in a crate, not a check in the expander.** `ui:` is a compiler-provided special
+  case standing in for a user-written macro, and typed macros retire it
+  ([`10`](10-decisions.md) D22); a vocabulary buried in today's expander would be written twice, and
+  the second copy is the one that drifts. §12.4's three accessibility checks read `ELEMENTS` rather
+  than a list of their own, which is what makes them a day's work rather than a table's.
+- **The events are asserted to be the client's, not declared to be.** They are written in different
+  languages in different crates, so `client.rs::the_event_vocabulary_is_what_the_client_listens_for`
+  reads `beck-patch.js`'s own `on(…, "data-b-…")` registrations and compares the two sets **in both
+  directions**. An event the client drops is a handler that compiles and does nothing — this defect
+  arriving from the other side.
+- **The suggestion is a rule, not a list.** `ui:` turns `_` into `-`, so a program that writes
+  `max_length=` reaches HTML as `max-length` and the attribute is `maxlength` — squashing the
+  hyphens out and looking again catches every attribute of that shape at once. `cls` is the one that
+  needs an alias, because it is *one* edit from `cols` and two from `class`, so a distance search
+  confidently says the wrong thing to exactly the reader §1.3 sent.
+
+What is **not** refused is an unknown *element*, and that is a limit of today's surface rather than
+a judgement: inside a `ui:` block a lowercase call whose arguments are all keyword arguments is
+indistinguishable from an element, so refusing one would refuse a user's own helper. It is where
+typed macros make a difference rather than a table.
 
 ### Wall 3 — focus is not a function of state
 
@@ -531,15 +557,16 @@ The list is not repeated here, because two documents holding one order is how an
 followed. What this section owes it is the *reason for the order*, which is not visible from a
 schedule:
 
-- **The first two are defects, not features** — the SVG namespace and the `ui:` vocabulary. They
-  come first because each makes something already claimed untrue rather than something desired
-  absent, and because neither is expensive. The first is **done**: §104.9 has the fix and its gate,
-  and it cost eleven lines of the patch client and one example program. The second is still in
-  [`DEFECTS.md`](../DEFECTS.md) with the gate its fix owes.
-- **The vocabulary is a `G`** in §8.5.4's classification: §12.4's three accessibility checks are
-  already scheduled over the same typed tree, and a tree that swallows `on_keydown` and `cls=` in
-  silence cannot honestly carry an accessibility claim. The two are one artefact and should be one
-  change.
+- **The first two were defects, not features** — the SVG namespace and the `ui:` vocabulary. They
+  came first because each made something already claimed untrue rather than something desired
+  absent, and because neither was expensive. **Both are done**: §104.9 has the namespace fix and its
+  gate, and Wall 2 above has the vocabulary's. Neither cost more than a day, which is the argument
+  for the ordering rather than a remark about it.
+- **The vocabulary was a `G`** in §8.5.4's classification: §12.4's three accessibility checks are
+  scheduled over the same typed tree, and a tree that swallowed `on_keydown` and `cls=` in silence
+  could not honestly carry an accessibility claim. **Done**, and what it leaves behind for those
+  checks is `ELEMENTS` — the table that tells an `img` from a `button` — so they are now a day's
+  work over an existing table rather than a table plus a day.
 - **`class=` as a list is the `F`.** Everything in the styling half is behind it, and so is the
   editor affordance that costs nothing once it exists.
 - **The last three are behind a decision, not behind effort.** Where interface state lives (Wall 1)

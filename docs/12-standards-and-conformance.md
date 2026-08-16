@@ -92,16 +92,19 @@ is real and rare: the `ui:` macro emits a typed tree, so **WCAG 2.2 AA and ARIA 
 *checkable* at compile time** in a way no template language can match. But checkable is not
 checked: there is no accessibility diagnostic among the 137 codes, no contrast check over any style
 value, and no axe-core anywhere in the tree. Until an artefact exists this is a design advantage,
-not a conformance claim — and the tree is less checked than "typed" suggests, because `ui:` has no
-vocabulary of attributes or events at all
-([`104`](104-styling-and-the-component-library.md) §104.8).
+not a conformance claim. The prerequisite is now met: `ui:` **has** a vocabulary
+([`104`](104-styling-and-the-component-library.md) §104.8), so the tree these checks would run over
+is one whose element and attribute names mean something — `beck_macro::vocabulary::ELEMENTS` is
+what tells an `img` from a `button`, and it is a table these checks read rather than one they
+bring.
 
 The positions ([`08`](08-roadmap.md) §8.5.4's standards ledger, then Phase 4):
 
 - **The first three checks** — an `img` without alt text, a button without an accessible name, a
   form input without a label — are a small artefact over the existing `ui:` tree, each a compile
   error with the escape hatch `@a11y(exempt, reason=...)`, lintable and auditable. These need
-  nothing that is not built.
+  nothing that is not built, and since the vocabulary landed they need no table of their own
+  either: `B0217`/`B0218` are the shape each of them takes.
 - Colour-contrast over statically-known style values, and runtime conformance (focus preservation,
   live-region announcements) tested with axe-core in the e2e suite: **Phase 4**, with the client
   polish it audits.
