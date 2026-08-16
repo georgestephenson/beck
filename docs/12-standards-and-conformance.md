@@ -90,9 +90,11 @@ test.
 **Chartered, the whole section — nothing is built.** This section is kept because the design claim
 is real and rare: the `ui:` macro emits a typed tree, so **WCAG 2.2 AA and ARIA checks are
 *checkable* at compile time** in a way no template language can match. But checkable is not
-checked: there is no accessibility diagnostic among the 132 codes, no contrast check over the typed
-`css:` values, and no axe-core anywhere in the tree. Until an artefact exists this is a design
-advantage, not a conformance claim.
+checked: there is no accessibility diagnostic among the 132 codes, no contrast check over any style
+value, and no axe-core anywhere in the tree. Until an artefact exists this is a design advantage,
+not a conformance claim — and the tree is less checked than "typed" suggests, because `ui:` has no
+vocabulary of attributes or events at all
+([`102`](102-styling-and-the-component-library.md) §102.8).
 
 The positions ([`08`](08-roadmap.md) §8.5.4's standards ledger, then Phase 4):
 
@@ -100,7 +102,7 @@ The positions ([`08`](08-roadmap.md) §8.5.4's standards ledger, then Phase 4):
   form input without a label — are a small artefact over the existing `ui:` tree, each a compile
   error with the escape hatch `@a11y(exempt, reason=...)`, lintable and auditable. These need
   nothing that is not built.
-- Colour-contrast over statically-known `css:` values, and runtime conformance (focus preservation,
+- Colour-contrast over statically-known style values, and runtime conformance (focus preservation,
   live-region announcements) tested with axe-core in the e2e suite: **Phase 4**, with the client
   polish it audits.
 - **Core Web Vitals**: what is gated today is *bytes*, not vitals — the CI `budgets` job holds the

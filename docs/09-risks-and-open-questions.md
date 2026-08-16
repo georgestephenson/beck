@@ -205,7 +205,12 @@ awaiting George: F1 (erasure vs genesis-replay semantics), F3 (abuse-quota defau
    over live views ([`19`](19-phase-1-report.md) §19.8), and [`05`](05-tier-lowering.md) §5.5's
    discipline of keeping `ui:` free of HTML-isms is exactly what would let a chart be a *value*
    rather than a canvas. So the interactive half of a BI tool is nearly a consequence of the design,
-   and the marks are missing. The open question is which of three things they are: a library over
-   the existing vocabulary, an addition to the `ui:` core, or — once the macro interpreter lands
-   ([`08`](08-roadmap.md) §8.5.4) — the typed literal macro [`02`](02-syntax.md) §2.5 already
-   forecasts. Not blocking, and not scheduled: no phase claims a chart.
+   and the marks are missing. **Which of three things they are is now answered — a library over the
+   existing vocabulary**, rather than an addition to the `ui:` core or a typed literal macro waiting
+   on the macro interpreter ([`08`](08-roadmap.md) §8.5.4). `ui:` already emits SVG with its
+   attribute names intact — `viewBox` verbatim, `aria_label` hyphenated — so a chart is a pure
+   function from data to `Html` and the axis arithmetic is ordinary Beck
+   ([`102`](102-styling-and-the-component-library.md) §102.7). One defect stands in front of it: the
+   patch applier builds subtrees with `document.createElement` and no namespace, so a chart paints
+   on first load and does not render after the patch that changes it (§102.9). Still not scheduled:
+   no phase claims a chart.
