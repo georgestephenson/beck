@@ -390,9 +390,9 @@ shape and not merely an available one.
 it be here tomorrow" decides the home; the storage follows. That is what makes Redux's rule about
 `isDropdownOpen` and Remix's rule about the URL the *same* rule stated twice.
 
-#### The four homes, and the rule this document recommends
+#### The five homes, and the rule this document recommends
 
-Not three candidates but four homes with an order of preference, which is the form the survey says
+Not three candidates but five homes with an order of preference, which is the form the survey says
 the answer takes. **This is a recommendation and not a decision**: adopting it wants a D-number, in
 [`10`](10-decisions.md)'s sense, because the last of them changes what a replay has to reproduce.
 
@@ -421,7 +421,8 @@ The order is the recommendation. Its value is that the first two are **free** �
 the other is a field that already exists — and the third is nine-tenths built, so the expensive home
 is needed for far less than it looks.
 
-**The fifth home is the only one that is a fold, and nothing found needs a server-side one.** A
+**The client-local fold is the only home that has to be built, and nothing found needs a
+server-side one.** A
 search for counter-examples returned exactly one server-side ephemeral need — awareness, above — and
 its shape is a keyed map of each client's latest value, not an accumulation over occurrences. The
 other candidates were already answered: rate counters are §82.5's deliberately *sharded* table,
@@ -472,14 +473,14 @@ it can be built:
 - **`f` over a client-local value — a cursor, a selection — is not**, and not for a protocol reason:
   the client has nothing to derive one *from*. `beck-patch.js` listens for five events and
   `mousemove` is not among them (§104.8's Wall 2), so there is no client-local value in the language
-  to publish. Arbitrary awareness therefore has the **same prerequisite as the fifth home**, and the
-  two are one piece of work rather than two.
+  to publish. Arbitrary awareness therefore has the **same prerequisite as the client-local fold**,
+  and the two are one piece of work rather than two.
 
 So the remaining order is: the client-local value next, which lets `awareness` take a client-placed
 signal and gives the full [Yjs](https://docs.yjs.dev/getting-started/adding-awareness) shape; and
-the fifth home falls out of the same work.
+the client-local fold falls out of the same work.
 
-#### What the fifth home costs to build, which is why this needs a D-number
+#### What the client-local fold costs to build, which is why this needs a D-number
 
 D1's non-durable fold is not blocked on plumbing.
 `DEFECTS.md::non-durable-fold` has the finding: an accumulator outside the log is **not a function
@@ -491,6 +492,37 @@ And the volume half of D1's own motivation is untouched by it: §3.7 logs **ever
 so a cursor that moves a hundred times a second writes a hundred log entries whether or not the
 accumulator they feed is durable. An un-journalled accumulator is not an un-journalled stream, and
 D1's examples — presence, cursors — want the second.
+
+**Scoped after awareness shipped, and it splits the same way**, which is the finding rather than a
+coincidence: both are a client-held value that a *rendered page* has to see, so both are decided by
+where the page renders.
+
+- **What is needed is a stream, and the type is what would route it.** Today the only stream is
+  `merge_clients()` and §3.5 places it on the server, so every `on_click` in the language becomes a
+  proposal. The shape that fits is a **second, client-placed source over a second union** — a `Ui`
+  where `Command` is the one the chokepoint sees — so a variant's *type* decides whether an
+  interaction becomes a log entry or stays in the tab. Nothing about it is an annotation, and
+  `merge_clients()` stays the sole chokepoint because a `Ui` value is not a `Command` and can never
+  reach `validate`.
+- **In Mode B it needs no wire at all.** The browser already holds the accumulator, runs the fold and
+  renders the page (`beck-wasm`'s kernel), so a second accumulator folded from a client-local stream
+  and passed to the view is entirely inside the tab. Nothing is logged, nothing is replayed, nothing
+  enters the digest, and `DEFECTS.md::non-durable-fold`'s question — *what does the state digest
+  cover* — is not asked, because this accumulator is not a projection of the log in the first place.
+  `B0519` would narrow from "a non-durable fold is not built" to "a non-durable fold whose stream is
+  not client-local".
+- **In Mode A it cannot work without one, and choosing that wire is the D-number.** A Mode A page is
+  rendered where the state is, so a value the *browser* holds reaches it only by being sent — and
+  once sent it is a per-connection accumulator the **server** folds. That is a real option and not a
+  defeat: it is presence's shape rather than the log's, so it is bounded per connection, dropped on
+  disconnect, and outside the digest exactly as the roster is. But it is a second kind of state in
+  the runtime and a second thing an operator has to reason about, and it is the sentence D1 does not
+  contain.
+
+So the decision this needs is narrow and nameable: **does a client-local fold exist only where the
+client renders, or does Mode A get a per-connection accumulator on the server to make it work
+there too?** The first is buildable now and refuses `@render(server)` with a diagnostic; the second
+is the more useful feature and the larger claim.
 
 ### Wall 2 — the event vocabulary is five, and an unknown one is silent
 

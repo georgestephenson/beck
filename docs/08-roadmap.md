@@ -521,7 +521,7 @@ rows.
   ([`10`](10-decisions.md) D6, `corpus/33-awareness.beck`), which is *who is looking at what*. A
   cursor or a selection needs a value the client holds and can publish, and there is none —
   `beck-patch.js` listens for five events and `mousemove` is not among them. That prerequisite is
-  the same one the fifth home for interface state has
+  the same one the client-local fold for interface state has
   ([`104`](104-styling-and-the-component-library.md) §104.8), so the two are **one piece of work**:
   a client-local stream, a client-placed non-durable fold over it, and `awareness` accepting a
   signal as well as a function.
