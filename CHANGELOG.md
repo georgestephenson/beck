@@ -17,6 +17,24 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-16 · #63 — The page's flaky timing gate is replaced by one with no clock in it.**
+  `measure_native.rs::what_a_page_costs_against_the_tree_walker` asserted a ratio of ratios over
+  four wall-clock medians and went red 2 runs in 20 on an unchanged binary under load — a page sits
+  near 0.8×, where the number is mostly the runner, not the backend. The claim is now
+  `native.rs::a_page_of_keys_and_handlers_costs_equal_bytes_for_equal_rows`: equal steps must cost
+  equal bytes of arena at 200, 400 and 600 rows of
+  [`viewfix::PAGE`](compiler/crates/beck-cli/tests/support/viewfix.rs), checked against a known
+  quadratic before being trusted. 0 of 20 red under the load that reddened the old one.
+
+- **2026-08-16 · #64 — The log's lifecycle gets a position in the order.** Segment archival,
+  retention and the analytical substrate — Parquet on object storage, DataFusion over the archive —
+  are scheduled in [`docs/08`](docs/08-roadmap.md) Phase 4 and §8.5.4 (class G); five documents had
+  committed to them and none gave them a position. Nothing is built, and the corrections ride
+  along: ClickBench waits on the archive rather than the incremental engine, `docs/03` §3.7's
+  present-tense `durable(retain=…, snapshot=…)` does not parse and now says so,
+  [`docs/09`](docs/09-risks-and-open-questions.md) R6 catches up with D26, and a visualization
+  vocabulary is recorded as an open question rather than a plan (`docs/09` §9.6).
+
 - **2026-08-16 · #62 — The public surface is designed.** The boundary between a Beck backend and a
   non-Beck consumer is an opt-in `@public` family — `rest`, `mcp`, `grpc`, `events`, `sql` — each a
   rendering of the internal contract, gated by a foreign reader; GraphQL declined with the reason

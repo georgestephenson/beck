@@ -836,7 +836,11 @@ jobs:
           # docs/93 §93.5. The native backend against the tree-walker, at two sizes each, plus the
           # pipe round trip on its own and what `clang -O2` costs. The *gate* is a shape — the
           # ratio must not fall as the problem grows — and it runs here rather than under
-          # `cargo test` because it is a release measurement. docs/93 §97.5's comparison of the two
+          # `cargo test` because it is a release measurement. The rows that sit near 1× — the two
+          # pages and text's `grown` — are printed and not gated: there the ratio is mostly the
+          # pipe and the host, so a threshold on it thresholds this runner, and it went red here on
+          # unchanged code. Their claim is held with no clock in it by `native.rs`, under
+          # `cargo test` above. docs/93 §97.5's comparison of the two
           # code generators is in the same file and release-only for a stronger reason: a debug
           # build measures our unoptimised Cranelift against a distribution's optimised `clang`.
           cargo test --release --test measure_native -- --nocapture

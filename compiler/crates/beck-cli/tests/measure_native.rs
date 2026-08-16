@@ -28,6 +28,16 @@
 //! that the ratio does not fall as the problem grows — because that is the claim a compiling
 //! backend makes and it is false for any implementation whose per-unit overhead grows. It is the
 //! pattern `scaling.rs` and `docs/64` use, for their reason.
+//!
+//! **A ratio near 1× cannot carry that gate, and two rows here do not carry it.** The shape gate
+//! reads as a threshold on the backend only while the ratio is far from the runner's own noise;
+//! `fib` and the rest sit at 20× and upwards, where halving is a long way off. `grown` and the
+//! two page rows sit near 1×, where the number is mostly the pipe round trip and the host's own
+//! work — so a threshold there measures the machine, and on a loaded box it fires on an unchanged
+//! binary. Those rows are printed rather than gated, and each names the clock-free gate in
+//! `native.rs` that holds its claim instead. Deciding that per row rather than for the file is
+//! deliberate: the alternative is one bound loose enough for the noisiest row, which is no bound
+//! at all for the others.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -948,9 +958,26 @@ fn the_two_code_generators_against_each_other() {
 /// tree out of it on the way back (`docs/93`). So the work is divided rather than removed — the
 /// program's own logic is compiled and every leaf's rendering is still `Value::display` in the
 /// host, plus a pipe in the middle that the evaluator does not have. The two sizes are what
-/// separate a constant from a growth (`AGENTS.md`), and nothing here is asserted to be **faster**:
-/// what is asserted is that the ratio does not *collapse* with size, which is what a recipe that
-/// copied the children built so far would do.
+/// separate a constant from a growth (`AGENTS.md`).
+///
+/// **Nothing here is asserted**, and that is a change from what this test used to do. It gated the
+/// ratio's *shape* — that the ratio at the large size not be less than half the ratio at the small
+/// one — and that gate flaked, on the row where it was least able not to. The other ratios in this
+/// file are 20× and upwards, so halving is a long way from where they sit; a page is around 0.8×,
+/// because a compiled `view` divides the work rather than removing it, and at 0.8× the number is
+/// mostly the round trip and the host's own baking. Both of those are the *runner*, so the quantity
+/// being thresholded was the machine rather than the backend: on a loaded four-core box this fired
+/// about one run in ten, on `plain` as readily as on `page`, at ratios that had moved by a factor
+/// of three between consecutive runs of an unchanged binary. `AGENTS.md` — a gate that flakes gets
+/// deleted.
+///
+/// The claim it was evidence for is gated with no clock in it instead, which is the same move
+/// `what_text_costs_against_the_tree_walker` makes for `grown`:
+/// `native.rs::a_page_costs_its_own_nodes_and_nothing_per_page` for a page of text, and
+/// `native.rs::a_page_of_keys_and_handlers_costs_equal_bytes_for_equal_rows` for the page with a
+/// key, a conditional class and a handler on every row — which is this benchmark's shape. Equal
+/// steps of rows must cost equal bytes of arena, which is a stronger statement than the wall clock
+/// made and one a shared runner cannot perturb.
 #[test]
 fn what_a_page_costs_against_the_tree_walker() {
     const SRC: &str = r#"
@@ -1016,9 +1043,7 @@ def plain(rows: list[Row]) -> Html:
                 .collect::<Vec<_>>(),
         ))
     };
-    let mut seen: Vec<(&str, f64, f64)> = Vec::new();
     for name in ["page", "plain"] {
-        let mut ratios = [0.0f64; 2];
         for (i, size) in [200usize, 1_600].iter().enumerate() {
             let args = vec![rows(*size)];
             let runs = if i == 0 { 7 } else { 3 };
@@ -1035,31 +1060,26 @@ def plain(rows: list[Row]) -> Html:
                     .call(name, &args)
                     .expect("the native backend answers");
             });
-            ratios[i] = walked.as_secs_f64() / compiled.as_secs_f64();
             println!(
                 "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
                 if i == 0 { name } else { "" },
                 size,
                 format!("{walked:?}"),
                 format!("{compiled:?}"),
-                ratios[i]
+                walked.as_secs_f64() / compiled.as_secs_f64()
             );
         }
-        seen.push((name, ratios[0], ratios[1]));
     }
     println!(
-        "\n  Neither row is asserted to be faster. A compiled `view` builds the call and the host\n  \
+        "\n  Nothing in this table is asserted. A compiled `view` builds the call and the host\n  \
          bakes the tree, so the rendering is the same `Value::display` either way and the pipe is\n  \
-         additional — `docs/93` §93.5. What is asserted is that the ratio holds its shape over\n  \
-         eight times the rows, because a page that copied what it had built would lose it."
+         additional — `docs/93` §93.5. At around 0.8× the number is mostly those two, which are\n  \
+         the runner rather than the backend, so a threshold on it measured the machine: it fired\n  \
+         about one run in ten on a loaded box. What a page costs in *arena* is gated with no clock\n  \
+         in it — `native.rs::a_page_costs_its_own_nodes_and_nothing_per_page` and\n  \
+         `native.rs::a_page_of_keys_and_handlers_costs_equal_bytes_for_equal_rows`, where equal\n  \
+         steps of rows must cost equal bytes."
     );
-    for (name, small, large) in &seen {
-        assert!(
-            large / small > 0.5,
-            "`{name}` was {small:.2}× at 200 rows and {large:.2}× at 1,600 — the ratio collapsed, \
-             which is what a page whose cost is quadratic in its rows looks like"
-        );
-    }
 }
 
 /// What a raise costs against the tree-walker, at two depths.
