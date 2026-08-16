@@ -20,6 +20,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`docs/`](docs/README.md) | The design and the plan. Everything derives from, and defers to, [`docs/00-original-idea.md`](docs/00-original-idea.md) |
 | [`docs/reference/`](docs/reference/README.md) | **Generated** by `beck doc reference`. Never edit by hand |
 | [`docs/adr/`](docs/adr/) | Engineering decisions — a dependency taken or refused, a gate's shape, an upgrade path |
+| [`DEFECTS.md`](DEFECTS.md) | **What is wrong right now.** Something that behaves wrongly — silent, misleading, or contrary to what a document says. An entry is deleted by the change that fixes it, so the file is always the current list; something merely *absent* is a line in [`docs/08`](docs/08-roadmap.md) §8.5 instead |
 | [`compiler/`](compiler/) | The compiler, the runtime, and the standard library. Where new work goes |
 | [`compiler/lib/`](compiler/lib/README.md) | The standard library's Beck half |
 | [`compiler/corpus/`](compiler/corpus/) | 32 programs carrying **no placement annotations** — Phase 2's exit measurement |
@@ -30,6 +31,13 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`release/`](release/README.md), [`install.sh`](install.sh) | The parts of a release a person can execute, kept out of `.github/workflows/release.yml` on purpose — a tag-triggered workflow is the one artefact that cannot be run before it is used ([`docs/92`](docs/92-supply-chain-and-release-report.md) §92.8) |
 
 ### Most work is a changelog entry; a report is for a phase or a subsystem
+
+**A defect you are not fixing goes in [`DEFECTS.md`](DEFECTS.md), now, with the gate its fix owes.**
+Writing down what would have to go red is a job for whoever is looking at the defect, not for
+whoever eventually fixes it — that is the difference between the gates in this repository that have
+caught something and the four that could not have
+([`docs/82`](docs/82-the-edge-report.md) §82.10). The entry leaves the file in the change that fixes
+it, and that change's changelog bullet is the record.
 
 **Default to [`CHANGELOG.md`](CHANGELOG.md)**: a few lines saying what changed, what it measured, and
 what gate holds it. A faster binding, one benchmark ported, a primitive added, a bug fixed — these
@@ -78,7 +86,10 @@ So:
 
 - **Correct in place.** A document says what is true now. Where the *reasoning* behind a change
   matters and would be lost, an ADR is where it goes ([`docs/adr/`](docs/adr/)) — those are decision
-  records and are genuinely immutable, because a decision is a thing that happened at a time.
+  records and are genuinely immutable, because a decision is a thing that happened at a time. **A
+  D-number is a rule a Beck program lives under; an ADR is a choice only the compiler lives under**,
+  and the test is whether a user could observe it without reading our source
+  ([`docs/adr/README.md`](docs/adr/README.md)).
 - **Delete what a later document replaced**, and say in the commit message what was deleted and
   where it went. Two documents that disagree are worse than either alone.
 - **Prefer editing an existing document to adding one.** The bar for a new file is that no existing

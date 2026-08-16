@@ -5,3 +5,11 @@
 # branches to both add, and a bullet that lands out of date order is left where it lands —
 # the date and PR number on each entry carry the order.
 CHANGELOG.md merge=union
+
+# DEFECTS.md is appended to by any branch that finds one, and each entry is a whole section under
+# its own heading, so two branches adding entries have nothing in common to conflict over. Union
+# merge keeps both. Deletion is the other half of the file's rule — an entry leaves in the change
+# that fixes it — and union merge does not resolve a delete against an edit, so a branch that fixes
+# a defect while another edits the same entry conflicts there, which is the right outcome: somebody
+# has to read both sides.
+DEFECTS.md merge=union
