@@ -222,8 +222,10 @@ def orders() -> Signal[Map[OrderId, Order]] uses durable
 
 Consequences: modules compile against signatures (true separate compilation, parallel builds); body
 edits don't invalidate downstream modules; **effect widening is a breaking API change** flagged by
-`beck check --api` (a library that starts phoning home cannot do so silently — a novel supply-chain
-property); and **event types in signatures are the wire/log compatibility surface** — changing one
+`beck check --api` — a command that arrives with the package system (Phase 4;
+[`12`](12-standards-and-conformance.md) §12.2 records that today only `--wire-compat` exists) — so
+a library that starts phoning home cannot do so silently, a novel supply-chain
+property; and **event types in signatures are the wire/log compatibility surface** — changing one
 without a migration is unshippable (§3.9).
 
 ## 3.7 Time, streams, and folds (the semantic core)
