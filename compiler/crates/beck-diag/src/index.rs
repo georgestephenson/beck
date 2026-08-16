@@ -1069,6 +1069,19 @@ pub const INDEX: &[CodeEntry] = &[
          `B0516` from the other side: `@render(client)` is what makes a guess possible, and \
          therefore what makes saying so possible (docs/94 §94.5).",
     ),
+    e(
+        "B0519",
+        Stage::Signals,
+        "a non-durable fold is not built yet",
+        "`docs/10` D1 provides for a fold that is not wrapped in `durable` — \"high-churn ephemera \
+         get non-durable folds, same semantics, no log persistence\" — and it is decided rather \
+         than built. Until this diagnostic existed, such a program was reported as a *library* \
+         with no durable state, which sent its author to add the `durable` they had deliberately \
+         left off. What stands in the way is not plumbing: an accumulator outside the log is not a \
+         function of the log, so it cannot be replayed into and cannot be in the state digest that \
+         `tests/replay.rs` holds a replay to — and D3 rests on that digest. The question is what \
+         the digest covers, and it is open.",
+    ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(
         "B0600",

@@ -306,3 +306,17 @@ ui!(
         "input(placeholder=\"what needs doing?\", autofocus=\"on\", max_length=\"80\","
     )
 );
+
+// ---------------------------------------------------------------------------------------------
+// D1's non-durable fold, docs/104 §104.8's Wall 1
+// ---------------------------------------------------------------------------------------------
+
+// A program whose only accumulator is an unwrapped fold used to be reported as a *library* with no
+// durable state, which sends its author to add the `durable` they deliberately left off.
+ui!(
+    a_fold_nobody_wrapped_in_durable,
+    &edited(
+        "todos: Signal[State] = durable(fold(",
+        "todos: Signal[State] = (fold("
+    )
+);

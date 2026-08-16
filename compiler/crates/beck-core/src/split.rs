@@ -243,6 +243,44 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
 
     let states = graph.states();
     if states.is_empty() {
+        // A program whose only accumulator is a fold *nobody wrapped* is not a program that forgot
+        // the log — it is a program that reached for D1's non-durable fold, which is decided and
+        // unbuilt. Saying "no durable state" to that author sends them to add `durable`, which is
+        // the opposite of what they asked for.
+        if let Some(fold) = graph
+            .find(|o| matches!(o, Op::Fold { .. }))
+            .into_iter()
+            .find(|&f| {
+                graph
+                    .consumers(f)
+                    .iter()
+                    .all(|&c| !matches!(graph.node(c).op, Op::Durable))
+            })
+        {
+            diags.push(
+                Diagnostic::error(
+                    "B0519",
+                    format!(
+                        "`{}` is a non-durable fold, which is not built yet",
+                        graph.label(fold)
+                    ),
+                    graph.node(fold).span,
+                )
+                .with_primary_label("a fold that is not `durable` has nowhere to keep its accumulator")
+                .with_note(
+                    "`docs/10` D1 provides for this — \"high-churn ephemera get non-durable folds, \
+                     same semantics, no log persistence\" — and it is decided rather than built. \
+                     What is missing is not the plumbing: an accumulator outside the log is not a \
+                     function of the log, so what the state digest covers and what a replay has to \
+                     reproduce are the questions in front of it (`DEFECTS.md::non-durable-fold`)",
+                )
+                .with_fix(
+                    "until then: `durable(fold(…))` if the state should survive a restart, or hold \
+                     it in the page's own markup if it should not",
+                ),
+            );
+            return None;
+        }
         diags.push(
             Diagnostic::error("B0501", "this program has no durable state", Span::NONE)
                 .with_note("`durable(fold(f, init, s))` is what makes the log a database")

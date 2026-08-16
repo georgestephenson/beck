@@ -367,16 +367,62 @@ data tier, replayed on every genesis replay, and included in the state digest. A
 to next year is twelve permanent log entries. This is not a performance nit; it is the semantics
 being wrong about what happened. Nobody *decided* it, which is why it is a wall and not a trade-off.
 
-Three candidate answers, in increasing order of ambition, and this document does not pick:
+#### What other systems do, and what they agree on
 
-- **A client-placed non-durable fold** over the client's own commands. Cheapest, and it needs a
-  client-local stream, which does not exist: the only stream is `merge_clients()`, and it is
-  server-placed by §3.5.
-- **The URL.** State that deserves a bookmark should be in `session.path` — [`94`](94-the-client-report.md)
-  §94.3 already makes a route a field of `Session` and not a router. This is the *right* answer for
-  a table's sort and filter and the wrong one for a tooltip.
-- **The platform.** §104.9: for a large fraction of these components the browser will hold the state
-  if asked in markup, and then it is nobody's state at all.
+Surveyed August 2026, because the question is old enough everywhere else to have an answer:
+
+| System | The homes it offers | What it says |
+|---|---|---|
+| **Redux / React** | store, or local component state | [organizing state](https://redux.js.org/faq/organizing-state): "The classic example is tracking an `isDropdownOpen` flag. In most situations, the rest of the app doesn't care about this, so in most cases it should stay in component state" |
+| **Remix** | the URL, then cookies, then client state | [state management](https://v2.remix.run/docs/discussion/state-management): "read and set the state in the URL directly with boring old HTML forms" |
+| **SwiftUI** | `@State`, `@SceneStorage`, `@AppStorage` | three lifetimes, chosen **at the declaration** — transient, scene-restored, app-persisted |
+| **Akka** | `Behaviors`, or `EventSourcedBehavior` | the same fold either way; journalling is opt-in per behaviour |
+| **Phoenix LiveView** | per-connection `assigns` | the closest architecture to Beck's, and its known weakness is the gap itself: LiveView cannot tell which assigns are transient and which are permanent |
+
+Two things they agree on, and neither is one of the three candidates below.
+
+**The lifetime is a declaration, not an inference.** Every system that has more than one home makes
+the author name which one, at the point of declaration. Beck already does this for the one
+distinction it has — `durable(fold(…))` against `fold(…)` — which is why D1's construct is the right
+shape and not merely an available one.
+
+**The assignment is by audience, not by mechanism.** "Does anybody else need to see this, and should
+it be here tomorrow" decides the home; the storage follows. That is what makes Redux's rule about
+`isDropdownOpen` and Remix's rule about the URL the *same* rule stated twice.
+
+#### The four homes, and the rule this document recommends
+
+Not three candidates but four homes with an order of preference, which is the form the survey says
+the answer takes. **This is a recommendation and not a decision**: adopting it wants a D-number, in
+[`10`](10-decisions.md)'s sense, because the last of them changes what a replay has to reproduce.
+
+1. **The platform, first.** §104.9: `<dialog>`, `popover`, `<details name>` and command invokers hold
+   a large fraction of this state if asked in markup, and then it is nobody's state at all — no
+   command, no event, no fold, nothing to place. A modal's open flag is this row.
+2. **The URL**, for anything that deserves a bookmark — a table's sort, a filter, a selected tab.
+   [`94`](94-the-client-report.md) §94.3 already makes a route a field of `Session` rather than a
+   router, so this home exists today and is unused for anything but routing.
+3. **A client-placed non-durable fold**, for what is left: a combobox's highlighted option, a
+   tooltip's target. It needs a client-local stream, which does not exist — the only stream is
+   `merge_clients()` and it is server-placed by §3.5.
+4. **The durable log**, only for what a second person or a later day should see. Which is where all
+   of it goes today.
+
+The order is the recommendation. Its value is that the first two are **free** — one is markup and
+the other is a field that already exists — so the expensive home is needed for less than it looks.
+
+#### What the fourth home costs to build, which is why this needs a D-number
+
+D1's non-durable fold, in either its server or its client form, is not blocked on plumbing.
+`DEFECTS.md::non-durable-fold` has the finding: an accumulator outside the log is **not a function
+of the log**, `beck-cli/tests/replay.rs` asserts `digest(replayed) == digest(live)`, and
+[`10`](10-decisions.md) D3 rests on that digest. So the construct needs an answer to *what the state
+digest covers* before it needs any code.
+
+And the volume half of D1's own motivation is untouched by it: §3.7 logs **every validated event**,
+so a cursor that moves a hundred times a second writes a hundred log entries whether or not the
+accumulator they feed is durable. An un-journalled accumulator is not an un-journalled stream, and
+D1's examples — presence, cursors — want the second.
 
 ### Wall 2 — the event vocabulary is five, and an unknown one is silent
 
