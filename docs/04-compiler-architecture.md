@@ -122,7 +122,9 @@ kills adoption — "the deploy worked but every open browser tab broke."
 - **Bulk/columnar** (query results, analytics, anything > ~1000 rows): **Apache Arrow** IPC. Zero-copy
   into DataFusion on the server, and Arrow decoding in WASM is fast enough for real data tables.
 - **External (public API)**: generate **OpenAPI + JSON** and **gRPC/Protobuf** from the same types, on
-  request (`@public(rest)`, `@public(grpc)`). Beck's internal format is never a public contract.
+  request (`@public(rest)`, `@public(grpc)` — the full family, what a consumer configures, and why
+  the converse also holds is [`101`](101-the-public-surface.md)). Beck's internal format is never a
+  public contract, and a public contract is never Beck's internal transport.
 - **Transport**: HTTP/2 (h2 via `hyper`) with HTTP/3 (`quinn`) optional; WebSocket or WebTransport for
   subscriptions; TLS via `rustls`.
 

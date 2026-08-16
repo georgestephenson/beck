@@ -12,6 +12,32 @@ Newest first.
 
 ## Unreleased
 
+### The public surface (design)
+
+- **[`docs/101`](docs/101-the-public-surface.md) and D28**: the boundary between a Beck backend and
+  a non-Beck consumer is an opt-in `@public` family — `rest` (OpenAPI 3.1 + RFC 9457), `mcp`,
+  `grpc`, `events` (AsyncAPI + CloudEvents), and `sql`, which the pgwire read models already are —
+  each a rendering of the internal contract, gated by a foreign reader per
+  [`docs/92`](docs/92-supply-chain-and-release-report.md) §92.2. Beck never transports over a
+  public contract (§101.4). GraphQL declined with the reason recorded. Roadmap rows added to
+  Phases 4 and 5 ([`docs/08`](docs/08-roadmap.md)); chartered rows added to
+  [`docs/12`](docs/12-standards-and-conformance.md) §12.3, in its audited vocabulary and each with a
+  position. Design only — no annotation exists in
+  the compiler and no artefact has been emitted; §101.11 says so.
+- **§101.6 and §101.7 added**: the enterprise event-driven story (`@public(events)` — the outbox
+  problem has nothing to patch because the log is primary; delivery is at-least-once with the
+  dedupe key given by `(context, seq)`; §4.3's asymmetry is the schema registry's compatibility
+  check, run by the compiler; subscriber endpoints are a declared host set so
+  [`adr/0013`](docs/adr/0013-the-host-of-an-outbound-call-is-written-at-the-call-site.md)'s
+  derivable egress survives) and the edge-obligation ledger — auth, quotas, idempotency, response
+  vocabulary, caching, deprecation — each mapped to derived, built, or prerequisite. The two
+  prerequisites (F15's quotas, the inbound TLS posture) moved ahead of the first `@public` form in
+  Phase 4's ordering.
+- **`beck-rt/src/telemetry.rs` corrected in place**: its module doc claimed `BECK_OTLP_ENDPOINT`
+  turns on export, and nothing reads that variable. It now states the truth — export is pull-only
+  from `/_beck/otlp/*` — and the push exporter is scheduled in §101.8. Comment-only change; no
+  behaviour moved.
+
 ### The standards charter states its evidence
 
 - **`docs/12` was audited against the tree and corrected in place.** Every row now carries
