@@ -503,6 +503,7 @@ pub fn module(program: &Program) -> Module {
     let mut loops: BTreeSet<(Loop, u32)> = BTreeSet::new();
     let mut asks = false;
     let mut links = false;
+    let mut math = false;
     for name in &order {
         let def = &program.defs[name];
         let mut fun = Function::new(&indexed, &eligible, program, &mut heap);
@@ -519,6 +520,7 @@ pub fn module(program: &Program) -> Module {
         compared_fns |= fun.compared_fns;
         asks |= fun.asks;
         links |= fun.links;
+        math |= fun.math;
         for (rank, lam) in std::mem::take(&mut fun.lambdas) {
             lambdas.entry(rank).or_insert(lam);
         }
@@ -543,6 +545,7 @@ pub fn module(program: &Program) -> Module {
         &entries,
         asks,
         links,
+        math,
         &Closures {
             applied: &applied,
             emitted: &lambdas.keys().copied().collect(),
@@ -557,7 +560,7 @@ pub fn module(program: &Program) -> Module {
         functions,
         spans,
         refusals,
-        links,
+        links: links || math,
         heap,
     }
 }
@@ -732,6 +735,9 @@ struct Function<'a> {
     /// Per module rather than per call because it decides a *link* line: an archive on it that
     /// nothing references costs a linker's read of it, and one missing costs an undefined symbol.
     links: bool,
+    /// Whether this body calls the runtime library's *float* entry point, which is the same
+    /// archive on the same link line and none of the arena protocol above.
+    math: bool,
     /// Whether this body asks the host anything, and therefore needs a question buffer.
     ///
     /// One buffer per *function* rather than one per call: a question is answered before the next
@@ -777,6 +783,7 @@ impl<'a> Function<'a> {
             loops: BTreeSet::new(),
             uses_heap: false,
             links: false,
+            math: false,
             asks: false,
             handlers: Vec::new(),
         }
@@ -2470,14 +2477,31 @@ impl<'a> Function<'a> {
                     | Repr::Attr => Err("`abs` on a value that is not a number".into()),
                 }
             }
-            Prim::Sqrt | Prim::Sin | Prim::Cos => {
+            Prim::Sqrt => {
                 arity(1)?;
-                let name = match op {
-                    Prim::Sqrt => "llvm.sqrt.f64",
-                    Prim::Sin => "llvm.sin.f64",
-                    _ => "llvm.cos.f64",
-                };
-                let r = self.intrinsic_f64(name, &vals[0])?;
+                // IEEE 754 requires one correctly-rounded answer, so the target's own instruction
+                // is the same number `beck-eval` computes. `sin` and `cos` are the case below for
+                // exactly the reason this one is here.
+                let r = self.intrinsic_f64("llvm.sqrt.f64", &vals[0])?;
+                Ok(Val {
+                    text: r,
+                    ty: Repr::Float,
+                })
+            }
+            Prim::Sin | Prim::Cos => {
+                arity(1)?;
+                if vals[0].ty != Repr::Float {
+                    return Err(format!("`{}` of something that is not a Float", op.name()));
+                }
+                let call = prim::float_op_of(op).expect("`sin` and `cos` are the two");
+                self.math = true;
+                let r = self.fresh();
+                self.line(format!(
+                    "{r} = call double @{}(i32 {}, double {})",
+                    prim::FLOAT_CALL,
+                    call.code(),
+                    vals[0].text
+                ));
                 Ok(Val {
                     text: r,
                     ty: Repr::Float,
@@ -4394,6 +4418,7 @@ fn assemble(
     maps: &BTreeSet<u32>,
     asks: bool,
     links: bool,
+    math: bool,
     closures: &Closures<'_>,
 ) -> String {
     let arena = !heap.is_empty();
@@ -4401,6 +4426,11 @@ fn assemble(
     m.push_str(HEADER);
     if arena {
         let _ = write!(m, "{}", arena_prelude(links));
+    }
+    // Outside the `arena` branch above, because a program can compute a sine without ever
+    // allocating: the float half of the runtime library touches no heap at either end.
+    if math {
+        let _ = writeln!(m, "declare double @{}(i32, double)", prim::FLOAT_CALL);
     }
     // A program that links the runtime library takes its arena from it — the library reads that
     // arena through a buffer it owns, so there cannot be a second one. `debug_assert` rather than a
@@ -5610,8 +5640,6 @@ declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare i64 @llvm.abs.i64(i64, i1)
 declare i64 @llvm.fptosi.sat.i64.f64(double)
 declare double @llvm.sqrt.f64(double)
-declare double @llvm.sin.f64(double)
-declare double @llvm.cos.f64(double)
 declare double @llvm.fabs.f64(double)
 declare i64 @read(i32, ptr, i64)
 declare i64 @write(i32, ptr, i64)

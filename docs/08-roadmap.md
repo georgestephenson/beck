@@ -404,7 +404,6 @@ and its algebraic half moved two rows of Phase 3's exit table at once
 | Virtualized **disk**, and **elapsed time** | F11; [`13`](13-testing.md) §13.4 | Now. The clock is supplied rather than ambient ([`44`](44-wave-0-report.md) §44.3) and the network is a seam with three implementations ([`46`](46-standard-library-report.md) §46.11); these two are what is left, and every Phase 4 bullet is a distributed-systems bullet whose stated test methodology is the simulator |
 | Trusted publishing on crates.io | [`42`](42-security-assurance.md) §42.7 | The **first** `cargo publish` — a long-lived token used once is a risk already taken |
 | Diverse double-compiling / bootstrappability | [`42`](42-security-assurance.md) §42.7 | The first `beck` built by `beck` (Phase 5) |
-| Deterministic libm (F9) | [`35`](35-standards-landscape.md) §35.5 item 1 | **Passed, and now measured rather than asserted.** Three backends reach three different libms: the evaluator calls Rust's `f64::sin` ([`interp.rs`](../compiler/crates/beck-eval/src/interp.rs)), the LLVM emitter emits `llvm.sin.f64` and the Cranelift emitter calls the extern symbol `sin` — all of which resolve to the *host's* libm. `sqrt` is safe because IEEE 754 requires it correctly rounded; **`sin` and `cos` are not required to be**, and implementations differ in the last ulp — between libms, and between versions of one libm. So a fold that computes `sin` can replay to a different state on a different machine, which is the determinism claim [`10`](10-decisions.md) D3 rests the data tier on, and the three-way differential passes today only because all three paths resolve to one host's libm. **It now has a position** (§8.5.4) rather than a status |
 
 ### 8.5.3 The traps still live
 
@@ -432,15 +431,6 @@ the one place in `docs/` that holds an order. The list stopped being all-**S** w
 item larger than anything else here, one **G**, and a ledger of small artefacts behind chartered
 rows.
 
-- **Deterministic transcendentals** (R, and **first**, because it is the only item here that makes a
-  *shipped* claim false rather than merely unbuilt): `sin` and `cos` resolve to whatever libm the
-  host supplies, in all three backends, and IEEE 754 does not require either to be correctly
-  rounded — so two machines can fold the same log to two different states, which is the one thing
-  [`10`](10-decisions.md) D3 needs never to happen. §8.5.2 has the evidence. The fix is a vendored
-  correctly-rounded implementation behind the three `Prim`s, and the gate is the one that would have
-  caught it: the three-way differential run on **two different libms**, which is a CI matrix row
-  rather than a new harness. Small, overdue, and cheap only until something depends on the current
-  answers. `DEFECTS.md::libm-determinism` is the entry, with the gate a fix owes.
 - **The data tier's means of combination** (F, and now the **largest item left**, since the macro
   interpreter below has landed — [`99`](99-the-data-tier-means-of-combination.md) §99.7 lists five
   already-written-down items it closes): `arrange_by`, `join`, the loop-plus-lookup recognition,
@@ -493,6 +483,18 @@ rows.
   answer two calls at once. [`93`](93-the-native-backends-report.md) §93.15 is the list, and the
   largest refusal class behind it is a **function value at a boundary**, which is moved by compiling
   definitions called only by *other compiled definitions*.
+- **A fast path in front of the exact sine** (S, and the successor of the item that was first
+  here): `sin` and `cos` are computed rather than asked for and are correctly rounded
+  ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)), which closed
+  the retrofit item and the defect under it. What that costs is **~640 ns against a platform
+  libm's 11 ns**, and the missing piece is not a faster exact path — that is what an exact path costs —
+  but Ziv's technique in front of it: a double-double first pass answers unless its own error
+  bound leaves the rounding in doubt, and the exact path arbitrates the rest, which is under one
+  call in 2^45. It **changes no answer**, because the exact path stays the definition of what the
+  answer is, and that is why it is S rather than R: nothing depends on it and no claim is false
+  without it. The measured impact today is 0.1% of `awfy/cd.beck`, the only program in the tree
+  that calls either function — below that benchmark's own variance. Lane E, or wherever
+  `beck-prim` is held to sit.
 - **A worker that can answer two calls at once** (S, and it is what is left of cancelling a child
   blocked in the host): the tree-walker stops a child inside an outbound call now
   ([`80`](80-structured-concurrency-report.md) §80.14), and `beck-llvm` passes `Stop::never()`
@@ -705,7 +707,7 @@ be stale), and **look for it in §8.5.4** (a phase bullet is not a position, and
 | Found | Direction | Outcome |
 |---|---|---|
 | Macro expansion fuel (F17) | Document behind code | [`42`](42-security-assurance.md) §42.4 said "absent — nothing in `beck-macro` bounds expansion". `MAX_EXPANSION` is 100,000 nodes, `B0214` refuses, `macro_bomb.rs` gates it both ways, and `pending_security.rs` had already deleted its own test saying so. **Corrected in place** |
-| Deterministic transcendentals (F9) | Unscheduled | §8.5.2 said "owed rather than pending" for three phases. Now §8.5.4's first item, and `DEFECTS.md::libm-determinism` — it is a **defect** rather than an absence, because the replay-determinism claim it falsifies is one this project ships |
+| Deterministic transcendentals (F9) | Unscheduled | §8.5.2 said "owed rather than pending" for three phases. Placed as §8.5.4's first item and recorded as a **defect** rather than an absence, because the replay-determinism claim it falsified is one this project ships — and **built** in the change that placed it ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)). It is the sweep's shortest path from *nobody scheduled this* to *it is done* |
 | The data tier's algebra | Unscheduled in *this* list | A Phase 4 bullet, never in the order. Now placed, in Lane B, and the largest item left now that the macro interpreter has landed. Its instrument is `DEFECTS.md::cost-report-undercount` |
 | Charting | Unscheduled **and undesigned** | Not in `docs/` at all until [`105`](105-the-ecosystem-answer.md), which ranked it, and [`104`](104-styling-and-the-component-library.md), which found the same defect from the UI side and owns the fix. Now the styling cluster's item 1 and `DEFECTS.md::svg-namespace`. **Two independent sweeps reached one line of JavaScript from opposite directions**, which is the strongest evidence in this section that the procedure works |
 | A columnar value / Arrow | Unscheduled | Committed in five documents as a *dependency choice*; nothing ever built the value it would apply to. Now placed, as the log-lifecycle G item's named predecessor |

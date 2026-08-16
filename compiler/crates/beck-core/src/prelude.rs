@@ -119,10 +119,12 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // are what Are We Fast Yet's collision detector is written in, and a numeric tower with a
         // square root and no sine is a gap rather than a decision (`docs/53` §53.5).
         //
-        // All three are the host's, in `lib/README.md`'s sense: `sin` is somebody else's polynomial
-        // and truncation is the format's own rule about which way a real falls. Composition would
-        // be a slower, less correct copy — and unlike `money.beck`'s arithmetic there is nothing
-        // here that Beck *should* be expressing.
+        // All three are primitives in `lib/README.md`'s sense — composition would be a slower,
+        // less correct copy, and unlike `money.beck`'s arithmetic there is nothing here that Beck
+        // *should* be expressing — but only truncation is the *host's*. `sin` and `cos` are
+        // computed in the runtime library and correctly rounded, because IEEE 754 pins neither and
+        // a fold that reached the platform's libm would replay differently on another machine
+        // (`beck_prim::math`, `adr/0031`).
         (
             "sin",
             Prim::Sin,

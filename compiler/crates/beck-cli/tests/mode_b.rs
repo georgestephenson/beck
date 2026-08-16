@@ -1010,14 +1010,18 @@ fn the_kernel_builds_for_the_browser() {
 /// inherits the workspace lint.
 ///
 /// The count is per crate and exact, so a fifth export in the kernel, a fourth in the playground
-/// or a third in the runtime library is a decision somebody has to come here and make.
+/// or a fourth in the runtime library is a decision somebody has to come here and make. The
+/// runtime library's third was made that way: `beck_prim_f64` is `sin` and `cos`, which are
+/// computed rather than asked of the host (`docs/adr/0031`), and it is a separate export because a
+/// function from a double to a double needs neither the arena nor the mark protocol the other two
+/// carry.
 ///
 /// `beck-prim` is the one where the exception could have been much larger, and §93.12 is why it is
 /// not: a runtime library that took a pointer and a length would need an `unsafe` block per
 /// primitive, so it takes **offsets into an arena it owns** instead.
 #[test]
 fn an_exported_symbol_is_the_only_exception_to_forbid_unsafe() {
-    for (crate_name, exports) in [("beck-wasm", 4), ("beck-play", 3), ("beck-prim", 2)] {
+    for (crate_name, exports) in [("beck-wasm", 4), ("beck-play", 3), ("beck-prim", 3)] {
         let crate_dir = root().join("crates").join(crate_name);
         let mut allows = 0;
         for entry in std::fs::read_dir(crate_dir.join("src")).expect("the crate's sources") {

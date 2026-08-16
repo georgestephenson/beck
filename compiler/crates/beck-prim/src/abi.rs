@@ -5,10 +5,11 @@
 //! artefact that links it exports, and two of those in one wasm module is a collision rather than
 //! a convenience.
 //!
-//! Both entry points are `extern "C"` and neither takes a pointer. What that costs is a lock and a
-//! bounds check per call; what it buys is [`crate::arena`]'s first paragraph.
+//! The two arena entry points are `extern "C"` and neither takes a pointer. What that costs is a
+//! lock and a bounds check per call; what it buys is [`crate::arena`]'s first paragraph. The
+//! third, [`beck_prim_f64`], touches no arena and pays neither.
 
-use crate::{arena, perform, Answer, Op, Status};
+use crate::{arena, perform, perform_f64, Answer, FloatOp, Op, Status};
 
 /// Reserve the compiled program's heap and answer its base, or null.
 ///
@@ -65,4 +66,18 @@ pub extern "C" fn beck_prim(op: i32, mark: i64, a0: i64, a1: i64, a2: i64) -> i6
         };
         heap.put_outcome(mark, status, value).unwrap_or(-1)
     })
+}
+
+/// Perform one primitive that is a function from a double to a double, and answer the result.
+///
+/// No arena, no mark and no outcome record: the argument is the value and so is the answer. An
+/// unknown `op` is `NaN` for the reason [`beck_prim`]'s is `-1` — a version skew between a program
+/// and the library it was linked against should not be an abort with no message.
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "C" fn beck_prim_f64(op: i32, x: f64) -> f64 {
+    match FloatOp::from_code(op) {
+        Some(op) => perform_f64(op, x),
+        None => f64::NAN,
+    }
 }

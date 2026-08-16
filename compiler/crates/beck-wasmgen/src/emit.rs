@@ -770,14 +770,19 @@ impl<'a> Function<'a> {
                     return Err("`sqrt` of something that is not a Float".into());
                 }
                 // IEEE-754 pins `sqrt` to one correctly-rounded answer, so `f64.sqrt` is the same
-                // number the evaluator's is. `sin` and `cos` are refused below for exactly the
-                // reason this one is allowed.
+                // number the evaluator's is. WebAssembly has no instruction for `sin` or `cos`
+                // and neither has an answer to be pinned to, which is why they are the case below.
                 self.push(Ins::F64Sqrt);
                 Ok(Repr::Float)
             }
+            // The other two backends call the runtime library, which computes these rather than
+            // asking a libm (`beck_prim::math`). This emitter has nothing to link: a module
+            // reaches `beck-prim` only as an import the kernel supplies, and bundle format 1
+            // declares no such import. Emitting the algorithm instead would be a second
+            // implementation of the one thing whose value is that there is only one.
             Prim::Sin | Prim::Cos => Err(format!(
-                "`{}` is not IEEE-pinned, so a WebAssembly runtime and the evaluator's libm may \
-                 answer different digits — F9's question, and not one to prejudge from an emitter",
+                "`{}` is a call into the runtime library, which a WebAssembly module reaches only \
+                 as an import the bundle does not carry yet",
                 if op == Prim::Sin { "sin" } else { "cos" }
             )),
             other => Err(format!(

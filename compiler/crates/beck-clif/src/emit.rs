@@ -61,6 +61,7 @@ use beck_core::check::{Def, Program};
 use beck_core::core::{Arm, Const, Core, CoreKind, Pattern, Prim, VarId};
 use beck_diag::Span;
 use beck_llvm::heap::{self, Heap, Repr};
+use beck_llvm::prim::FloatOp;
 use beck_llvm::{prim, Refusal, Scalar, Signature, Trap, Upcall, MAX_PARAMS};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -549,7 +550,7 @@ fn build(
         clif,
         functions,
         spans,
-        links: runtime.linked.is_some(),
+        links: runtime.linked.is_some() || names_a_float_primitive(program, eligible),
     })
 }
 
@@ -6815,16 +6816,17 @@ impl<'a> Body<'a> {
                     ty: Repr::Float,
                 })
             }
-            // Cranelift has no transcendental instructions, so these are calls into the C library
-            // the executable is linked against — the same `libm` `clang` gives the other backend's
-            // `llvm.sin.f64` when it lowers one.
+            // Neither Cranelift nor any other target has a transcendental instruction, and the
+            // machine's `libm` is not an answer: IEEE 754 does not pin `sin` or `cos`, so these
+            // are calls into the runtime library, which is where they are computed
+            // (`beck_prim::math`).
             Prim::Sin | Prim::Cos => {
                 arity(1, &vals)?;
                 if vals[0].ty != Repr::Float {
                     return Err(format!("`{}` of something that is not a Float", op.name()));
                 }
-                let name = if op == Prim::Sin { "sin" } else { "cos" };
-                let v = self.libm(name, vals[0].v, b, m)?;
+                let call = prim::float_op_of(op).expect("`sin` and `cos` are the two");
+                let v = self.float_prim(call, vals[0].v, b, m)?;
                 Ok(Val { v, ty: Repr::Float })
             }
             Prim::Trunc => {
@@ -8229,23 +8231,30 @@ impl<'a> Body<'a> {
         }
     }
 
-    /// A call into the C library: `double f(double)`.
-    fn libm(
+    /// A call into the runtime library's float entry point: `double beck_prim_f64(int, double)`.
+    ///
+    /// Declared here at the call site rather than up front with the arena protocol's symbols,
+    /// because Cranelift's module takes a declaration at any point and this one needs no state:
+    /// `Linkage::Import` against an archive the link step puts on the line, and nothing else.
+    fn float_prim(
         &mut self,
-        name: &str,
+        op: FloatOp,
         x: IrValue,
         b: &mut FunctionBuilder<'_>,
         m: &mut ObjectModule,
     ) -> Result<IrValue, String> {
         let mut sig =
             cranelift_codegen::ir::Signature::new(CallConv::triple_default(m.isa().triple()));
+        sig.params.push(AbiParam::new(types::I32));
         sig.params.push(AbiParam::new(types::F64));
         sig.returns.push(AbiParam::new(types::F64));
+        let name = prim::FLOAT_CALL;
         let id = m
             .declare_function(name, Linkage::Import, &sig)
             .map_err(|e| format!("declaring `{name}`: {e}"))?;
         let f = m.declare_func_in_func(id, b.func);
-        let call = b.ins().call(f, &[x]);
+        let code = b.ins().iconst(types::I32, i64::from(op.code()));
+        let call = b.ins().call(f, &[code, x]);
         Ok(b.inst_results(call)[0])
     }
 
@@ -8729,6 +8738,27 @@ fn calls_the_runtime_library(program: &Program, eligible: &BTreeSet<Arc<str>>) -
     fn calls(c: &Core) -> bool {
         if let CoreKind::Prim { op, .. } = &c.kind {
             if prim::op_of(*op).is_some() {
+                return true;
+            }
+        }
+        beck_core::core::children(c).into_iter().any(calls)
+    }
+    eligible
+        .iter()
+        .filter_map(|name| program.defs.get(name))
+        .any(|def| calls(&def.body))
+}
+
+/// Whether any definition of this program reaches a primitive the runtime library's float entry
+/// point answers.
+///
+/// Separate from [`calls_the_runtime_library`] because the two decide different things: that one
+/// decides whether the arena protocol's symbols are *declared*, and this one only whether the
+/// archive goes on the link line. A program can compute a sine and have no heap at all.
+fn names_a_float_primitive(program: &Program, eligible: &BTreeSet<Arc<str>>) -> bool {
+    fn calls(c: &Core) -> bool {
+        if let CoreKind::Prim { op, .. } = &c.kind {
+            if prim::float_op_of(*op).is_some() {
                 return true;
             }
         }

@@ -614,6 +614,41 @@ fn an_object_names_the_runtime_library_only_when_it_calls_it() {
     );
 }
 
+/// A sine is a call into the runtime library here too, and the object names no libm symbol.
+///
+/// The Cranelift half of `native.rs`'s `a_sine_is_a_linked_call_and_not_an_intrinsic`, and the
+/// mistake it guards against was this backend's original code: it imported the C symbol `sin`,
+/// which the link step resolved against whatever libm was on the machine. `docs/adr/0031` is why
+/// that is not an answer.
+///
+/// Read from the **object** rather than from the textual IR, because Cranelift prints a callee as
+/// its index (`fn0 = u0:19`) and the name a linker will resolve appears only in the symbol table.
+/// A test over the text would have asserted nothing about the symbol that matters.
+#[test]
+fn a_sine_is_a_linked_call_and_not_a_c_library_symbol() {
+    let m = beck_clif::module(&compile("reals.beck", REALS)).expect("this machine has an ISA");
+    // Symbol names sit NUL-separated in the object's string table, so the delimiters are what
+    // make this an exact name rather than a substring — `rsin` and `rcos` are symbols in here too.
+    let names = |name: &str| {
+        let needle: Vec<u8> = format!("\0{name}\0").into_bytes();
+        m.object.windows(needle.len()).any(|w| w == needle)
+    };
+    assert!(
+        names("beck_prim_f64"),
+        "`sin` and `cos` should be calls into the runtime library"
+    );
+    assert!(
+        m.links,
+        "so the object links the archive even though it allocates nothing"
+    );
+    for symbol in ["sin", "cos", "sinl", "cosl"] {
+        assert!(
+            !names(symbol),
+            "`{symbol}` would be the machine's libm rather than one answer"
+        );
+    }
+}
+
 #[test]
 fn the_three_backends_agree_on_text() {
     linker!();

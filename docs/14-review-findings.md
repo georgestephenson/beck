@@ -105,14 +105,21 @@ hash seeds (the usual HashDoS fix) break replay. **Resolution**: language-level 
 (`HashMap`, seeded per-store with a *persisted* random key so replay still holds) for hot paths
 that need them.
 
-### F9 — "Bit-for-bit floats across tiers" is undeliverable without owning libm — `DESIGNED`
+### F9 — "Bit-for-bit floats across tiers" is undeliverable without owning libm — `FIXED`
 
 IEEE 754 arithmetic is portable; **transcendentals are not** — `sin`/`cos`/`pow` differ across
 libms, so a fold using them replays differently on WASM vs native, silently breaking the
-determinism spine. **Resolution**: Beck ships its own deterministic math library (correctly-rounded
-implementations, rlibm-lineage) compiled into every tier; FMA contraction and fast-math are
-disabled in fold-reachable code; the cross-backend differential suite gains transcendental
-torture vectors. Documented cost: fold-position math trades a little speed for replayability.
+determinism spine. **Resolution**: Beck computes its own, in the runtime library every backend
+calls (`beck_prim::math`, [`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)),
+and the answer is the **correctly-rounded** one — which makes the specification the mathematics
+rather than a vendored file, so a later rewrite cannot change a bit of a replay. The
+implementation performs no rounded floating-point operation at all: exact integer reduction over
+the bits of 2/π, an integer series, one rounding at the end. The gate is
+`beck-prim/tests/transcendentals.rs`, which recomputes every answer at 1408 bits by a different
+route *and* asserts that some of those answers differ from the platform's own `sin`, so a change
+back to it goes red. The documented cost is real and stated: ~640 ns against a platform libm's
+11 ns, with the fast path in front of the exact one scheduled in
+[`08`](08-roadmap.md) §8.5.4.
 
 ### F10 — Auto-instrumentation is a PII/secret exfiltration channel — `DESIGNED`
 

@@ -125,6 +125,10 @@ mod tests {
             .iter()
             .find(|r| &*r.name == "s")
             .expect("`sin` is refused");
-        assert!(refused.reason.contains("F9"), "{}", refused.reason);
+        assert!(
+            refused.reason.contains("runtime library"),
+            "{}",
+            refused.reason
+        );
     }
 }

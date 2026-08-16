@@ -64,9 +64,10 @@ impl Toolchain {
         if let Some(archive) = runtime {
             cmd.arg(archive);
         }
-        // `llvm.sin.f64` and `llvm.cos.f64` lower to libm calls: LLVM has no instruction for
-        // either, and the evaluator's `f64::sin` reaches the same library, which is what makes
-        // the two agree bit for bit rather than nearly.
+        // For what the runtime library's own code reaches, not for anything this backend emits:
+        // the module names no transcendental at all, because `sin` and `cos` are calls into
+        // `beck-prim` (`beck_prim::math`) rather than intrinsics that would lower to whichever
+        // libm the machine happens to carry.
         cmd.arg("-lm");
         if runtime.is_some() {
             // What Rust's standard library needs from the system. On a glibc since 2.34 both are

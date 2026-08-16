@@ -903,6 +903,14 @@ being one function rather than a claim a differential supports. This is what a c
 does — `rustc` ships `libstd`, `clang` ships `compiler-rt` — and nothing in the subset had needed it
 before, because arithmetic is instructions and a `Str` is §93.2's `memcpy`.
 
+**`sin` and `cos` are linked too, and for a reason that is not this one.** Their correctness is
+nobody else's artefact — it is the mathematics — and the platform's libm is not an answer, because
+IEEE 754 pins neither. They are *computed* in the same library, correctly rounded, through a second
+entry point that carries no arena because a function from a double to a double allocates nothing
+([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)). The row in the
+table above they occupy is a fourth one: **fast enough, and exactly right by construction rather
+than by there being one copy.**
+
 **The measurement is the argument**, and the mechanism it was chosen over is measured beside it in
 the same run: `cargo test --release --test measure_native -- --nocapture`, with each primitive
 called `n` times *inside one compiled call* so that what is timed is the primitive rather than the

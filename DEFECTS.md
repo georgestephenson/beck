@@ -26,6 +26,39 @@ not you are the one to fix it.
 
 ---
 
+## `blocked-sibling-race` — a cancellation gate synchronises on how fast twenty calls run
+
+**What is wrong.** `beck-cli/tests/concurrency.rs::a_sibling_blocked_in_an_outbound_call_is_stopped_in_the_call`
+asserts that a child blocked in `http_fetch` is stopped *inside* the call
+([`docs/80`](docs/80-structured-concurrency-report.md) §80.14). For that to prove anything the
+sibling has to be inside its call when the first child raises, and what arranges it is arithmetic:
+`failing(20)` makes twenty instantly-answered fetches first, on the fixture's stated reasoning that
+this makes the sibling "provably inside its call by the time it does". Nothing enforces it. On a
+loaded machine the sibling's thread need not be scheduled at all before those twenty calls finish,
+and the test fails on its own guard — `the sibling never entered its call, so this proves nothing
+about stopping it there`.
+
+**Measured.** Green 4 of 4 run alone; red once in two runs of `cargo test --workspace --all-targets`
+on a 2-core container, at `entered == 0`. It is the same shape
+[`docs/80`](docs/80-structured-concurrency-report.md) §80.7 records for the ordering test — "broke
+eight times in forty runs of the whole suite and never when run alone" — which was fixed there and
+not here.
+
+**Why it is a defect rather than a flake to re-run.** The assertion is right and the *setup* is a
+race, so the failure is a false red: it says cancellation did not reach the call when what happened
+is that the call was never entered. A gate that goes red for a reason unrelated to what it guards
+teaches whoever sees it to re-run rather than to read
+([`docs/82`](docs/82-the-edge-report.md) §82.10 is the same lesson from the other side).
+
+**The gate a fix owes.** Make the ordering a fact rather than a hope: the fixture's host already
+counts `entered`, so hold the failing child's last call until that count is 1 — a latch, not a
+sleep — and the assertion becomes true by construction. Check it goes red *before* the fix by
+running the suite under load (`cargo test --workspace --all-targets` on a busy machine, or the test
+alone with the sibling's thread start delayed), and check the latch cannot deadlock if the sibling
+is never scheduled: the child that waits must still fail the test rather than hang.
+
+---
+
 ## `ui-vocabulary` — `ui:` checks no attribute or event name
 
 **What is wrong.** The `ui:` macro turns any `name=value` into an attribute and any `on_x=` into
@@ -126,41 +159,6 @@ after `beck fmt`, and the LSP formatting request enabled in the same change so t
 
 **Where it is argued.** [`docs/65`](docs/65-the-editor-report.md), and it is Lane C's in
 [`docs/08`](docs/08-roadmap.md) §8.5.5.
-
----
-
-## `libm-determinism` — `sin` and `cos` are the host's, so a fold replays differently on another machine
-
-**What is wrong.** [`docs/10`](docs/10-decisions.md) D3 rests the whole data tier on the log folding
-to one state, and [`docs/03`](docs/03-type-and-effect-system.md) §3.7 enforces the purity that is
-supposed to make it true. Purity is not enough for transcendentals: all three backends call out to
-whatever libm the host supplies, and **IEEE 754 does not require `sin` or `cos` to be correctly
-rounded**. Implementations differ in the last ulp between libms and between versions of one libm, so
-two machines can fold one log to two different states. `sqrt` is not affected — IEEE 754 does require
-it correctly rounded.
-
-The replay-determinism harness cannot see this, and that is the part worth stating: it replays a log
-**on one machine**, where the answer is stable. The three-way differential has the same blind spot —
-the evaluator, LLVM and Cranelift agree because all three resolve to the same host libm, not because
-they compute the same function.
-
-**Measured.** Read from the tree, not benchmarked. The evaluator calls Rust's `f64::sin`
-([`interp.rs`](compiler/crates/beck-eval/src/interp.rs), `Prim::Sin => Value::float(f.sin())`); the
-LLVM emitter emits `llvm.sin.f64` ([`emit.rs`](compiler/crates/beck-llvm/src/emit.rs)); the Cranelift
-emitter calls the extern symbol `sin`
-([`emit.rs`](compiler/crates/beck-clif/src/emit.rs)). Three paths, one host libm, no vendored
-implementation anywhere in the workspace.
-
-**The gate a fix owes.** The existing three-way differential run against **two different libms** —
-a CI matrix row rather than a new harness — over a program whose result depends on `sin` and `cos`.
-That is the gate that would have caught this, and a fix gated only by the current single-host
-differential would be [`docs/82`](docs/82-the-edge-report.md) §82.10's pattern again: a gate that
-cannot fail. A vendored correctly-rounded implementation behind the three `Prim`s is the fix that
-makes it pass.
-
-**Where it is argued.** [`docs/08`](docs/08-roadmap.md) §8.5.2 as retrofit item F9 and §8.5.4 as its
-first item. It was recorded as "owed rather than pending" for three phases with no position, which is
-the failure §8.5 opens by describing.
 
 ---
 

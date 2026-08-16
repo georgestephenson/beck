@@ -51,9 +51,9 @@ impl Linker {
         if let Some(archive) = runtime {
             cmd.arg(archive);
         }
-        // `sin` and `cos` are calls into the C library rather than instructions
-        // ([`crate::emit`]), and the evaluator's `f64::sin` reaches the same library — which
-        // is what makes the two agree bit for bit rather than nearly.
+        // For what the runtime library's own code reaches, not for anything this backend emits:
+        // `sin` and `cos` are calls into `beck-prim` ([`crate::emit`]) rather than into whichever
+        // libm the machine happens to carry, which is what makes them the evaluator's answer.
         cmd.arg("-lm");
         if runtime.is_some() {
             // What Rust's standard library needs from the system. On a glibc since 2.34 both are
