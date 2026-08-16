@@ -514,7 +514,17 @@ rows.
   subscriber, and §48.13 says "one file would change". It was in no phase. Its successor is
   [`99`](99-the-data-tier-means-of-combination.md) decision 3: presence moves when `seq` does not, so
   a join against presence is the one case the algebra above must refuse, and it should refuse it with
-  a diagnostic rather than a surprise until this exists.
+  a diagnostic rather than a surprise until this exists. **`awareness(f)` now sits on the same
+  clock and doubles what this row is worth**: a second roster, per subscriber for the same reason,
+  moving more often than the first because it follows navigations rather than connections.
+- **Awareness over a client-local value** (M): `awareness(f)` is built for `f : Session -> T`
+  ([`10`](10-decisions.md) D6, `corpus/33-awareness.beck`), which is *who is looking at what*. A
+  cursor or a selection needs a value the client holds and can publish, and there is none —
+  `beck-patch.js` listens for five events and `mousemove` is not among them. That prerequisite is
+  the same one the fifth home for interface state has
+  ([`104`](104-styling-and-the-component-library.md) §104.8), so the two are **one piece of work**:
+  a client-local stream, a client-placed non-durable fold over it, and `awareness` accepting a
+  signal as well as a function.
 - **Comment-preserving printing** (S, due rather than nice). **Done.** Ordinary `#` comments were
   dropped by the lexer, so `beck fmt` deleted them — a formatter that eats comments is one nobody
   runs twice, which is why `textDocument/formatting` was withheld rather than missing. They are now

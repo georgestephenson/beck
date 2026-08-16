@@ -198,6 +198,18 @@ pub enum Prim {
     /// what places it — no tier below the server discharges a `cap.*` — so a fold cannot read the
     /// roster and a view reaches it across a declared edge.
     Presence,
+    /// `awareness(f)` — what every subscriber contributes, keyed by actor.
+    ///
+    /// Presence with a payload, and the same three rules for the same reasons: a non-log input to
+    /// a view, bounded because the key is a name the client chooses (`docs/82` §82.5), and refused
+    /// at the chokepoint because an event whose existence depended on where somebody's cursor was
+    /// would not survive a replay. It carries `cap.presence` rather than a capability of its own —
+    /// a roster with payloads discloses strictly more than a roster, and gating the smaller
+    /// disclosure while leaving the larger one open would be the wrong way round.
+    ///
+    /// `f` is a function of the **`Session`**, which is what the server already holds for every
+    /// connection. `docs/104` §104.8 has the half that needs more than that and why it waits.
+    Awareness,
     /// `freshness()` — whether the page being rendered is the confirmed state or a guess.
     ///
     /// §3.7's "`Signal[T]` carries a freshness dimension (`confirmed | pending(n)`) that UI code
@@ -320,6 +332,7 @@ impl Prim {
             Reveal => "reveal",
             MergeClients => "merge_clients",
             Presence => "presence",
+            Awareness => "awareness",
             Freshness => "freshness",
             StreamFilterMap => "filter_map",
             Fold => "fold",
@@ -345,7 +358,9 @@ impl Prim {
             // nondeterminism in a Beck program — and the only one a *view* may read. The atom is a
             // capability rather than a new label: F16 asks for exactly that, and `cap.*` is what
             // keeps it off the tiers that would make it unreplayable (§3.3).
-            Prim::Presence => vec![Effect::Cap(std::sync::Arc::from("presence"))],
+            Prim::Presence | Prim::Awareness => {
+                vec![Effect::Cap(std::sync::Arc::from("presence"))]
+            }
             Prim::Durable => vec![Effect::Durable],
             Prim::NewUuid | Prim::Now => vec![Effect::Nondet],
             // The scope performs `spawn` itself; what its children perform is charged by the

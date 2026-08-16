@@ -104,10 +104,19 @@ pub async fn run_as<S: Socket>(
 
     let who = Subscriber { actor, path };
 
+    // Contributing from here for as long as this subscription lives, and joined *before* the first
+    // render for the reason the roster above is: the page a client is first sent is the page of a
+    // world it is already in, and a client that could not see its own cursor would think the
+    // feature was broken. A program that reads no awareness contributes nothing and holds no row.
+    let mine = match app.runtime().contribution_of(&who)? {
+        Some(v) => Some(app.awareness().join(who.actor.name(), v)),
+        None => None,
+    };
+
     // The one branch a rendering mode makes to a subscription.
     match app.runtime().placed().render.mode {
-        Mode::Server => mode_a(app, socket, sub, who, how).await,
-        Mode::Client => mode_b(app, socket, sub, who, how).await,
+        Mode::Server => mode_a(app, socket, sub, who, how, mine).await,
+        Mode::Client => mode_b(app, socket, sub, who, how, mine).await,
     }
 }
 
@@ -147,6 +156,7 @@ async fn mode_a<S: Socket>(
     sub: String,
     who: Subscriber,
     how: Resumption,
+    mine: Option<crate::awareness::Guard>,
 ) -> Result<()> {
     // Subscribe *before* reading the current view, so an event that lands in between wakes us
     // rather than being missed.
@@ -196,6 +206,7 @@ async fn mode_a<S: Socket>(
         how,
         initial,
         &mut version,
+        mine,
         Feed::Dom {
             engine,
             arranged,
@@ -216,6 +227,7 @@ async fn mode_b<S: Socket>(
     sub: String,
     who: Subscriber,
     how: Resumption,
+    mine: Option<crate::awareness::Guard>,
 ) -> Result<()> {
     // Subscribe *before* reading the state, for the same reason Mode A does: an event that lands
     // in between has to wake us rather than be missed.
@@ -246,6 +258,7 @@ async fn mode_b<S: Socket>(
         how,
         initial,
         &mut version,
+        mine,
         Feed::Data { last: state },
     )
     .await
@@ -322,6 +335,7 @@ async fn drive<S: Socket>(
     how: Resumption,
     initial: Option<serde_json::Value>,
     version: &mut tokio::sync::watch::Receiver<u64>,
+    mine: Option<crate::awareness::Guard>,
     mut feed: Feed,
 ) -> Result<()> {
     // A second thing this subscription may have to wake on, and only when the program asked: a
@@ -333,6 +347,15 @@ async fn drive<S: Socket>(
         .roles
         .view_reads_presence
         .then(|| app.presence().watch());
+    // And a third, on the same terms: a page that reads no awareness must not re-render because
+    // somebody else navigated. `Roles::awareness` is the compile-time fact that says so.
+    let mut aware = app
+        .runtime()
+        .placed()
+        .roles
+        .awareness
+        .is_some()
+        .then(|| app.awareness().watch());
     // How a subscriber was brought up to date is exactly the distinction Phase 0 got wrong twice
     // (§18.5 item 1): an ack means committed, a frame means your view has caught up.
     tracing::info!(seq, sub = %sub, how = how.label(), "subscribed");
@@ -359,6 +382,17 @@ async fn drive<S: Socket>(
             // The roster moved: somebody arrived or left. Nothing in the log moved, so `seq` does
             // not, and what this sends is a patch labelled with the position it already had.
             changed = wait(&mut here), if here.is_some() => {
+                if changed.is_err() {
+                    break; // the application is gone
+                }
+                let (frame, _) = feed.advance(app, &who).await?;
+                if let Some(frame) = frame {
+                    send_json(socket, &frame).await?;
+                }
+            }
+            // The awareness roster moved: somebody navigated, or arrived, or left. Nothing in the
+            // log moved, so `seq` does not — the same shape as the roster arm above.
+            changed = wait(&mut aware), if aware.is_some() => {
                 if changed.is_err() {
                     break; // the application is gone
                 }
@@ -428,6 +462,17 @@ async fn drive<S: Socket>(
                         if who.path != path {
                             who.path = path;
                             telemetry().navigations.incr();
+                            // This client's contribution is a function of its session, so a
+                            // navigation republishes it. Everybody else's re-render comes from the
+                            // registry waking their `aware` arm; this one's comes from the frame
+                            // below, which it was going to send anyway.
+                            if let Some(mine) = &mine {
+                                mine.publish(
+                                    app.runtime()
+                                        .contribution_of(&who)?
+                                        .unwrap_or(beck_core::Value::Unit),
+                                );
+                            }
                             let (frame, at) = feed.advance(app, &who).await?;
                             seq = at;
                             if let Some(frame) = frame {

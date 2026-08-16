@@ -86,6 +86,7 @@ pub const MAX_STEPS: u64 = 1_000_000;
 /// on it — so this list buys a diagnostic rather than a control. It is the difference between "a
 /// macro may not read the clock" and "there is no name `now`", and only the first is true.
 pub const RESTRICTED: &[(&str, &str)] = &[
+    ("awareness", "cap.presence"),
     ("digest_keyed", "cap.sign"),
     ("durable", "durable"),
     ("http_fetch", "net(host)"),

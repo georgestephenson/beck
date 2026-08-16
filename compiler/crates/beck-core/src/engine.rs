@@ -383,7 +383,21 @@ impl Engine {
         session: &Value,
         presence: &Value,
     ) -> Result<Value, ExecError> {
-        self.render_from(None, state, session, presence)
+        self.render_from(None, state, session, presence, &crate::edge::no_awareness())
+    }
+
+    /// The same render, against both rosters the caller may be keeping.
+    ///
+    /// [`Engine::render`] passes an empty one, which is what a caller with no connection registry
+    /// holds; a program whose page reads `awareness` is rendered through here.
+    pub fn render_all(
+        &mut self,
+        state: &Value,
+        session: &Value,
+        presence: &Value,
+        aware: &Value,
+    ) -> Result<Value, ExecError> {
+        self.render_from(None, state, session, presence, aware)
     }
 
     /// The same render, with the operators this engine does not own arriving from upstream.
@@ -393,10 +407,11 @@ impl Engine {
         state: &Value,
         session: &Value,
         presence: &Value,
+        aware: &Value,
     ) -> Result<Value, ExecError> {
         self.work = Work::default();
         match self
-            .tick(up, state, session, presence)
+            .tick(up, state, session, presence, aware)
             .and_then(|()| self.materialise(up, self.prepared.plan.root))
         {
             Ok(v) => {
@@ -418,9 +433,9 @@ impl Engine {
     /// engine does not own it, so there is nothing at the top to materialise.
     fn advance(&mut self, state: &Value) -> Result<(), ExecError> {
         self.work = Work::default();
-        // The shared half owns no `Op::Presence` — everything downstream of one is per-subscriber
-        // — so the value it would be given is never read.
-        match self.tick(None, state, &Value::Unit, &Value::Unit) {
+        // The shared half owns no `Op::Presence` and no `Op::Awareness` — everything downstream of
+        // one is per-subscriber — so the values it would be given are never read.
+        match self.tick(None, state, &Value::Unit, &Value::Unit, &Value::Unit) {
             Ok(()) => {
                 self.warm = true;
                 Ok(())
@@ -438,6 +453,7 @@ impl Engine {
         state: &Value,
         session: &Value,
         presence: &Value,
+        aware: &Value,
     ) -> Result<(), ExecError> {
         let cold = !self.warm;
         // The plan is behind an `Arc`, so this is one refcount rather than a clone of every
@@ -475,6 +491,16 @@ impl Engine {
                     let changed =
                         cold || !matches!(&self.cells[id].out, Out::Val(v) if same(v, presence));
                     self.cells[id].out = Out::Val(presence.clone());
+                    self.cells[id].changed = changed;
+                }
+                // Compared for the same reason as the roster, and with more at stake: a cursor
+                // moves far more often than a connection does, so most events arrive with the
+                // awareness map unchanged and nothing below this re-runs.
+                Op::Awareness => {
+                    self.cells[id].rebuilt = false;
+                    let changed =
+                        cold || !matches!(&self.cells[id].out, Out::Val(v) if same(v, aware));
+                    self.cells[id].out = Out::Val(aware.clone());
                     self.cells[id].changed = changed;
                 }
                 Op::Const => {
@@ -1470,10 +1496,34 @@ impl SharedDataflow {
         session: &Value,
         presence: &Value,
     ) -> Result<(Value, u64), ExecError> {
+        self.render_all(
+            engine,
+            state,
+            version,
+            session,
+            presence,
+            &crate::edge::no_awareness(),
+        )
+    }
+
+    /// The same render, against both rosters the caller may be keeping.
+    ///
+    /// [`SharedDataflow::render`] passes an empty awareness roster, which is what a caller with no
+    /// connection registry holds; a program whose page reads `awareness` is rendered through here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_all(
+        &self,
+        engine: &mut Engine,
+        state: &Value,
+        version: u64,
+        session: &Value,
+        presence: &Value,
+        aware: &Value,
+    ) -> Result<(Value, u64), ExecError> {
         self.advance(state, version)?;
         let inner = self.read();
         let up = Upstream::new(&inner, engine.seen);
-        let page = engine.render_from(Some(up), state, session, presence)?;
+        let page = engine.render_from(Some(up), state, session, presence, aware)?;
         engine.seen = inner.version;
         // Published outside this dataflow's write lock, and this is the whole reason a frontier is
         // an atomic: a render must not serialise against the other renders it is concurrent with.

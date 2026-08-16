@@ -136,14 +136,20 @@ impl Subject {
     fn render(&self, engine: &mut Engine, version: u64, actor: &str, at: &str) -> u64 {
         let session = self.runtime.session(actor);
         let here = beck_core::edge::presence_of(actor);
+        // The rosters the oracle renders against: one connection, this actor's own.
+        let aware = self
+            .runtime
+            .contribution(actor)
+            .unwrap_or_else(|e| panic!("{}: awareness: {e}", self.name));
         let (page, served) = self
             .shared
-            .render(
+            .render_all(
                 engine,
                 &self.history[version as usize],
                 version,
                 &session,
                 &here,
+                &aware,
             )
             .unwrap_or_else(|e| panic!("{}: shared render: {e}", self.name));
         let Value::Html(page) = page else {
@@ -378,10 +384,13 @@ fn what_a_subscriber_holds_is_only_what_reads_the_session() {
         let head = subject.head();
         subject.render(&mut engine, head, ACTORS[0], "the shared subscriber");
         standalone
-            .render(
+            .render_all(
                 &subject.history[head as usize],
                 &subject.runtime.session(ACTORS[0]),
                 &beck_core::edge::presence_of(ACTORS[0]),
+                // The same rosters the shared subscriber above rendered against: this compares two
+                // ways of arranging *one* page, so an input that differed would compare two pages.
+                &subject.runtime.contribution(ACTORS[0]).expect("awareness"),
             )
             .expect("a standalone render");
 

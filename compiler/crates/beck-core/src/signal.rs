@@ -76,6 +76,13 @@ pub enum Op {
     /// nor derived from it, which is the one fact everything else about it follows from — see
     /// [`crate::split`] for what that forbids and [`crate::plan`] for what it costs.
     Presence,
+    /// `awareness(f)` — every subscriber's `f(session)`, keyed by actor.
+    ///
+    /// A source for [`Op::Presence`]'s reason and with its rules: the runtime holds every
+    /// connection's `Session`, so it computes each contribution itself and this vertex reads what
+    /// it publishes. `f` is carried here rather than being a signal input because there is no
+    /// signal to read — the subscribers are the runtime's fact, not the graph's.
+    Awareness { f: Core },
     /// `freshness()` — whether what is about to be rendered is confirmed or a guess.
     ///
     /// A source like [`Op::Presence`], and the other one that is not the log. The difference is
@@ -109,6 +116,7 @@ impl Op {
         match self {
             Op::Ingress => "merge_clients",
             Op::Presence => "presence",
+            Op::Awareness { .. } => "awareness",
             Op::Freshness => "freshness",
             Op::Decide { .. } => "decide",
             Op::Fold { .. } => "fold",
@@ -220,6 +228,11 @@ impl Graph {
     /// The connection sets — what is *not* in the log.
     pub fn presences(&self) -> Vec<SigId> {
         self.find(|o| matches!(o, Op::Presence))
+    }
+
+    /// The awareness rosters — presence with a payload, and not in the log either.
+    pub fn awarenesses(&self) -> Vec<SigId> {
+        self.find(|o| matches!(o, Op::Awareness { .. }))
     }
 
     /// The freshness sources — the other thing that is not in the log, and for the same reason:
@@ -464,6 +477,7 @@ impl Builder<'_, '_> {
             CoreKind::Prim { op, args } => match (op, args.len()) {
                 (Prim::MergeClients, 0) => Some((Op::Ingress, Vec::new())),
                 (Prim::Presence, 0) => Some((Op::Presence, Vec::new())),
+                (Prim::Awareness, 1) => Some((Op::Awareness { f: args[0].clone() }, Vec::new())),
                 (Prim::Freshness, 0) => Some((Op::Freshness, Vec::new())),
                 (Prim::Decide, 3) => {
                     let proposals = self.input(&args[0], owner, tier)?;

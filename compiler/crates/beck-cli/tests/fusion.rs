@@ -217,14 +217,20 @@ fn the_fused_plan_the_unfused_plan_and_recompute_all_agree() {
             for (k, actor) in ACTORS.iter().enumerate() {
                 let session = runtime.session(actor);
                 let here = beck_core::edge::presence_of(actor);
+                // The roster the oracle renders against: `Runtime::view` builds the page one
+                // actor sees while looking at it, so an engine held to it has to be given the
+                // same one connection's contribution rather than an empty roster.
+                let aware = runtime
+                    .contribution(actor)
+                    .unwrap_or_else(|e| panic!("{name}: awareness: {e}"));
                 let want = page(
                     before[k]
-                        .render(&state, &session, &here)
+                        .render_all(&state, &session, &here, &aware)
                         .unwrap_or_else(|e| panic!("{name}: unfused engine: {e}")),
                 );
                 let got = page(
                     after[k]
-                        .render(&state, &session, &here)
+                        .render_all(&state, &session, &here, &aware)
                         .unwrap_or_else(|e| panic!("{name}: fused engine: {e}")),
                 );
                 assert_eq!(

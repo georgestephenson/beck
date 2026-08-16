@@ -97,6 +97,13 @@ pub enum Op {
     /// the log does not. Sharing it would need a second version, which is
     /// [`docs/48`](../../../../../docs/48-identity-report.md) §48.13's first unbuilt item.
     Presence,
+    /// What everybody is doing — `awareness(f)`, supplied by the caller like the other sources.
+    ///
+    /// [`Op::Presence`]'s rules, for [`Op::Presence`]'s reason: a roster with a payload is not a
+    /// function of the accumulator either, and the shared dataflow is versioned by the log's
+    /// `seq`. A separate source rather than a field of the roster because the two move
+    /// independently — a client that moves its cursor changes this and not presence.
+    Awareness,
     /// A closed expression, evaluated once when the plan is prepared.
     Const,
     /// Recomputed when an input changed. Carries a `Lam` over its inputs.
@@ -145,6 +152,7 @@ pub const OPERATORS: &[&str] = &[
     "state",
     "session",
     "presence",
+    "awareness",
     "const",
     "recompute",
     "map_values",
@@ -164,6 +172,7 @@ impl Op {
             Op::State => "state",
             Op::Session => "session",
             Op::Presence => "presence",
+            Op::Awareness => "awareness",
             Op::Const => "const",
             Op::Pointwise { .. } => "recompute",
             Op::MapValues => "map_values",
@@ -196,7 +205,10 @@ impl Op {
 
     /// Whether this is an input to the dataflow rather than a step in it.
     pub fn is_source(&self) -> bool {
-        matches!(self, Op::State | Op::Session | Op::Presence | Op::Const)
+        matches!(
+            self,
+            Op::State | Op::Session | Op::Presence | Op::Awareness | Op::Const
+        )
     }
 
     /// What orders this operator's arrangement — the table in this module's own documentation, as
@@ -204,7 +216,7 @@ impl Op {
     /// consequence of the plan rather than of a sort at the end.
     pub fn key(&self) -> &'static str {
         match self {
-            Op::State | Op::Session | Op::Presence | Op::Const => "a source",
+            Op::State | Op::Session | Op::Presence | Op::Awareness | Op::Const => "a source",
             Op::Pointwise { .. } | Op::Count | Op::IsEmpty => "a value, not an arrangement",
             Op::MapValues => "the map's key",
             Op::MapList { .. } | Op::FilterList { .. } => "the input's key, unchanged",
@@ -258,6 +270,7 @@ pub struct Plan {
     pub state: OpId,
     pub session: OpId,
     pub presence: OpId,
+    pub awareness: OpId,
     /// The declared signals that survived as nodes, so a report can use the program's own names.
     pub signals: Vec<(Arc<str>, OpId)>,
 }
@@ -308,11 +321,13 @@ impl Plan {
             state: 0,
             session: 0,
             presence: 0,
+            awareness: 0,
             vertices: BTreeMap::new(),
         };
         b.state = b.push(Op::State, Vec::new(), None);
         b.session = b.push(Op::Session, Vec::new(), None);
         b.presence = b.push(Op::Presence, Vec::new(), None);
+        b.awareness = b.push(Op::Awareness, Vec::new(), None);
 
         let root = match graph.by_name.get(&placed.roles.page_name).copied() {
             Some(page) if page < graph.nodes.len() => b.vertex(graph, page),
@@ -352,6 +367,7 @@ impl Plan {
             state: b.state,
             session: b.session,
             presence: b.presence,
+            awareness: b.awareness,
             signals,
         };
         plan.finish();
@@ -366,7 +382,7 @@ impl Plan {
             node.consumers = 0;
         }
         for i in 0..self.nodes.len() {
-            let per = matches!(self.nodes[i].op, Op::Session | Op::Presence)
+            let per = matches!(self.nodes[i].op, Op::Session | Op::Presence | Op::Awareness)
                 || self.nodes[i]
                     .inputs
                     .iter()
@@ -403,7 +419,13 @@ impl Plan {
     /// keeps its operator alive whether or not the page reads it.
     pub(crate) fn prune(&mut self) -> BTreeMap<OpId, OpId> {
         let mut live = vec![false; self.nodes.len()];
-        let mut stack = vec![self.root, self.state, self.session, self.presence];
+        let mut stack = vec![
+            self.root,
+            self.state,
+            self.session,
+            self.presence,
+            self.awareness,
+        ];
         stack.extend(self.signals.iter().map(|(_, id)| *id));
         while let Some(id) = stack.pop() {
             if std::mem::replace(&mut live[id], true) {
@@ -446,6 +468,7 @@ impl Plan {
         self.state = map[&self.state];
         self.session = map[&self.session];
         self.presence = map[&self.presence];
+        self.awareness = map[&self.awareness];
         self.finish();
         map
     }
@@ -554,7 +577,9 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
         .filter(|&j| plan.nodes[j].op.is_arrangement())
         .collect();
     match &node.op {
-        Op::State | Op::Session | Op::Presence => "—  a source, read by reference".to_string(),
+        Op::State | Op::Session | Op::Presence | Op::Awareness => {
+            "—  a source, read by reference".to_string()
+        }
         Op::Const => "—  evaluated once, when the plan is prepared".to_string(),
         Op::Pointwise { .. } if forced.is_empty() => {
             "1 recompute, and only when an input moved".to_string()
@@ -634,7 +659,7 @@ fn cadences(plan: &Plan) -> Vec<Cadence> {
     for (i, node) in plan.nodes.iter().enumerate() {
         let own = match node.op {
             Op::State => Cadence::PerEvent,
-            Op::Session | Op::Presence => Cadence::PerSubscription,
+            Op::Session | Op::Presence | Op::Awareness => Cadence::PerSubscription,
             _ => Cadence::Never,
         };
         let inherited = node
@@ -821,6 +846,7 @@ struct Builder<'a> {
     state: OpId,
     session: OpId,
     presence: OpId,
+    awareness: OpId,
     vertices: BTreeMap<SigId, OpId>,
 }
 
@@ -917,6 +943,10 @@ impl Builder<'_> {
                 )
             }
             SigOp::Presence => self.presence,
+            // Like presence, and for the same reason: what `f` is applied to is every *other*
+            // subscriber's session, which this dataflow does not hold. The runtime does
+            // (`beck_rt::awareness`), and hands the answer in as a source.
+            SigOp::Awareness { .. } => self.awareness,
             // Not a source: a **constant**, and that is the whole statement this plan makes about
             // freshness. A plan is what the *server* renders through, and a server renders the
             // state it has recorded — so `freshness()` here is `Confirmed` and never moves. The

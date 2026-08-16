@@ -1082,6 +1082,24 @@ pub const INDEX: &[CodeEntry] = &[
          `tests/replay.rs` holds a replay to — and D3 rests on that digest. The question is what \
          the digest covers, and it is open.",
     ),
+    e(
+        "B0520",
+        Stage::Signals,
+        "the chokepoint reads `awareness`, which is not in the log",
+        "`B0515` for the roster that carries a payload. What each connection was contributing \
+         when an event was recorded is written down nowhere, so a `validate` that decided from it \
+         would decide one thing now and another on replay. Record the fact instead: propose a \
+         command when the thing you are deciding from happens, and decide from the state that \
+         fold produces.",
+    ),
+    e(
+        "B0521",
+        Stage::Signals,
+        "reads `awareness`, so it cannot render on the client",
+        "`B0516` for the roster that carries a payload. `@render(client)` sends the browser the \
+         accumulator, and what every *other* connection is contributing is in neither the \
+         accumulator nor the log — the runtime holds it, one row per socket.",
+    ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(
         "B0600",

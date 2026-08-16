@@ -124,7 +124,7 @@ impl Placed {
             validate: lam(2, unit()),
             fold: lam(2, Core::new(CoreKind::Var(0), Ty::unit(), span)),
             init: unit(),
-            view: lam(4, unit()),
+            view: lam(5, unit()),
             state_ty: Ty::unit(),
             event_ty: Ty::unit(),
             command_ty: Ty::unit(),
@@ -137,6 +137,7 @@ impl Placed {
             states: Vec::new(),
             view_is_per_session: false,
             view_reads_presence: false,
+            awareness: None,
             view_reads_freshness: false,
         };
         let render = crate::render::Decision::of(&roles, &program.defs, false, None, span);
@@ -184,11 +185,11 @@ pub struct Roles {
     pub fold: Core,
     /// The fold's initial accumulator.
     pub init: Core,
-    /// `(state, session, presence, freshness) -> Html` — the client-placed view, with intermediate
-    /// signals inlined or shared.
+    /// `(state, session, presence, awareness, freshness) -> Html` — the client-placed view, with
+    /// intermediate signals inlined or shared.
     ///
-    /// Four parameters whether or not the program reads the last two: a role the runtime calls has
-    /// one arity, and a view that ignores an argument is cheaper than two code paths that could
+    /// Five parameters whether or not the program reads the last three: a role the runtime calls
+    /// has one arity, and a view that ignores an argument is cheaper than two code paths that could
     /// disagree about which one it has.
     pub view: Core,
     pub state_ty: Ty,
@@ -210,6 +211,13 @@ pub struct Roles {
     pub view_is_per_session: bool,
     /// Whether the page reads `presence()`, and therefore has an input the log does not contain.
     pub view_reads_presence: bool,
+    /// `awareness(f)`'s `f`, when the page reads a roster with a payload: `(Session) -> T`.
+    ///
+    /// A role rather than a signal, because the subscribers are the runtime's fact and not the
+    /// graph's — the runtime applies this to each connection's `Session` and hands the view the
+    /// roster it builds. `None` when the program reads no awareness, which is every program that
+    /// existed before it.
+    pub awareness: Option<Core>,
     /// Whether the page reads `freshness()`, and therefore has an input only a Mode B client can
     /// answer with anything but `Confirmed`.
     pub view_reads_freshness: bool,
@@ -376,6 +384,43 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         return None;
     }
 
+    // The same rule, for the roster with a payload. `awareness()` is `presence()` carrying what
+    // each connection contributes, so it is not in the log for the same reason and by more of it:
+    // what a client was looking at when an event was recorded is written down nowhere at all.
+    if let Some(&aware) = graph
+        .awarenesses()
+        .iter()
+        .find(|&&a| reaches(&graph, decide, a))
+    {
+        diags.push(
+            Diagnostic::error(
+                "B0520",
+                "the chokepoint reads `awareness`, which is not in the log",
+                graph.node(decide).span,
+            )
+            .with_primary_label(format!(
+                "`{}` decides from `{}`",
+                graph.label(decide),
+                graph.label(aware)
+            ))
+            .with_label(
+                graph.node(aware).span,
+                "what everybody is doing is decided here",
+            )
+            .with_note(
+                "an event is what a replay reproduces, and what each connection was contributing \
+                 when it was recorded is not written down anywhere. A `validate` that read the \
+                 roster would decide one thing today and another on replay, and the log would no \
+                 longer be the whole history",
+            )
+            .with_fix(
+                "record the fact instead: propose a command when the thing you are deciding from \
+                 happens, and decide from the state that fold produces",
+            ),
+        );
+        return None;
+    }
+
     // The same rule, for the other source that is not the log. `freshness()` is a client's account
     // of what it has not heard back about yet, so a `validate` deciding from it would decide from
     // the network — and on replay there is no network and nothing is pending.
@@ -487,6 +532,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let state_var = vars.fresh();
     let session_var = vars.fresh();
     let presence_var = vars.fresh();
+    let awareness_var = vars.fresh();
     let freshness_var = vars.fresh();
 
     let state_roles: Vec<StateRole> = folds
@@ -508,6 +554,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         state_var,
         session_var,
         presence_var,
+        awareness_var,
         freshness_var,
         bound: BTreeMap::new(),
         lets: Vec::new(),
@@ -515,6 +562,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         shared: Vec::new(),
         per_session: false,
         reads_presence: false,
+        awareness: None,
         reads_freshness: false,
         vars: &mut vars,
         diags,
@@ -525,6 +573,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let shared = slicer.shared.clone();
     let per_session = slicer.per_session;
     let reads_presence = slicer.reads_presence;
+    let awareness = slicer.awareness.clone();
     let reads_freshness = slicer.reads_freshness;
 
     let state_ty = if fused {
@@ -535,7 +584,14 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
 
     let view = Core {
         kind: CoreKind::Lam {
-            params: vec![state_var, session_var, presence_var, freshness_var].into(),
+            params: vec![
+                state_var,
+                session_var,
+                presence_var,
+                awareness_var,
+                freshness_var,
+            ]
+            .into(),
             body: Arc::new(view_body),
         },
         ty: Ty::fun(
@@ -543,6 +599,13 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
                 state_ty.clone(),
                 Ty::con("Session"),
                 Ty::map(Ty::str_(), Ty::int()),
+                // A view that reads no roster still takes the parameter, for the reason it takes
+                // the other two it may ignore: a role the runtime calls has one arity. The element
+                // type is the program's when it has one, and `()` when there is nothing to say.
+                awareness
+                    .as_ref()
+                    .map(|(_, ty)| ty.clone())
+                    .unwrap_or_else(|| Ty::map(Ty::str_(), Ty::unit())),
                 Ty::con("Freshness"),
             ],
             Ty::html(),
@@ -687,6 +750,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         states: state_roles,
         view_is_per_session: per_session,
         view_reads_presence: reads_presence,
+        awareness: awareness.map(|(f, _)| f),
         view_reads_freshness: reads_freshness,
     };
 
@@ -1118,6 +1182,7 @@ struct Slicer<'a, 'd> {
     state_var: VarId,
     session_var: VarId,
     presence_var: VarId,
+    awareness_var: VarId,
     freshness_var: VarId,
     vars: &'d mut Vars,
     /// Vertices already bound in this slice.
@@ -1128,6 +1193,8 @@ struct Slicer<'a, 'd> {
     shared: Vec<Arc<str>>,
     per_session: bool,
     reads_presence: bool,
+    /// The awareness function this view reached, and the type of the roster it produces.
+    awareness: Option<(Core, Ty)>,
     reads_freshness: bool,
     diags: &'d mut Diagnostics,
 }
@@ -1161,6 +1228,14 @@ impl Slicer<'_, '_> {
         if matches!(node.op, Op::Presence) {
             self.reads_presence = true;
             return Some(var(self.presence_var, signal_elem(&node.ty), node.span));
+        }
+        // Awareness is presence with a payload and arrives the same way: the runtime holds every
+        // subscriber's `Session`, applies `f` to each and hands the roster in. The function is
+        // captured here because the runtime is what calls it — there is no signal to read it from.
+        if let Op::Awareness { f } = &node.op {
+            let elem = signal_elem(&node.ty);
+            self.awareness = Some((f.clone(), elem.clone()));
+            return Some(var(self.awareness_var, elem, node.span));
         }
         // And so is freshness, for the same reason and from the other side: what the renderer
         // knows about its own guesses is handed to the view, not computed by it.
@@ -1229,7 +1304,7 @@ impl Slicer<'_, '_> {
                 );
                 return None;
             }
-            Op::Durable | Op::Alias | Op::Presence | Op::Freshness => {
+            Op::Durable | Op::Alias | Op::Presence | Op::Awareness { .. } | Op::Freshness => {
                 unreachable!("handled above")
             }
         };

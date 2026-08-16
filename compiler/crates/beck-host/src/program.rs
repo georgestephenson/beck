@@ -34,6 +34,12 @@ pub struct Runtime {
     validate: Callable,
     fold_fn: Callable,
     view_fn: Callable,
+    /// `awareness(f)`'s `f`, prepared, when the page reads a roster with a payload.
+    ///
+    /// The runtime is what applies it, because the subscribers are its fact rather than the
+    /// graph's: it holds every connection's `Session` and turns each into that client's
+    /// contribution. `None` for a page that reads no roster.
+    awareness_fn: Option<Callable>,
     /// The same view as a dataflow plan (§5.3), with every operator prepared. Compiled once and
     /// shared by every subscription: an [`Engine`] per subscriber holds the arrangements, and this
     /// holds the code.
@@ -59,6 +65,10 @@ impl Runtime {
         let validate = role(&placed.roles.validate, "`validate`")?;
         let fold_fn = role(&placed.roles.fold, "the fold")?;
         let view_fn = role(&placed.roles.view, "the view")?;
+        let awareness_fn = match &placed.roles.awareness {
+            Some(f) => Some(role(f, "the awareness function")?),
+            None => None,
+        };
         let plan = Arc::new(
             Prepared::compile(&placed, backend.as_ref())
                 .map_err(|e| anyhow!("compiling the view plan: {e}"))?,
@@ -74,6 +84,7 @@ impl Runtime {
             validate,
             fold_fn,
             view_fn,
+            awareness_fn,
             plan,
             init,
             command,
@@ -143,7 +154,42 @@ impl Runtime {
     /// with no connection registry is rendering the page one actor sees while looking at it.
     /// [`Runtime::view_with`] is what an application uses, and it is the same function.
     pub fn view(&self, state: &Value, actor: &(impl Viewer + ?Sized)) -> Result<Html> {
-        self.view_with(state, actor, &beck_core::edge::presence_of(actor.actor()))
+        let mine = self.contribution(actor)?;
+        self.view_with_all(
+            state,
+            actor,
+            &beck_core::edge::presence_of(actor.actor()),
+            &mine,
+        )
+    }
+
+    /// This client's own awareness contribution, or an empty roster when the page reads none.
+    ///
+    /// The one-connection case, and it is [`Runtime::view`]'s reason: a caller with no registry is
+    /// rendering the page one actor sees while looking at it, so the roster contains them and
+    /// nobody else.
+    pub fn contribution(&self, actor: &(impl Viewer + ?Sized)) -> Result<Value> {
+        match self.contribution_of(actor)? {
+            None => Ok(beck_core::edge::no_awareness()),
+            Some(mine) => Ok(beck_core::edge::awareness_of(actor.actor(), mine)),
+        }
+    }
+
+    /// What this client contributes to everybody else's roster, or `None` when the page reads no
+    /// awareness.
+    ///
+    /// The bare value rather than a roster of one, because the caller that matters is a *registry*
+    /// holding one of these per connection (`beck_rt::awareness`), and it keys them itself. `None`
+    /// rather than `Unit` so that a program which reads no awareness costs a registry nothing —
+    /// there is a difference between contributing nothing and having nothing to contribute.
+    pub fn contribution_of(&self, actor: &(impl Viewer + ?Sized)) -> Result<Option<Value>> {
+        let Some(f) = &self.awareness_fn else {
+            return Ok(None);
+        };
+        let mine = f(vec![session(actor.actor(), claims_of(actor), actor.path())])
+            .map_err(|e| anyhow!("{e}"))
+            .context("computing this client's awareness")?;
+        Ok(Some(mine))
     }
 
     /// The same view, against a roster somebody else is keeping (`crate::presence`).
@@ -153,10 +199,23 @@ impl Runtime {
         actor: &(impl Viewer + ?Sized),
         here: &Value,
     ) -> Result<Html> {
+        let mine = self.contribution(actor)?;
+        self.view_with_all(state, actor, here, &mine)
+    }
+
+    /// The view, against both rosters a caller may be keeping.
+    pub fn view_with_all(
+        &self,
+        state: &Value,
+        actor: &(impl Viewer + ?Sized),
+        here: &Value,
+        aware: &Value,
+    ) -> Result<Html> {
         let out = (self.view_fn)(vec![
             state.clone(),
             session(actor.actor(), claims_of(actor), actor.path()),
             here.clone(),
+            aware.clone(),
             // Confirmed, and not a parameter, because this is the server's render: what it holds
             // is the fold over the log, and a guess is something only a Mode B client has. The
             // checker makes the constant unobservable — a page that reads `freshness()` cannot
@@ -212,12 +271,14 @@ impl Runtime {
         state: &Value,
         actor: &(impl Viewer + ?Sized),
         here: &Value,
+        aware: &Value,
     ) -> Result<Html> {
         let out = engine
-            .render(
+            .render_all(
                 state,
                 &session(actor.actor(), claims_of(actor), actor.path()),
                 here,
+                aware,
             )
             .map_err(|e| anyhow!("{e}"))
             .context("maintaining the view")?;
@@ -236,6 +297,7 @@ impl Runtime {
     /// Returns the version the page reflects, which may be newer than `version`: another subscriber
     /// may have advanced the shared side first, and a page of the newer state is right where
     /// unwinding an arrangement back to the older one is not.
+    #[allow(clippy::too_many_arguments)]
     pub fn render_shared(
         &self,
         shared: &SharedDataflow,
@@ -244,14 +306,16 @@ impl Runtime {
         version: u64,
         actor: &(impl Viewer + ?Sized),
         here: &Value,
+        aware: &Value,
     ) -> Result<(Html, u64)> {
         let (out, at) = shared
-            .render(
+            .render_all(
                 engine,
                 state,
                 version,
                 &session(actor.actor(), claims_of(actor), actor.path()),
                 here,
+                aware,
             )
             .map_err(|e| anyhow!("{e}"))
             .context("maintaining the view")?;

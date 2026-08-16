@@ -407,11 +407,10 @@ the answer takes. **This is a recommendation and not a decision**: adopting it w
    [Yjs](https://docs.yjs.dev/getting-started/adding-awareness), the canonical collaborative stack,
    keeps it in a protocol of its own precisely because "awareness information isn't stored in the
    Yjs document, as it doesn't need to be persisted across sessions", and its shape is a
-   `Map<client, state>` that is broadcast, dropped after thirty seconds of silence and deleted on
-   disconnect. **Beck has nine-tenths of this already**: `presence()` is that map with no payload —
-   a non-log input to a view, per-connection, capacity-bounded (§82.5), and forbidden from reaching
-   the chokepoint (`B0515`). Giving it a payload is an extension of built machinery rather than a
-   new construct, and it is what D1's "cursors" always wanted.
+   `Map<client, state>` that is broadcast and deleted on disconnect. It was nine-tenths built
+   before anything was written for it, because `presence()` is that map with no payload, and
+   **`awareness(f)` now exists** for the half of it a session can answer — see below for what that
+   half is and what the other half still waits on. It is what D1's "cursors" always wanted.
 4. **A client-placed non-durable fold**, for what is left after those three: ephemera that *nobody
    else* sees — a combobox's highlighted option, a tooltip's target. It needs a client-local stream,
    which does not exist; the only stream is `merge_clients()` and it is server-placed by §3.5.
@@ -431,41 +430,54 @@ incrementally-maintained views are the cache ([`15`](15-scale-and-distribution.m
 sentence names the right problem and the wrong mechanism, and the correction is that **ephemerality
 comes from the stream and the audience, never from the absence of a `durable` wrapper**.
 
-#### What awareness would be, and the half of it that is buildable today
+#### What awareness is, and the half of it that is built
 
-Scoped against the tree rather than sketched, because the scoping moved it.
-
-**The construct.** Awareness is a signal operation and not a command: nothing about a cursor is
-proposed, validated or recorded. The shape that fits Beck is
+**The construct**, which exists. Awareness is a signal operation and not a command: nothing about a
+cursor is proposed, validated or recorded.
 
 ```python
-here: Signal[Map[ActorId, T]] = awareness(f)
+reading: Signal[Map[Str, Str]] = awareness(whereabouts)
 ```
 
-where `f` produces this client's contribution and the roster is everybody's latest. It inherits
-`presence()`'s three rules unchanged, which is the argument for building it there: it is a non-log
-input to a view, it is capacity-bounded (§82.5's table-bounds-the-attacker finding applies verbatim,
-since the key is again a name the client chooses), and it **may not reach the chokepoint** — an
-event whose existence depended on where somebody's cursor was would not survive a replay, which is
-`B0515`'s reasoning with one noun changed.
+`f` produces this client's contribution and the roster is everybody's latest, keyed by actor.
+`compiler/corpus/33-awareness.beck` is the program, `beck-cli/tests/awareness.rs` is the gate, and
+`beck_rt::awareness` is the registry that applies `f` to each connection's `Session` and publishes
+what comes back.
 
-**And it splits in two, which is the finding.** What `f` may read decides how much of it can be
-built:
+`f` is a function of a `Session` rather than a signal, and that signature is the whole design:
+**the subscribers are the runtime's fact and not the graph's**, so a program cannot name another
+connection's session — it can only say what it would like to know about one. Nothing in the signal
+graph could have expressed the roster; the runtime holds it, one row per socket, and hands it to the
+view as a source beside `presence`.
 
-- **`f : Session -> T` is buildable now, and needs no wire change at all.** The server already holds
-  every subscriber's `Session` — the route arrives on `hello` and on every `Nav` — so it can compute
-  each client's contribution itself and never ask. *Who is looking at what* is the most-wanted
-  awareness feature after presence itself, and it costs a source, a role and an aggregation.
+It inherits `presence()`'s three rules unchanged, which is why it was built there:
+
+- it is a **non-log input to a view**, so everything below it runs per subscriber — the shared
+  dataflow is versioned by the log's `seq` and this moves when the log does not;
+- it is **capacity-bounded** (§82.5's table-bounds-the-attacker finding applies verbatim, since the
+  key is again a name the client chooses) — *and* bounded a second time, per contribution, which
+  presence needs no equivalent of: a roster of counts costs its capacity, and a roster of values
+  costs its capacity times whatever the program's `f` returns;
+- it **may not reach the chokepoint** (`B0520`) — an event whose existence depended on where
+  somebody's cursor was would not survive a replay — and it **may not render in the browser**
+  (`B0521`), because a client handed the accumulator holds nothing this could be rendered from.
+
+**And it splits in two, which was the finding and still is.** What `f` may read decides how much of
+it can be built:
+
+- **`f : Session -> T` is built, and needed no wire change at all.** The server already holds every
+  subscriber's `Session` — the route arrives on `hello` and on every `Nav` — so it computes each
+  client's contribution itself and never asks. *Who is looking at what* is the most-wanted awareness
+  feature after presence itself, and it cost a source, a role and an aggregation.
 - **`f` over a client-local value — a cursor, a selection — is not**, and not for a protocol reason:
   the client has nothing to derive one *from*. `beck-patch.js` listens for five events and
   `mousemove` is not among them (§104.8's Wall 2), so there is no client-local value in the language
   to publish. Arbitrary awareness therefore has the **same prerequisite as the fifth home**, and the
   two are one piece of work rather than two.
 
-So the order is: the session-derived half first, because it is independent and immediately useful;
-the client-local value next, which lets `awareness` take a client-placed signal and gives the full
-[Yjs](https://docs.yjs.dev/getting-started/adding-awareness) shape; and the fifth home falls out of
-the same work.
+So the remaining order is: the client-local value next, which lets `awareness` take a client-placed
+signal and gives the full [Yjs](https://docs.yjs.dev/getting-started/adding-awareness) shape; and
+the fifth home falls out of the same work.
 
 #### What the fifth home costs to build, which is why this needs a D-number
 
