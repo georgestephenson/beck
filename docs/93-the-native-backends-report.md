@@ -7,11 +7,14 @@ backends** — carried since Phase 1 as a shape with the evaluator on both sides
 file — is a three-way one: the tree-walker, LLVM and Cranelift on every call.
 
 Across the corpus, both benchmark suites, both SICP chapters, the examples and the standard library,
-**941 definitions compile and 137 are refused**, and `examples/todo.beck` compiles **all nine of its
+**963 definitions compile and 137 are refused**, and `examples/todo.beck` compiles **all nine of its
 definitions** — the sentence that used to name `validate` as the one left, for a Unicode table, was
 out of date rather than made true again by §93.12: `validate` reaches none of the fifteen primitives
-that section is about. Nine corpus programs compile their `apply_event` — the step function of a
-`durable` fold — and twenty-one of thirty-two compile their `view`.
+that section is about. **All thirty-four** corpus programs compile their `apply_event` — the step
+function of a `durable` fold — and **twenty-four of thirty-four** compile their `view`
+(`BECK_REQUIRE_LLVM=1 cargo test --release --test native -- --nocapture`, re-read 2026-08-17; the
+figures this replaces were 941, nine and twenty-one of thirty-two, and both the numerator and the
+corpus have grown since).
 
 This chapter is the whole of Lane E. It arrived in fifteen pieces over as many changes, and for
 fourteen of them the frame was the same: a thing gets a layout, both emitters learn it, the

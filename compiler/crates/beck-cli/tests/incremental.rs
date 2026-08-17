@@ -18,7 +18,11 @@ use beck_core::Placed;
 /// `beck explain cost` over a program, which is `explain incremental`'s sibling about the same
 /// plan: that one says whether a view *can* be maintained, this one says what maintaining it costs.
 fn cost(p: &Placed) -> String {
-    beck_core::plan::cost_report(&beck_core::plan::Plan::compile(p))
+    cost_with(p, beck_core::plan::Relate::Recognise)
+}
+
+fn cost_with(p: &Placed, relate: beck_core::plan::Relate) -> String {
+    beck_core::plan::cost_report(&beck_core::plan::Plan::compile_with(p, relate))
 }
 
 fn ok(name: &str, src: &str) -> Placed {
@@ -95,8 +99,13 @@ page: Signal[Html] = per_session(chosen, show)
 /// is the shape of the defect rather than a check on it.
 #[test]
 fn the_tally_counts_every_line_the_report_prints() {
-    // `27-review.beck` is the program §99.3 quotes: its loop body captured the accumulator.
-    let text = cost(&corpus("27-review.beck"));
+    // `27-review.beck` is the program §99.3 quotes, **with the join switched off**, which is the
+    // plan that finding was made against. Its loop is an equi-join and the compiler now reads it as
+    // one, so with the recognition on there is no captured accumulator left to count — the defect
+    // this test was written for was in the *report*, not in the plan, and it is still the report
+    // that has to be held to what it prints. `Relate::Refuse` is how a program with two reasons for
+    // costing `O(n)` stays reachable now that the corpus has one fewer.
+    let text = cost_with(&corpus("27-review.beck"), beck_core::plan::Relate::Refuse);
     let printed = text
         .lines()
         .filter(|l| l.contains("n entries copied") || l.contains("n applications on every event"))

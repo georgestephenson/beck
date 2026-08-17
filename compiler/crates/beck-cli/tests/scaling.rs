@@ -133,6 +133,131 @@ async fn a_view_over_a_large_state_is_still_one_pass() {
     assert!(html.render().contains("todo 1999"));
 }
 
+/// **A loop whose body reads the state costs the change, not the collection.**
+///
+/// [`docs/99-the-data-tier-means-of-combination.md`](../../../../docs/99-the-data-tier-means-of-combination.md)
+/// §99.9's first item, and it was written to go **red**: `corpus/27-review.beck` loops over its
+/// notes and asks its verdicts about each one, which is an equi-join nobody wrote as one. The
+/// engine had no operator for it, so the loop's per-element function *captured the accumulator* —
+/// and a captured node that moves on every event makes the function a different function on every
+/// event, so every note was reconsidered whatever changed. A nested-loop join with no index, per
+/// event, and every gate in this file was blind to it.
+///
+/// A shape rather than a rate, for [`docs/13`](../../../../docs/13-testing.md) §13.7's reason, and
+/// with no clock in it at all: [`beck_core::engine::Work`] counts applications, entries touched and
+/// operators recomputed, so this is the deterministic instrument the read-model gate below uses.
+///
+/// # It measures both settings, which is what stops it being a claim
+///
+/// [`Relate::Refuse`] is the off switch [`docs/08`](../../../../docs/08-roadmap.md) §8.3 item 8
+/// requires of a choice the compiler makes unbidden, and running it here does two jobs at once: it
+/// is the proof the switch works, and it is the gate's own evidence that it **can fail** — the
+/// pattern [`docs/82`](../../../../docs/82-the-edge-report.md) §82.10 says four of this project's
+/// gates lacked. The refused path is asserted to grow, so a green run states the difference the
+/// operator makes rather than only that today's number is small.
+///
+/// `materialised` is excluded from both and the other three counters are not. Assembling the page's
+/// children is `O(n)` by design (§23.8) and would swamp the signal; `recomputed` is *included* so
+/// that a "fix" which moved the work into a pointwise operator would still be caught.
+#[test]
+fn maintaining_a_view_whose_loop_looks_something_up_costs_the_same_at_any_size() {
+    use beck_core::core::Fields;
+    use beck_core::engine::{Engine, Prepared};
+    use beck_core::plan::{Op, Plan, Relate};
+    use beck_core::Value;
+    use beck_rt::{Envelope, Instant, Runtime};
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/27-review.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let (placed, diags, map) = beck_core::compile_str("27-review.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("the corpus program compiles");
+
+    let has_join = |relate: Relate| {
+        Plan::compile_with(&placed, relate)
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Join { .. }))
+    };
+    // Both directions. Without the first, a program edited out of the shape would leave this gate
+    // measuring a loop that relates nothing and passing; without the second, the switch could have
+    // stopped working and the comparison below would be one path measured twice.
+    assert!(
+        has_join(Relate::Recognise),
+        "27-review.beck no longer compiles to a join, so this gate measures something else"
+    );
+    assert!(
+        !has_join(Relate::Refuse),
+        "`Relate::Refuse` left a join in the plan, so the off switch is not one"
+    );
+
+    let submitted = |i: usize| {
+        let mut fields = Fields::new();
+        fields.insert(Arc::from("id"), Value::str_(format!("n{i:06}")));
+        fields.insert(Arc::from("text"), Value::str_(format!("note {i}")));
+        Value::data(Arc::from("Event"), Some(Arc::from("Submitted")), fields)
+    };
+
+    // What maintaining one more event costs, once `n` notes are already there.
+    let work_at = |relate: Relate, n: usize| -> u64 {
+        let backend = beck_eval::backend(&placed);
+        let plan = Arc::new(Plan::compile_with(&placed, relate));
+        let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("the plan prepares"));
+        let runtime = Runtime::new(placed.clone(), backend).expect("the program prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let fold = |state: &Value, seq: usize| {
+            let event = submitted(seq);
+            let env = Envelope {
+                seq: seq as u64,
+                at: Instant(seq as i64),
+                actor: "ana".to_string(),
+                body: event.clone(),
+            };
+            runtime.fold(state, &env, event).expect("folds")
+        };
+        let mut state = runtime.initial_state().expect("an initial accumulator");
+        for i in 0..n {
+            state = fold(&state, i + 1);
+        }
+        // The cold render builds every arrangement — `O(n)`, once, and not what is measured.
+        engine.render(&state, &session, &here).expect("renders");
+        state = fold(&state, n + 1);
+        engine.render(&state, &session, &here).expect("renders");
+
+        let work = engine.work();
+        println!(
+            "{relate:?} at {n:>5} notes: {:>5} applications, {:>5} touched, {:>3} recomputed, \
+             {:>5} materialised",
+            work.applications, work.touched, work.recomputed, work.materialised
+        );
+        work.applications + work.touched + work.recomputed
+    };
+
+    let (small, large) = (
+        work_at(Relate::Recognise, 200),
+        work_at(Relate::Recognise, 1_600),
+    );
+    let (refused_small, refused_large) =
+        (work_at(Relate::Refuse, 200), work_at(Relate::Refuse, 1_600));
+
+    assert!(
+        large <= small * 3,
+        "eight times the notes cost {large} units of maintenance against {small}. A loop whose \
+         body looks up in another collection is an equi-join; without the operator its function \
+         captures the accumulator and every event reconsiders every row — docs/99 §99.3"
+    );
+    assert!(
+        refused_large > refused_small * 3,
+        "with the join refused, eight times the notes cost {refused_large} units against \
+         {refused_small} — which is not the nested loop this gate exists to say the operator \
+         removes. Either the loop stopped being one, or something else made the refused path fast; \
+         either way the comparison above no longer means what it says"
+    );
+}
+
 /// Build a graph of `n` definitions in a chain, each also depending on a shared root, and time it.
 fn graph_cost_ns_per_node(n: usize) -> f64 {
     use beck_core::graph::{EdgeKind, GraphBuilder, GraphNode, NodeId, NodeKind};

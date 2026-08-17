@@ -353,17 +353,21 @@ and the engine does not do this one.** The two disagreeing in silence would be t
 project exists not to do, so `beck explain incremental` prints both: the analysis's verdict per view,
 and the plan's operator table, in which `html_el` appears under `recompute`.
 
-**There is a second instance of that disagreement, and printing both did not catch it.** A
+**There was a second instance of that disagreement, and printing both did not catch it.** A
 per-element function that captured a plan node is a *different function* when that node moves, so its
 whole collection is reapplied (§23.13's rebuild rule) — and when what it captured is the
-**accumulator**, that is every event. `beck explain incremental corpus/27-review.beck` reports its
-`flat_map` as `maintained`, because the operator does have a delta rule; `beck explain cost` reports
+**accumulator**, that is every event. `beck explain incremental corpus/27-review.beck` reported its
+`flat_map` as `maintained`, because the operator does have a delta rule; `beck explain cost` reported
 `n applications whenever #0 moves` for the same operator, because its *function* moved rather than
-its input. Both are printed, both are true, and nothing puts them side by side. The shape is a join
-written as a loop with a lookup inside it, the engine has no join to compile it to, and
-[`99`](99-the-data-tier-means-of-combination.md) is the design that closes it — §99.3 has the
-transcripts and the sweep that finds three such sites in the tree among fifteen benign ones the same
-line reports identically.
+its input. Both were printed, both were true, and nothing put them side by side.
+
+The shape was a join written as a loop with a lookup inside it, and there is now an operator to
+compile it to ([`99`](99-the-data-tier-means-of-combination.md) §99.6): `27-review` compiles to a
+`Join`, its `flat_map` captures nothing, and the two commands agree about it. §99.3 has the
+transcripts and the sweep that found three such sites in the tree among fifteen benign ones the same
+line reported identically — **one of the three is closed, one (`board`) is a grouping and waits on
+`arrange_by`, and the third is `32-here`**. What the episode leaves behind is the lesson rather than
+the case: two commands that are each true about one operator, and no reader who would run both.
 
 ## 23.9 One shared dataflow: the three choices
 
@@ -983,7 +987,7 @@ itself.
 | Partial state and upqueries | **Not built.** [`38`](38-literature-survey.md) §38.2's **borrow** verdict on Noria — evicted arrangements refilled on demand — is the finer-grained version of the lifecycle. What is built is all-or-nothing per dataflow |
 | Per-operator lifecycle | **Not built.** An operator no *connected* subscriber reads is still maintained if any operator does |
 | A gate on any of the exported numbers | **Not built.** A subscription over a thousand rows is 5.4 MB and nothing covers that case |
-| Joins, subqueries, `group by`, aggregates other than `count(*)`, `distinct` | **Not built**, and the reason is below the SQL rather than in it: **the plan has no join and no grouping either**, so there is nothing for this surface to compile into. The view algebra's combining forms are all unary — every operator takes one collection, and `concat_lists`, the one that takes several, unions same-typed streams rather than relating them. [`99`](99-the-data-tier-means-of-combination.md) is the design that closes it, and §99.2 argues the absence is an oversight rather than a decision. When the plan has them, this surface grows by compiling *into* it rather than by growing a second interpreter |
+| Joins, subqueries, `group by`, aggregates other than `count(*)`, `distinct` | **Not built in this surface**, and the reason is below the SQL rather than in it. The plan now **has a join** ([`99`](99-the-data-tier-means-of-combination.md) §99.6, `Op::Join`), inferred from a loop that looks something up rather than written as one; what the read-model SQL still lacks is the compilation *into* it, which is §99.9 item 9. Grouping and the aggregates are missing from the plan itself, so for those there is still nothing to compile into. The view algebra's combining forms were all unary until the join — every other operator takes one collection, and `concat_lists`, the one that takes several, unions same-typed streams rather than relating them. [`99`](99-the-data-tier-means-of-combination.md) is the design that closes it, and §99.2 argues the absence is an oversight rather than a decision. When the plan has them, this surface grows by compiling *into* it rather than by growing a second interpreter |
 | `count(*)` without scanning | **Not built.** The plan's `list_len` is ±1 per delta; the SQL count is over the rows it scanned. The obvious next thing — and its *grouped* form is not a SQL question at all but the missing aggregation half of [`99`](99-the-data-tier-means-of-combination.md) §99.4 |
 | `pg_catalog`, and therefore `psql`'s `\d` | **Not built.** `select * from beck_columns` is the substitute, and it is a table this project invented rather than what any tool expects. The correct long-run answer is a small read-only emulation of `pg_class` and friends — which needs joins, so the two are the same item |
 | TLS and authentication on the read-model port | **Not built**, and the port is loopback-only and off by default because of it |

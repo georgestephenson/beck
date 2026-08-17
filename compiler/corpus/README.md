@@ -1,6 +1,7 @@
 # The corpus
 
-Thirty-two programs, and the Phase 2 exit criterion measured against them:
+Thirty-four single-file programs and a three-module project, and the Phase 2 exit criterion measured
+against them:
 
 > On a corpus of 20+ programs, placement is inferred with no annotations for the common cases.
 
@@ -50,6 +51,13 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
   beside the accumulator (program 32, [`docs/48`](../../docs/48-identity-report.md)). It is the only
   file here with an input that a replay does not reproduce, so it is where the rule that keeps that
   input away from the chokepoint has something to be about.
+- **the shape of a *relationship***: a program that holds two collections and whose page is the
+  sentence relating them (program 34, [`docs/99`](../../docs/99-the-data-tier-means-of-combination.md)).
+  Program 27 contains a join by accident and its key is unique, so nothing there exercises **many**
+  rows waiting on one — which is the interesting half of the delta rule, because renaming one person
+  has to move every issue assigned to them and none of the issues that are not. The differential
+  harness is what holds that, since it compares the maintained page with the recomputed one after
+  every event and an in-language `contains` can only ask about a string somebody thought to name.
 
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.

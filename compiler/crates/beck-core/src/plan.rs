@@ -66,6 +66,29 @@ use crate::ty::{Tier, Ty};
 
 pub type OpId = usize;
 
+/// Whether the decomposition may read a loop as a join.
+///
+/// The off switch [`docs/08`](../../../../../docs/08-roadmap.md) §8.3 item 8 requires of anything
+/// the compiler decides for you — "a default nobody has run is a claim, so the switched-off path
+/// belongs in a gate beside the fast one". Recognising a join
+/// ([`crate::relate`]) changes which operators a program compiles to without the program saying so,
+/// which is exactly the kind of choice that item is about, and
+/// `scaling.rs::maintaining_a_view_whose_loop_looks_something_up_costs_the_same_at_any_size`
+/// measures **both** settings so the gate carries its own evidence that it can fail.
+///
+/// It is a compile-time switch rather than an `AppConfig` field because a plan is compiled once,
+/// before a runtime exists: `beck explain query --no-join` and `beck explain cost --no-join` are
+/// where a developer reaches it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Relate {
+    /// Read `for x in xs:` whose body looks something up as an equi-join (docs/99 §99.6).
+    #[default]
+    Recognise,
+    /// Leave every loop as the captured `map_list` its source spells, index nothing, and pay the
+    /// nested loop per event.
+    Refuse,
+}
+
 /// A function an operator applies per element, closed over the plan nodes it reads.
 ///
 /// The captures are why this is not simply a `Core` lambda: `lambda t: t.owner == session.actor`
@@ -141,6 +164,29 @@ pub enum Op {
     /// recount; and it does not force its input to be materialised.
     Count,
     IsEmpty,
+    /// The join a loop already contained: `for x in xs:` whose body asks `map_get(m, k(x))`.
+    ///
+    /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.6 — the
+    /// algebra's first **binary** operator, and the reason it is not a syntax: the two programs in
+    /// the tree that relate two collections already say what they mean, and what they were missing
+    /// was an operator to say it *to*. [`crate::relate`] is the recognition.
+    ///
+    /// Two inputs, and they are not symmetric. The **left** is the collection being looped over.
+    /// The **right** is an *index*: an arrangement whose key's first component is the join key,
+    /// which [`Op::MapValues`] over a `Map` already is. One left row matches at most one right row,
+    /// because an arrangement's keys are unique by construction (§99.5 decision 2), so this is an
+    /// outer equi-join on a unique key and every left row appears exactly once in the output —
+    /// with the match, or without one, which is what `map_get`'s `Option` means.
+    ///
+    /// Maintained from **both** sides (§99.5's bilinear rule): a left row that moved is re-looked
+    /// up, and a right row that moved reaches exactly the left rows whose key it answers, through a
+    /// reverse index this operator keeps. Neither costs the collection.
+    Join {
+        /// The join key, as a function of the left element alone. It captures nothing —
+        /// [`crate::relate`] refuses the shape otherwise — which is what makes the operator's own
+        /// work `O(δ)` rather than `O(n)`.
+        key: Fun,
+    },
 }
 
 /// Every operator the engine implements, by name.
@@ -164,6 +210,7 @@ pub const OPERATORS: &[&str] = &[
     "flat_map",
     "list_len",
     "list_is_empty",
+    "join",
 ];
 
 impl Op {
@@ -184,6 +231,7 @@ impl Op {
             Op::FlatMap { .. } => "flat_map",
             Op::Count => "list_len",
             Op::IsEmpty => "list_is_empty",
+            Op::Join { .. } => "join",
         }
     }
 
@@ -200,6 +248,7 @@ impl Op {
                 | Op::FlatMap { .. }
                 | Op::Count
                 | Op::IsEmpty
+                | Op::Join { .. }
         )
     }
 
@@ -225,6 +274,12 @@ impl Op {
             Op::Flatten | Op::FlatMap { .. } => {
                 "the input's key, then the position inside its list"
             }
+            // §99.5 decision 1 asks for the left key followed by the right key. A lookup matches at
+            // most one right row, so the right component is determined by the left one and adding
+            // it would only make an unmatched row's key shorter than a matched one's. The rule and
+            // this are the same rule: iteration is left-order-major, which is what a `for` over the
+            // left side already means.
+            Op::Join { .. } => "the left input's key — left-order-major, as the loop was",
         }
     }
 
@@ -239,7 +294,36 @@ impl Op {
                 | Op::Concat
                 | Op::Flatten
                 | Op::FlatMap { .. }
+                | Op::Join { .. }
         )
+    }
+
+    /// The per-element function this operator carries, whatever it is applied to.
+    ///
+    /// One accessor rather than the five-way `if let` that was written out at each of the four
+    /// places that remap captures: a new operator with a [`Fun`] missed at one of them would be a
+    /// capture the plan never renumbered, which is a wrong `OpId` rather than a compile error.
+    pub fn fun_mut(&mut self) -> Option<&mut Fun> {
+        match self {
+            Op::MapList { f }
+            | Op::FilterList { f }
+            | Op::SortBy { f }
+            | Op::FlatMap { f }
+            | Op::Join { key: f } => Some(f),
+            _ => None,
+        }
+    }
+
+    /// The same function, borrowed.
+    pub fn fun(&self) -> Option<&Fun> {
+        match self {
+            Op::MapList { f }
+            | Op::FilterList { f }
+            | Op::SortBy { f }
+            | Op::FlatMap { f }
+            | Op::Join { key: f } => Some(f),
+            _ => None,
+        }
     }
 }
 
@@ -249,6 +333,14 @@ pub struct Node {
     pub inputs: Vec<OpId>,
     /// Set when this operator is a fallback: which construct had no delta rule.
     pub because: Option<String>,
+    /// Set on a loop whose body looks a collection up and which [`crate::relate`] would not read as
+    /// a join: which of its conditions failed.
+    ///
+    /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.6's rule for
+    /// the shape inference cannot see — "compile it the slow way and *say so*". It is separate from
+    /// [`Node::because`] because this operator is not a fallback: it has a delta rule and applies
+    /// it, and what it is missing is the *index* that would stop it applying it to everything.
+    pub relate: Option<String>,
     /// True when this node reads the session, directly or through an input. §5.3's boundary: the
     /// nodes for which this is false are the shared dataflow, the rest run per subscriber.
     pub per_session: bool,
@@ -300,7 +392,12 @@ impl Plan {
     /// so there is one plan a program has rather than two that could disagree.
     /// [`Plan::unfused`] is what the differential gate compares against.
     pub fn compile(placed: &Placed) -> Plan {
-        crate::fuse::fuse(Plan::unfused(placed)).0
+        Plan::compile_with(placed, Relate::default())
+    }
+
+    /// The same, with [`Relate`] said out loud.
+    pub fn compile_with(placed: &Placed, relate: Relate) -> Plan {
+        crate::fuse::fuse(Plan::unfused_with(placed, relate)).0
     }
 
     /// The plan as the decomposition produced it, before [`crate::fuse`] rewrites it.
@@ -310,9 +407,15 @@ impl Plan {
     /// sliced expression has already lost which signal each part came from, and a plan whose nodes
     /// cannot be named is a plan no report can explain.
     pub fn unfused(placed: &Placed) -> Plan {
+        Plan::unfused_with(placed, Relate::default())
+    }
+
+    /// The same, with [`Relate`] said out loud.
+    pub fn unfused_with(placed: &Placed, relate: Relate) -> Plan {
         let graph = &placed.graph;
         let mut b = Builder {
             program: &placed.program,
+            relate,
             nodes: Vec::new(),
             constants: BTreeMap::new(),
             cse: BTreeMap::new(),
@@ -388,9 +491,7 @@ impl Plan {
                     .iter()
                     .any(|&j| self.nodes[j].per_session);
             self.nodes[i].per_session = per;
-            if let Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } =
-                &self.nodes[i].op
-            {
+            if let Some(f) = self.nodes[i].op.fun() {
                 let captured: Vec<OpId> = f.captures.clone();
                 if captured.iter().any(|&j| self.nodes[j].per_session) {
                     self.nodes[i].per_session = true;
@@ -451,9 +552,7 @@ impl Plan {
             }
             let mut node = node;
             node.inputs.iter_mut().for_each(|id| *id = map[id]);
-            if let Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } =
-                &mut node.op
-            {
+            if let Some(f) = node.op.fun_mut() {
                 f.captures.iter_mut().for_each(|id| *id = map[id]);
             }
             nodes.push(node);
@@ -476,9 +575,7 @@ impl Plan {
     /// Every node an operator reads, including the ones its per-element function captured.
     pub fn dependencies(&self, i: OpId) -> Vec<OpId> {
         let mut out = self.nodes[i].inputs.clone();
-        if let Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } =
-            &self.nodes[i].op
-        {
+        if let Some(f) = self.nodes[i].op.fun() {
             out.extend(f.captures.iter().copied());
         }
         out
@@ -604,6 +701,11 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
             "δ applications, then the entries of each changed element's list".to_string()
         }
         Op::Count | Op::IsEmpty => "O(1)  —  the arrangement's size, never a recount".to_string(),
+        // Both halves of §99.5's bilinear rule, in one line, because a reader who only sees the
+        // first would think an index answers a question and never receives one.
+        Op::Join { .. } => "δ keys applied on the left, and on the right the rows each moved \
+                            index entry answers  —  neither is n"
+            .to_string(),
     }
 }
 
@@ -711,6 +813,8 @@ pub fn cost_report(plan: &Plan) -> String {
     let charges: Vec<Charge> = (0..plan.nodes.len())
         .map(|i| {
             let cost = op_cost(plan, i);
+            // The join's key function is deliberately not here: it captures nothing by
+            // construction, and printing an empty capture line for it would read as a cost.
             let captures = match &plan.nodes[i].op {
                 Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } => {
                     f.captures.clone()
@@ -765,6 +869,17 @@ pub fn cost_report(plan: &Plan) -> String {
                 .collect::<Vec<_>>()
                 .join(" or ");
             let _ = writeln!(out, "       {:<14} {}", "", cadence.line(&names));
+            // Only under a per-event capture, which is the one cadence a join would have removed.
+            // Under a captured `const` the sentence would be true and pointless.
+            if *cadence == Cadence::PerEvent {
+                if let Some(why) = &plan.nodes[i].relate {
+                    let _ = writeln!(
+                        out,
+                        "       {:<14} not read as a join (docs/99 §99.6): {why}",
+                        ""
+                    );
+                }
+            }
         }
     }
     let _ = writeln!(out);
@@ -834,6 +949,7 @@ pub fn cost_report(plan: &Plan) -> String {
 
 struct Builder<'a> {
     program: &'a Program,
+    relate: Relate,
     nodes: Vec<Node>,
     constants: BTreeMap<OpId, Core>,
     /// Structural hash-consing, so `state.todos` read from two places is one operator with two
@@ -859,6 +975,7 @@ impl Builder<'_> {
             op,
             inputs,
             because,
+            relate: None,
             per_session: false,
             consumers: 0,
         });
@@ -1314,6 +1431,23 @@ impl Builder<'_> {
             }
             (Prim::MapList, 2) | (Prim::FilterList, 2) | (Prim::SortBy, 2) => {
                 let xs = self.expr(&args[0], scope);
+                // Only `map_list`, and the restriction is about what an arrangement holds rather
+                // than about what can be recognised. A join's element is a *row* — the left value
+                // and what it matched — and `map_list` is the one of the three that does not keep
+                // its element: it stores `f(x)`, which is the same value whether `x` arrived alone
+                // or in a row. `filter_list` and `sort_by` store the element itself, so rewriting
+                // either would put rows into the collection its consumers read.
+                if op == Prim::MapList && self.relate == Relate::Recognise {
+                    match self.joined(xs, &args[1], scope) {
+                        Ok(id) => return id,
+                        Err(why) => {
+                            let f = self.fun(&args[1], scope, &args[0].ty);
+                            let id = self.push(Op::MapList { f }, vec![xs], None);
+                            self.nodes[id].relate = why;
+                            return id;
+                        }
+                    }
+                }
                 let f = self.fun(&args[1], scope, &args[0].ty);
                 let node = match op {
                     Prim::MapList => Op::MapList { f },
@@ -1382,6 +1516,59 @@ impl Builder<'_> {
         );
         let key = format!("prim/{}/{ids:?}", op.name());
         self.shared(key, Op::Pointwise { code }, ids, because)
+    }
+
+    /// `map_list(xs, f)` where `f` looks something up, as a join and a loop over its rows.
+    ///
+    /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.6: the loop is
+    /// not edited and no syntax is added — the operator is emitted for the program that was already
+    /// there. Three nodes come out of it: the index (a `map_values` the plan may already have, so
+    /// two joins on one collection share one index by the hash-consing that already exists —
+    /// §99.5 decision 4), the join, and the loop over the joined rows.
+    ///
+    /// `Err` carries the reason nothing was rewritten, which the caller hangs on the operator that
+    /// pays for it; `Err(None)` is the ordinary case of a loop that relates nothing.
+    fn joined(&mut self, xs: OpId, f: &Core, scope: &Scope) -> Result<OpId, Option<String>> {
+        let known: BTreeSet<VarId> = scope.keys().copied().collect();
+        let found = match crate::relate::recognise(f, &self.program.defs, &known) {
+            Ok(found) => found,
+            Err(crate::relate::Refusal::NoLookup) => return Err(None),
+            Err(why) => return Err(Some(why.because())),
+        };
+
+        // What the rewritten body still reads, which is the whole point: the capture that made
+        // every event reconsider every element has to be *gone*, or this buys an index and a second
+        // arrangement for nothing.
+        let mut free = BTreeSet::new();
+        crate::core::free_vars(&found.body, &mut BTreeSet::new(), &mut free);
+        let kept: Vec<VarId> = free.into_iter().filter(|v| scope.contains_key(v)).collect();
+        let mut before = BTreeSet::new();
+        crate::core::free_vars(f, &mut BTreeSet::new(), &mut before);
+        let was = before.iter().filter(|v| scope.contains_key(v)).count();
+        if kept.len() >= was {
+            return Err(Some(crate::relate::Refusal::NothingSaved.because()));
+        }
+
+        let m = self.expr(&found.map, scope);
+        let index = self.shared(format!("map_values/{m}"), Op::MapValues, vec![m], None);
+        let key = Fun {
+            code: lam(vec![found.elem], found.key),
+            captures: Vec::new(),
+        };
+        let join = self.push(Op::Join { key }, vec![xs, index], None);
+
+        let mut params = kept.clone();
+        params.push(found.row);
+        Ok(self.push(
+            Op::MapList {
+                f: Fun {
+                    code: lam(params, found.body),
+                    captures: kept.iter().map(|v| scope[v]).collect(),
+                },
+            },
+            vec![join],
+            None,
+        ))
     }
 
     /// The per-element function of a collection operator, closed over the operators it reads.

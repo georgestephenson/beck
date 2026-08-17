@@ -145,6 +145,12 @@ struct Cell {
     /// `flatten`: how many entries each input key currently contributes, so the old ones can be
     /// withdrawn without scanning the arrangement.
     counts: BTreeMap<Key, usize>,
+    /// `join`: which left rows are currently waiting on each join key.
+    ///
+    /// The reverse of the index, and what makes the *right* half of the delta rule `O(δ)`. Without
+    /// it a right row that moved would have to ask every left row whether it cared, which is the
+    /// nested loop this operator exists to remove — arrived at from the other side.
+    back: BTreeMap<Value, BTreeSet<Key>>,
 }
 
 /// What one [`Engine::render`] cost, in units that do not depend on the machine.
@@ -196,11 +202,9 @@ impl Prepared {
                 Op::Pointwise { code } => Some(backend.function(code)?),
                 _ => None,
             });
-            funs.push(match &node.op {
-                Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } => {
-                    Some(backend.function(&f.code)?)
-                }
-                _ => None,
+            funs.push(match node.op.fun() {
+                Some(f) => Some(backend.function(&f.code)?),
+                None => None,
             });
         }
         let mut consts: Vec<Option<Value>> = vec![None; n];
@@ -517,6 +521,7 @@ impl Engine {
                 Op::FlatMap { f } => self.flatten(up, id, Some(f), cold)?,
                 Op::Count => self.aggregate(up, id, cold, false)?,
                 Op::IsEmpty => self.aggregate(up, id, cold, true)?,
+                Op::Join { key } => self.join(up, id, key, cold)?,
             }
         }
         Ok(())
@@ -916,6 +921,145 @@ impl Engine {
         self.cells[id].counts = counts;
         self.publish(id, arr, changes, rebuild);
         Ok(())
+    }
+
+    /// The join a loop already contained — [`Op::Join`], and
+    /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.5's bilinear
+    /// delta rule.
+    ///
+    /// Two streams arrive and both are `O(δ)`:
+    ///
+    /// * a **left** row that moved is looked up in the index once, which is one application of the
+    ///   key function and one `BTreeMap` probe;
+    /// * a **right** row that moved reaches exactly the left rows whose key it answers, through the
+    ///   reverse index this operator keeps ([`Cell::back`]). Nothing scans the left collection.
+    ///
+    /// Left changes are applied first, and the right pass skips what they already touched: the
+    /// index has advanced before this operator runs — the plan's nodes are in dependency order — so
+    /// a left row re-looked-up in the first pass already has the answer the second would give it.
+    ///
+    /// The output holds one row per left row, matched or not, because that is what the `map_get`
+    /// this replaced returned: an `Option`, never an absence.
+    fn join(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        key: &Fun,
+        cold: bool,
+    ) -> Result<(), ExecError> {
+        let plan = self.prepared.plan.clone();
+        let left = plan.nodes[id].inputs[0];
+        let index = plan.nodes[id].inputs[1];
+        // An index that is not an arrangement has no deltas to react to, so every tick it moves is
+        // a rebuild. The decomposition only ever builds a `map_values` here, so this is the
+        // correct-for-a-plan-nobody-writes path rather than one the corpus takes.
+        let indexed = matches!(self.out_of(up, index)?, Out::Arr(_));
+        let rebuild = cold
+            || self.rebuilt_of(up, left)
+            || self.rebuilt_of(up, index)
+            || (!indexed && self.changed_of(up, index))
+            || key.captures.iter().any(|&c| self.changed_of(up, c));
+        let left_changes = self.feed(up, id, 0, left, rebuild)?;
+        let right_changes = if rebuild || !indexed || !self.changed_of(up, index) {
+            Vec::new()
+        } else {
+            self.changes_of(up, index)
+        };
+        if left_changes.is_empty() && right_changes.is_empty() && !rebuild {
+            self.cells[id].changed = false;
+            self.cells[id].changes.clear();
+            self.cells[id].rebuilt = false;
+            return Ok(());
+        }
+
+        let call = self.fun_of(id)?;
+        let captured = self.captures(up, key)?;
+        let mut arr = self.take_arrangement(id, rebuild);
+        if rebuild {
+            self.cells[id].positions.clear();
+            self.cells[id].back.clear();
+        }
+        // `positions` holds the join key each left row currently waits on — the same role it plays
+        // for `sort_by`, which is where a row currently sits.
+        let mut positions = std::mem::take(&mut self.cells[id].positions);
+        let mut back = std::mem::take(&mut self.cells[id].back);
+        let mut changes = Vec::new();
+        let mut touched: BTreeSet<Key> = BTreeSet::new();
+
+        for c in left_changes {
+            if let Some(was) = positions.remove(&c.key) {
+                withdraw(&mut back, &was[0], &c.key);
+                if let Some(old) = arr.entries.remove(&c.key) {
+                    changes.push(Change {
+                        key: c.key.clone(),
+                        old: Some(old),
+                        new: None,
+                    });
+                }
+            }
+            let Some(lv) = c.new else { continue };
+            let mut args = captured.clone();
+            args.push(lv.clone());
+            let jk = call(args)?;
+            self.work.applications += 1;
+            let matched = self.matched(up, index, &jk)?;
+            let row = joined(lv, matched);
+            arr.entries.insert(c.key.clone(), row.clone());
+            positions.insert(c.key.clone(), Arc::from(vec![jk.clone()]));
+            back.entry(jk).or_default().insert(c.key.clone());
+            touched.insert(c.key.clone());
+            changes.push(Change {
+                key: c.key,
+                old: None,
+                new: Some(row),
+            });
+        }
+
+        for c in right_changes {
+            // The index's key is the join key: that is what makes it an index rather than an
+            // arrangement that happens to be beside this operator.
+            let Some(jk) = c.key.first() else { continue };
+            let Some(waiting) = back.get(jk) else {
+                continue;
+            };
+            for lk in waiting.iter() {
+                if touched.contains(lk) {
+                    continue;
+                }
+                let Some(old) = arr.entries.get(lk) else {
+                    continue;
+                };
+                let Some(lv) = old.field(crate::relate::LEFT).cloned() else {
+                    continue;
+                };
+                let row = joined(lv, c.new.clone());
+                let old = arr.entries.insert(lk.clone(), row.clone());
+                changes.push(Change {
+                    key: lk.clone(),
+                    old,
+                    new: Some(row),
+                });
+            }
+        }
+
+        self.cells[id].positions = positions;
+        self.cells[id].back = back;
+        self.publish(id, arr, changes, rebuild);
+        Ok(())
+    }
+
+    /// What the index holds under a join key, whichever shape the index arrived in.
+    fn matched(
+        &self,
+        up: Option<Upstream<'_>>,
+        index: OpId,
+        jk: &Value,
+    ) -> Result<Option<Value>, ExecError> {
+        Ok(match self.out_of(up, index)? {
+            Out::Arr(a) => a.entries.get(&key_of(jk)).cloned(),
+            Out::Val(Value::Map(m)) => m.get(jk).cloned(),
+            Out::Val(_) => None,
+        })
     }
 
     /// `list_len` and `list_is_empty`: read the arrangement's size.
@@ -1769,6 +1913,44 @@ fn inner_key(outer: &Key, i: usize) -> Key {
     let mut k: Vec<Value> = outer.to_vec();
     k.push(Value::Int(i as i64));
     Arc::from(k)
+}
+
+/// A join key, as the index's key: one component, because the index is keyed by exactly it.
+fn key_of(jk: &Value) -> Key {
+    Arc::from(vec![jk.clone()])
+}
+
+/// One joined row: the left value, and what it matched.
+///
+/// The right half is an `Option` rather than the value or nothing, because the expression this
+/// operator replaced was a `map_get` and its callers `match` on one. A join that dropped unmatched
+/// rows would be a different operator and a different page.
+fn joined(left: Value, right: Option<Value>) -> Value {
+    Value::record(
+        crate::relate::ROW,
+        None,
+        [
+            (crate::relate::LEFT, left),
+            (
+                crate::relate::RIGHT,
+                right.map(Value::some).unwrap_or_else(Value::none),
+            ),
+        ],
+    )
+}
+
+/// Forget that a left row was waiting on a join key, and forget the key when nobody is left.
+///
+/// The second half is not tidiness: without it the reverse index grows by one entry per key that
+/// has ever been joined on and never shrinks, which is a leak that a shape gate over a *collection*
+/// would not see because it is proportional to the log rather than to the rows.
+fn withdraw(back: &mut BTreeMap<Value, BTreeSet<Key>>, jk: &Value, lk: &Key) {
+    if let Some(waiting) = back.get_mut(jk) {
+        waiting.remove(lk);
+        if waiting.is_empty() {
+            back.remove(jk);
+        }
+    }
 }
 
 /// A list, as an arrangement keyed by position.

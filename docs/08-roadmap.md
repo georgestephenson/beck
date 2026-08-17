@@ -52,7 +52,7 @@ signatures and separate compilation, boundary versioning and `beck check --wire-
 
 **Exit met** ([`20`](20-phase-2-report.md) §20.3): the todo sketch with **every `@on(...)` removed**
 compiles, places and runs; all eight of §3.5's properties are passing tests; a three-module project
-re-checks one module after a body edit and three after a signature change. Across the corpus, 44% of
+re-checks one module after a body edit and three after a signature change. Across the corpus, 52% of
 everything placed is unplaced-pure.
 
 Two items this phase was assigned and did not deliver were delivered later and are named here rather
@@ -95,6 +95,7 @@ ask in order:
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
+| "Can I relate two collections?" | **Yes for a lookup, and you write it as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index, maintained from both sides, and `beck explain query` shows it. `group by`, the aggregates and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
 | "How do I make it look like anything?" | **Badly, and this is the newest row.** The stylesheet a running application serves is eight rules hard-coded in `beck-rt/src/css.rs`; `css:` appears in the tour and has no parser. Tailwind styles a Beck page with no configuration today, and its scanner cannot survive a package manager ([`104`](104-styling-and-the-component-library.md) §104.3), so the answer until §8.5.4's styling cluster lands is "bring npm" — which for a project whose product is one static binary is the wrong answer, not a smaller one |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
@@ -431,16 +432,23 @@ the one place in `docs/` that holds an order. The list stopped being all-**S** w
 item larger than anything else here, one **G**, and a ledger of small artefacts behind chartered
 rows.
 
-- **The data tier's means of combination** (F, and now the **largest item left**, since the macro
-  interpreter below has landed — [`99`](99-the-data-tier-means-of-combination.md) §99.7 lists five
-  already-written-down items it closes): `arrange_by`, `join`, the loop-plus-lookup recognition,
-  then `group by` and the aggregates, in §99.9's order, whose **first item is a gate that goes red
-  today**. This was a Phase 4 bullet from the day
-  [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list, which
-  is the same defect §8.5 opens by describing one level down — a phase is not a position. It lives
-  in **Lane B** (`engine.rs`, `plan.rs`, `incremental.rs`) and contends with nothing in Lane A, so
-  it runs beside the macro interpreter's successors rather than behind them. §99.8's convergence
-  rungs interleave with it rather than following it.
+- **The data tier's means of combination** (F, and still the **largest item left** —
+  [`99`](99-the-data-tier-means-of-combination.md) §99.7 lists five already-written-down items it
+  closes). **The join has landed**: §99.9's gate (item 1), the `Join` operator with the bilinear
+  delta rule (item 4) and the recognition that emits it for a loop nobody wrote as a join (item 5).
+  `27-review.beck` gets it with no edit, and the gate reports **19 units of maintenance at 200 rows
+  and at 1,600, against 415 and 3,215 with the operator switched off**. What is left, in §99.9's
+  order: **`arrange_by`** (item 3, which moved *behind* the join rather than in front of it — the
+  join in the tree indexes a `Map` whose `map_values` arrangement is already keyed by the join key,
+  so building `arrange_by` first would have been an operator with no program; its program is
+  `examples/board.beck`), then **`group by` and the aggregates**, then `distinct` and difference,
+  fusion for the new operators, and the read-model SQL compiling into the plan. This was a Phase 4
+  bullet from the day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in
+  *this* list, which is the same defect §8.5 opens by describing one level down — a phase is not a
+  position. It lives in **Lane B** (`engine.rs`, `plan.rs`, `relate.rs`) and contends with nothing
+  in Lane A. §99.8's convergence rungs interleave with it rather than following it, and rungs 0–1
+  did not come due with the join because a join against an index has one plan and therefore no
+  choice to make.
 - **A columnar value, and Arrow** (F, after the aggregates): the second representation
   [`105`](105-the-ecosystem-answer.md) §105.10 argues for — `Value::List(Arc<Vec<Value>>)` is 16
   boxed bytes an element, which is right for a keyed arrangement and wrong for a million doubles.
@@ -726,19 +734,30 @@ be stale), and **look for it in §8.5.4** (a phase bullet is not a position, and
 |---|---|---|
 | Macro expansion fuel (F17) | Document behind code | [`42`](42-security-assurance.md) §42.4 said "absent — nothing in `beck-macro` bounds expansion". `MAX_EXPANSION` is 100,000 nodes, `B0214` refuses, `macro_bomb.rs` gates it both ways, and `pending_security.rs` had already deleted its own test saying so. **Corrected in place** |
 | Deterministic transcendentals (F9) | Unscheduled | §8.5.2 said "owed rather than pending" for three phases. Placed as §8.5.4's first item and recorded as a **defect** rather than an absence, because the replay-determinism claim it falsified is one this project ships — and **built** in the change that placed it ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)). It is the sweep's shortest path from *nobody scheduled this* to *it is done* |
-| The data tier's algebra | Unscheduled in *this* list | A Phase 4 bullet, never in the order. Now placed, in Lane B, and the largest item left now that the macro interpreter has landed. Its instrument is `DEFECTS.md::cost-report-undercount` |
+| The data tier's algebra | Unscheduled in *this* list | A Phase 4 bullet, never in the order. Now placed, in Lane B, and the largest item left now that the macro interpreter has landed. **The join half is built**, and the sweep's third case of carrying an item from *nobody scheduled this* to *it is done*. The instrument it was found with — the cost report's own undercount — was itself a defect, fixed, and its register entry left with it |
 | Charting | Unscheduled **and undesigned** | Not in `docs/` at all until [`105`](105-the-ecosystem-answer.md), which ranked it, and [`104`](104-styling-and-the-component-library.md), which found the same defect from the UI side and owns the fix. Now the styling cluster's item 1 and `DEFECTS.md::svg-namespace`. **Two independent sweeps reached one line of JavaScript from opposite directions**, which is the strongest evidence in this section that the procedure works |
 | A columnar value / Arrow | Unscheduled | Committed in five documents as a *dependency choice*; nothing ever built the value it would apply to. Now placed, as the log-lifecycle G item's named predecessor |
 | The presence second clock | Unscheduled | [`48`](48-identity-report.md) §48.13's first row, in no phase, with a successor in [`99`](99-the-data-tier-means-of-combination.md) decision 3. Now placed |
 | Comment-preserving printing | In a lane, not in the order | §8.5.5's Lane C cell since that table existed. Placed, recorded as a defect, and **built** — the second item the sweep carried from *nobody scheduled this* to *it is done* |
 | The `@public` surface | Unscheduled in this list | A Phase 4 bullet with its own internal order (§101.10) and no position here. Now placed, G-first |
 
-**The gate this wants.** Everything above is a procedure a person has to remember, which is the
-category this project converts to tests. The shape is `docs.rs`'s: every `docs/` sentence claiming
-something is unbuilt names either a §8.5.4 item or an explicit `unscheduled:` marker, and the marker
-is what a reviewer argues with. That is not built, and saying so here rather than in a table of
-intentions is the point — it is **S**, small, and it is the only item in this section that would stop
-the section being needed.
+**A third direction, found by running the sweep on numbers instead of on absences.** A document can
+also be behind the code by *quoting a figure that has since moved*, which neither table above
+describes because every sentence involved stays grammatically true. Re-running the measurement suites
+on 2026-08-17 found three at once — the corpus's placement share (43%, quoted as 44%, actually 52%),
+the native backends' compiled-definition count, and how many corpus programs compile their `view` —
+and all three had drifted for the same reason and in the same direction: the corpus grew and nothing
+re-read the number. This is the more insidious direction, because a stale *absence* is contradicted
+by the tree and a stale *number* is contradicted by nothing until somebody re-runs the command.
+
+**The gate this wants**, and it is now one gate for both. Everything above is a procedure a person
+has to remember, which is the category this project converts to tests. The shape is `docs.rs`'s:
+every `docs/` sentence claiming something is unbuilt names either a §8.5.4 item or an explicit
+`unscheduled:` marker, and the marker is what a reviewer argues with; every `docs/` sentence quoting
+a figure a measurement suite prints names the suite, and the suite's own output is what the gate
+compares against. That is not built, and saying so here rather than in a table of intentions is the
+point — it is **S**, small, and it is the only item in this section that would stop the section being
+needed.
 
 ## 8.6 The ≥1% rule: which deployment realities earn support
 

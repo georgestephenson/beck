@@ -14,7 +14,7 @@ All of it is built. **The exit criteria are met**, and §20.3 says with what evi
 The headline: **strip every `@on(...)` from the todo sketch and it still compiles, places and
 runs** — `ingress` on the server, the fold at the data tier, the page at the browser, and all nine
 pure definitions unplaced so they compile to whichever tier calls them. Across the 23-program
-corpus, 43% of everything placed is unplaced-pure.
+corpus, 52% of everything placed is unplaced-pure.
 
 Three things this phase is honest about rather than quiet about, and §20.5 has the full list.
 **One item assigned to Phase 2 was not built**: the general slicer
@@ -110,19 +110,27 @@ todos  →  data tier
   because    : the log is at the data tier, and the accumulator is what the log stores
 ```
 
-Where the corpus ends up, across 176 placed definitions and signals:
+Where the corpus ends up, across 353 placed definitions and signals
+(`cargo test --release --test measure_phase2 -- --nocapture`, re-read 2026-08-17):
 
 | tier | count | share |
 |---|---|---|
-| `any` (unplaced-pure) | 76 | 43.2% |
-| `server` | 55 | 31.2% |
-| `data` | 25 | 14.2% |
-| `client` | 20 | 11.4% |
+| `any` (unplaced-pure) | 184 | 52.1% |
+| `server` | 80 | 22.7% |
+| `data` | 55 | 15.6% |
+| `client` | 34 | 9.6% |
 
 The first row is the interesting one. §3.3 says "purity means *unplaced*: legal on every tier,
-compiled to each tier that needs it. That duplication is the payoff, not waste." Forty-three per cent
-of the corpus is code that has no tier — including every fold function, which is what will let a
-Phase 3 client apply an event optimistically using the same code the server folds with.
+compiled to each tier that needs it. That duplication is the payoff, not waste." Half the corpus is
+code that has no tier — including every fold function, which is what let a Phase 3 client apply an
+event optimistically using the same code the server folds with.
+
+**The share has risen since this report was written**, from 43.2% across 176 placements, and the
+reason is the corpus rather than the solver: the programs added for recursive types, traits, error
+rows, structured concurrency, identity, presence and the join are mostly pure definitions, so the
+denominator and the numerator both grew and the numerator grew faster. The number is corrected here
+rather than left as the day's reading, because it is quoted as the current state in
+[`08`](08-roadmap.md) and in [`README.md`](README.md)'s index.
 
 The harness asserts *placements*, not compilation: "23 programs compiled" would be true of a
 compiler that put everything on the server. It names them — `03-billing.beck`'s `charge` on the
