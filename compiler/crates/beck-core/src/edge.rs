@@ -93,6 +93,30 @@ pub fn presence_of(actor: &str) -> Value {
     presence([(actor, 1)])
 }
 
+/// An awareness roster: each actor's contribution, keyed by actor.
+///
+/// [`presence`] with a payload. The keys are the same names and carry the same warning — they are
+/// what the client said it was, bounded by the registry rather than trusted (`docs/82` §82.5).
+pub fn awareness<'a>(here: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
+    Value::Map(
+        here.into_iter()
+            .map(|(actor, v)| (Value::str_(actor), v))
+            .collect(),
+    )
+}
+
+/// The roster of a world with one connection, for [`presence_of`]'s reason: a caller with no
+/// registry is rendering the page one actor sees while looking at it, and a roster without them in
+/// it would describe a page nobody is reading.
+pub fn awareness_of(actor: &str, mine: Value) -> Value {
+    awareness([(actor, mine)])
+}
+
+/// No roster at all — what a page that reads none is handed.
+pub fn no_awareness() -> Value {
+    Value::Map(Default::default())
+}
+
 /// `Freshness` — whether the page about to be rendered is of the confirmed state or of a guess.
 ///
 /// §3.7: "`Signal[T]` carries a freshness dimension (`confirmed | pending(n)`) that UI code can

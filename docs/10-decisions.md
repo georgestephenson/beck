@@ -181,6 +181,13 @@ identity = external(issuer="https://login.acme.com")  # Beck is a relying party 
   ([`48`](48-identity-report.md)): `presence() : Signal[Map[Str, Int]] ! {cap.presence}`, refused to
   the chokepoint (`B0515`) and to a Mode B page (`B0516`), and per subscriber rather than shared
   because the shared dataflow is versioned by the log and this is the one input that is not.
+- **Awareness** (what everybody is *doing* now) is the same signal carrying a payload, and ships on
+  the same terms. **Built**: `awareness(f) : Signal[Map[Str, T]] ! {cap.presence}`, where
+  `f : Session -> T` produces one client's contribution and the runtime applies it to every
+  connection it holds — refused to the chokepoint (`B0520`) and to a Mode B page (`B0521`), and
+  bounded twice rather than once, because a roster of values costs its capacity times whatever `f`
+  returns. `f` over a *client-local* value — a cursor — waits on a client-local stream
+  ([`104`](104-styling-and-the-component-library.md) §104.8).
 
 ## D7 — Offline and local-first: the explanation — **DECIDED** (offline-tolerant v1; CRDT-valued types v1.x; peer-to-peer out of scope)
 

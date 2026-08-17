@@ -10,10 +10,15 @@
 <header><a href="../index.html">beck</a><span> / module <code>decimal</code></span></header>
 <main>
 <h1>Module <code>decimal</code></h1>
-<p class="muted">Interface digest <code>1ff81c188ed4639ff7cdf05ca0c33cab</code> · 22/40 published names documented</p>
+<p class="muted">Interface digest <code>1ff81c188ed4639ff7cdf05ca0c33cab</code> · 23/40 published names documented</p>
 <h2>Types</h2>
 <h3 id="decimal">Decimal</h3>
 <pre><code>model Decimal</code></pre>
+<p>An exact number of the form `units × 10^-scale`, with `scale` at least zero.</p>
+<p>**Canonical**: trailing zeros are stripped, so `1.50` and `1.5` are the same value and `==` is
+numeric equality. That is the opposite of what a `BigDecimal` does, and the reason is `docs/54`:
+the value order here is a `Map`'s iteration, the state digest and the patch stream a replay has
+to reproduce, so two representations of one number are two keys and two digests for one fact.</p>
 <table><tr><th>Field</th><th></th></tr>
 <tr><td><code>units: Big</code></td><td></td></tr><tr><td><code>scale: Int</code></td><td></td></tr></table>
 <h3 id="decimalerror">DecimalError</h3>

@@ -826,6 +826,41 @@ struct NeverAnswers {
     entered: std::sync::atomic::AtomicUsize,
     stopped: std::sync::atomic::AtomicUsize,
     gave_up: std::sync::atomic::AtomicUsize,
+    /// Set when the latch below gave up waiting, which is the one way this host can leave the test
+    /// proving nothing. It is a counter rather than a hang, and the test reads it first.
+    stalled: std::sync::atomic::AtomicUsize,
+    /// Whether the sibling is inside its call, and the pair that lets the other child wait for it.
+    inside: std::sync::Mutex<bool>,
+    arrived: std::sync::Condvar,
+}
+
+impl NeverAnswers {
+    /// Hold the failing child's call until the sibling is inside its own.
+    ///
+    /// **This is what makes the test a test.** The property under assertion is that a scope
+    /// reaches a child *blocked in the host*, so the sibling has to be blocked before the first
+    /// child raises. Arranging that by doing work first — a loop of calls that answer quickly —
+    /// is a bet on the scheduler, and a bet the suite loses under load: the sibling's thread need
+    /// not run at all before twenty fast calls finish, and the test then fails on its own guard
+    /// while nothing is wrong with cancellation.
+    ///
+    /// The backstop is not a threshold anybody measures against; it is the difference between a
+    /// red test and a hung suite, which is [`docs/13`](../../../../docs/13-testing.md) §13.7's
+    /// rule about clocks rather than an exception to it.
+    fn until_the_sibling_is_blocked(&self) {
+        let (inside, wait) = self
+            .arrived
+            .wait_timeout_while(
+                self.inside.lock().expect("not poisoned"),
+                std::time::Duration::from_secs(10),
+                |inside| !*inside,
+            )
+            .expect("not poisoned");
+        if wait.timed_out() && !*inside {
+            self.stalled
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
 }
 
 impl beck_core::host::Atoms for NeverAnswers {
@@ -835,15 +870,23 @@ impl beck_core::host::Atoms for NeverAnswers {
         stop: &beck_core::net::Stop,
     ) -> Result<beck_core::net::Reply, beck_core::net::Failure> {
         if &*request.host == "a.example.com" {
-            // The failing child's peer answers at once: its business is to get to its `raise`.
+            // The failing child's peer answers — but not before the sibling is where the test
+            // needs it. After the first call this returns at once, so what the remaining calls
+            // cost is what they always cost.
+            self.until_the_sibling_is_blocked();
             return Ok(beck_core::net::Reply {
                 status: 200,
                 headers: Vec::new(),
                 body: std::sync::Arc::from(&*request.path),
             });
         }
-        self.entered
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        {
+            let mut inside = self.inside.lock().expect("not poisoned");
+            *inside = true;
+            self.entered
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.arrived.notify_all();
+        }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while std::time::Instant::now() < deadline {
             if stop.asked() {
@@ -863,15 +906,24 @@ const BLOCKED: &str = "\
 union Refusal:
     No
 
-## Works for a while, then fails — so the sibling is provably inside its call by the time it does.
+## Works for a while, then fails. The host holds the first of these calls until the sibling is\n## inside its own, so the raise cannot arrive first — see `NeverAnswers::until_the_sibling_is_blocked`.
 def failing(n: Int) -> Int uses net.out(a.example.com), raises(Refusal), raises(HttpError):
     if n <= 0:
         raise No
     r = http_fetch(\"a.example.com\", HttpRequest(method=\"GET\", path=\"/a\", headers={}, body=\"\", port=80, tls=False, secrets={}))
     return failing(n - 1)
 
+## Steps to take before the call, so that a scope which cancelled between them would stop this
+## child *before* it ever blocked — which is the failure the latch in `NeverAnswers` prevents and
+## the reason this definition does anything at all before its fetch.
+def dawdle(n: Int) -> Int:
+    if n <= 0:
+        return 0
+    return dawdle(n - 1)
+
 ## One call, which never comes back on its own.
 def waiting() -> Int uses net.out(b.example.com), raises(HttpError):
+    d = dawdle(4000)
     r = http_fetch(\"b.example.com\", HttpRequest(method=\"GET\", path=\"/b\", headers={}, body=\"\", port=80, tls=False, secrets={}))
     return str_len(r.body)
 
@@ -915,6 +967,12 @@ fn a_sibling_blocked_in_an_outbound_call_is_stopped_in_the_call() {
     );
 
     let order = std::sync::atomic::Ordering::SeqCst;
+    assert_eq!(
+        host.stalled.load(order),
+        0,
+        "the sibling's thread never reached its call inside the backstop, so the host let the \
+         other child through and this run proves nothing — red rather than hung, by design"
+    );
     assert_eq!(
         host.entered.load(order),
         1,

@@ -97,6 +97,9 @@ pub struct AppConfig {
     /// A tunable rather than a dependency, and bounded rather than optional, for the reason
     /// [`crate::presence`] gives: the roster is keyed by a name the client may choose.
     pub presence: crate::presence::Config,
+    /// How large an awareness roster this process will hold, and how large one contribution may
+    /// be — the two bounds [`crate::awareness`] explains.
+    pub awareness: crate::awareness::Config,
 }
 
 impl Default for AppConfig {
@@ -112,6 +115,7 @@ impl Default for AppConfig {
             identity: Arc::new(crate::identity::DevIdentity),
             quota: crate::quota::Quota::default(),
             presence: crate::presence::Config::default(),
+            awareness: crate::awareness::Config::default(),
         }
     }
 }
@@ -151,6 +155,9 @@ pub struct App {
     /// without an event**. Held by the application because a connection is the application's, and
     /// read on every render of a program whose page asks for it.
     here: Arc<crate::presence::Registry>,
+    /// What everybody is doing — the roster `awareness(f)` reads, held beside `here` because it is
+    /// the same kind of fact about the same connections and moves independently of it.
+    aware: Arc<crate::awareness::Registry>,
     /// Set once, when this process is going away. Every subscription watches it.
     ///
     /// §5.2 lists "graceful drain (finish folds, snapshot, hand off subscriptions)" among the
@@ -202,6 +209,7 @@ impl App {
             shared,
             limit: crate::quota::RateLimit::new(config.quota),
             here: crate::presence::Registry::new(config.presence),
+            aware: crate::awareness::Registry::new(config.awareness),
             draining: watch::channel(false).0,
         });
         tokio::spawn(sequencer(app.clone(), rx, config));
@@ -252,8 +260,9 @@ impl App {
     ) -> Result<beck_core::Html> {
         let state = self.state.read().await.clone();
         let here = self.here.value();
+        let aware = self.aware.value();
         timed(&telemetry().view, || {
-            self.runtime.view_with(&state, actor, &here)
+            self.runtime.view_with_all(&state, actor, &here, &aware)
         })
     }
 
@@ -266,6 +275,11 @@ impl App {
     /// read it.
     pub fn presence(&self) -> &Arc<crate::presence::Registry> {
         &self.here
+    }
+
+    /// The awareness roster, for a connection that wants to contribute to it.
+    pub fn awareness(&self) -> &Arc<crate::awareness::Registry> {
+        &self.aware
     }
 
     /// An engine for one new subscription, of whichever kind this application is configured for.
@@ -308,15 +322,29 @@ impl App {
         // two agree. A page renders the state at `version` and the connections as they were a
         // moment ago, which is what "who is connected now" can mean at all.
         let here = self.here.value();
+        let aware = self.aware.value();
         timed(&telemetry().view, || {
             if !self.config.maintain_views {
-                return Ok((self.runtime.view_with(&state, actor, &here)?, version));
+                return Ok((
+                    self.runtime.view_with_all(&state, actor, &here, &aware)?,
+                    version,
+                ));
             }
             if self.config.share_arrangements {
-                self.runtime
-                    .render_shared(&self.shared, engine, &state, version, actor, &here)
+                self.runtime.render_shared(
+                    &self.shared,
+                    engine,
+                    &state,
+                    version,
+                    actor,
+                    &here,
+                    &aware,
+                )
             } else {
-                Ok((self.runtime.render(engine, &state, actor, &here)?, version))
+                Ok((
+                    self.runtime.render(engine, &state, actor, &here, &aware)?,
+                    version,
+                ))
             }
         })
     }

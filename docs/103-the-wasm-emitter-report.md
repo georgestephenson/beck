@@ -135,10 +135,13 @@ order §93.3 complains about and the same fix — each now has a case that fails
   question about the GC proposal in front of it.
 - **The host effects.** `now`, `uuid`, `secret_env` and `http_fetch` are upcalls on the native
   backends; here they would be imports the loader supplies, and nothing supplies them yet.
-- **`sin` and `cos`**, refused with F9's reason rather than for effort: nothing pins their digits,
-  and a WebAssembly engine's are a *third* implementation with no obligation to agree with the
-  evaluator's libm. `sqrt` compiles, because IEEE-754 pins it to one correctly-rounded answer, and
-  that difference is what makes this a rule rather than a mood.
+- **`sin` and `cos`**, refused for the link line rather than for effort. Nothing pins their
+  digits, so no backend emits them: the other two **call** `beck-prim`, which computes one answer
+  ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)), and a
+  WebAssembly module reaches that library only as an import the bundle does not carry. Emitting
+  the algorithm here instead would be a second implementation of the one thing whose whole value
+  is that there is one. `sqrt` compiles, because IEEE-754 pins it to one correctly-rounded answer,
+  and that difference is what makes this a rule rather than a mood.
 - **A fuel or a depth ceiling.** Neither native backend has one either (§93.15), and the one thing
   that is better here is that an engine's stack exhaustion is a catchable exception rather than a
   dead process.

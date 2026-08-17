@@ -512,22 +512,23 @@ def counts(xs: list[Int]) -> Int:
     }
 }
 
-/// `sin` and `cos` are refused, and the reason is F9 rather than effort.
+/// `sin` and `cos` are refused, and the reason is the link line rather than effort.
 ///
-/// The two native backends compile them by calling the host's libm.
-/// [`docs/35`](../../../../docs/35-standards-landscape.md) §35.5 item 1 is the open question — a
-/// deterministic libm — and a WebAssembly engine's transcendentals are a *third* implementation
-/// with no obligation to agree with either. `sqrt` is not on this list because IEEE-754 pins it to
-/// one correctly-rounded answer, which is what makes the distinction a rule rather than a mood.
+/// The two native backends do not compile them either: nothing pins the digits of a sine, so both
+/// **call** `beck-prim`, which computes one (`beck_prim::math`). A WebAssembly module reaches that
+/// library only as an import the bundle does not carry, and emitting the algorithm here instead
+/// would be a second implementation of the one thing whose whole value is that there is one.
+/// `sqrt` is not on this list because IEEE-754 pins it to one correctly-rounded answer, which is
+/// what makes the distinction a rule rather than a mood.
 #[test]
-fn the_transcendentals_are_refused_because_nothing_pins_their_digits() {
+fn the_transcendentals_are_refused_because_the_module_cannot_link_the_one_answer() {
     let js = engine!();
     let both = Both::over("reals.beck", REALS, js);
     for name in ["rsin", "rcos"] {
         let why = both
             .refusal(name)
             .unwrap_or_else(|| panic!("`{name}` should be refused"));
-        assert!(why.contains("F9"), "{why}");
+        assert!(why.contains("runtime library"), "{why}");
     }
     assert!(
         both.compiled("rsqrt"),

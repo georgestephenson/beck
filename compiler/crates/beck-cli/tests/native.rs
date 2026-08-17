@@ -788,6 +788,47 @@ fn a_module_links_the_runtime_library_only_when_it_calls_it() {
     );
 }
 
+/// A sine is a call into the runtime library, and the module names no libm symbol at all.
+///
+/// The structural half of `docs/adr/0031`, and it is the assertion that would have gone red
+/// before: this backend emitted `llvm.sin.f64`, which lowers to whichever `sin` the machine
+/// linking the program happens to have. Agreement between backends could not see that — all three
+/// resolved to one host's libm — so what is checked here is the *shape*: the answer comes from
+/// `beck-prim`, and no intrinsic that could lower to a libm call survives in the module.
+///
+/// `sqrt` in the same program is the control. IEEE 754 requires it correctly rounded, so its
+/// intrinsic is still the right thing to emit and must still be there.
+#[test]
+fn a_sine_is_a_linked_call_and_not_an_intrinsic() {
+    let m = beck_llvm::module(&compile("reals.beck", REALS));
+    assert!(
+        m.ir.contains("@beck_prim_f64(i32 1, double"),
+        "`sin` should be a call into the runtime library"
+    );
+    assert!(
+        m.ir.contains("@beck_prim_f64(i32 2, double"),
+        "and so should `cos`"
+    );
+    assert!(
+        m.ir.contains("declare double @beck_prim_f64(i32, double)"),
+        "declared, because the archive is what resolves it"
+    );
+    assert!(
+        m.links,
+        "so the module links the archive even though it allocates nothing"
+    );
+    for intrinsic in ["llvm.sin", "llvm.cos"] {
+        assert!(
+            !m.ir.contains(intrinsic),
+            "`{intrinsic}` lowers to the host's libm and must not appear"
+        );
+    }
+    assert!(
+        m.ir.contains("llvm.sqrt.f64"),
+        "`sqrt` is IEEE-pinned, so its intrinsic is still the one answer"
+    );
+}
+
 /// `White_Space` is a **closed set**, and this is the assertion that says so with a number.
 ///
 /// `str_trim` is not the table `str_upper` is, and the argument rests on two facts about the host's

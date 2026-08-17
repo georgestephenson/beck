@@ -333,10 +333,13 @@ async fn app_for(placed: Placed) -> Arc<App> {
 
 /// Every `data-b-*` binding the examples' pages emit is one the shipped JavaScript listens for.
 ///
-/// The `ui:` macro turns `on_<event>=` into `data-b-<event>`, so a program can name an event the
-/// residue has never heard of — and the failure is silent: the attribute is in the DOM, the click
-/// lands nowhere, and every test that renders a page still passes. So the list is derived from the
-/// *pages*, not written down beside them.
+/// Every binding a real page emits is one the residue captures.
+///
+/// This reads the *pages* rather than a list beside them, and it is now the second of two gates
+/// rather than the only one: `the_event_vocabulary_is_what_the_client_listens_for` below holds the
+/// compiler's table against the client's listeners, and this holds the programs against the
+/// client. A table that agreed with the client and with no program would pass the first and fail
+/// here.
 #[test]
 fn every_binding_a_page_emits_is_one_the_residue_captures() {
     let mut checked = 0usize;
@@ -360,6 +363,79 @@ fn every_binding_a_page_emits_is_one_the_residue_captures() {
         }
     }
     assert!(checked >= 4, "only {checked} bindings were found");
+}
+
+/// The compiler's event vocabulary **is** the client's listener table, in both directions.
+///
+/// `ui:` refuses `on_<x>` for an `x` it does not know (`B0217`), which is only worth anything if
+/// what it knows is what the client handles. The two are written in different languages in
+/// different crates, so the agreement is asserted rather than arranged: the names come out of
+/// `beck-patch.js`'s own `on(<dom event>, "data-b-<name>", …)` registrations, which is the table
+/// itself and not a comment about it.
+///
+/// Both directions matter and they fail differently. An event in the compiler's table that the
+/// client dropped is a handler that compiles and does nothing — the defect this vocabulary exists
+/// to close, arriving from the other side. An event the client gained that the compiler does not
+/// know is a feature nobody can reach.
+#[test]
+fn the_event_vocabulary_is_what_the_client_listens_for() {
+    // `on("keydown", "data-b-enter", …)` — the DOM event, then the attribute the macro writes.
+    let mut listened: Vec<String> = Vec::new();
+    for (i, _) in beck_rt::PATCH_CLIENT.match_indices("\"data-b-") {
+        let rest = &beck_rt::PATCH_CLIENT[i + 8..];
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_lowercase())
+            .collect();
+        // Only where it is being *registered*: `on("click", "data-b-click", …)`.
+        let before = &beck_rt::PATCH_CLIENT[..i];
+        if before.trim_end().ends_with(',') && before.contains("on(") && !name.is_empty() {
+            let opened = before.rfind("on(").unwrap_or(0);
+            if before[opened..].matches('\n').count() == 0 {
+                listened.push(name);
+            }
+        }
+    }
+    listened.sort_unstable();
+    listened.dedup();
+
+    let mut known: Vec<String> = beck_macro::vocabulary::EVENTS
+        .iter()
+        .map(|(e, _)| (*e).to_string())
+        .collect();
+    known.sort_unstable();
+
+    assert_eq!(
+        listened, known,
+        "the client listens for {listened:?} and the compiler will write {known:?}"
+    );
+    assert!(!known.is_empty(), "the vocabulary cannot be empty");
+}
+
+/// An attribute that is genuinely yours has a spelling, and it is HTML's own.
+///
+/// The vocabulary is closed, which is only reasonable if there is a way out of it. There is, and it
+/// is not a Beck invention: `data-` is HTML's extension point and `aria-` is a namespace, so both
+/// are admitted by prefix. This is the half of `B0218` that has to keep compiling.
+#[test]
+fn an_attribute_of_your_own_is_spelled_data() {
+    let src = source("todo.beck").replace(
+        "li(key=t.id, class=done_class(t)):",
+        "li(key=t.id, class=done_class(t), data_row=t.text, aria_label=t.text):",
+    );
+    assert_ne!(src, source("todo.beck"), "the edit did not apply");
+    // Compiles, which is the assertion: `compile` refuses to return if anything was diagnosed.
+    compile("escape.beck", &src);
+
+    // And the closed half is still closed, or the escape hatch would be the whole vocabulary.
+    let refused = refusal(
+        "closed.beck",
+        &source("todo.beck").replace(
+            "li(key=t.id, class=done_class(t)):",
+            "li(key=t.id, klass=done_class(t)):",
+        ),
+    );
+    assert!(refused.contains("B0218"), "{refused}");
 }
 
 /// The three holes a handler's template can carry, and the fact that they are filled at any depth.

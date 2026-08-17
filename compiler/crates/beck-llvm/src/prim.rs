@@ -14,10 +14,17 @@ use std::path::{Path, PathBuf};
 
 use beck_core::core::Prim;
 
-pub use beck_prim::{Op, Raise, Status};
+pub use beck_prim::{FloatOp, Op, Raise, Status};
 
 /// The symbol a compiled program calls to perform one primitive.
 pub const CALL: &str = "beck_prim";
+
+/// The symbol a compiled program calls for a primitive that is a function from a double to a
+/// double.
+///
+/// A second entry point rather than a second [`Op`], because the arena protocol has nothing to do
+/// here — `beck_prim::math`'s last section is the argument.
+pub const FLOAT_CALL: &str = "beck_prim_f64";
 
 /// The symbol that reserves the arena when the runtime library is linked.
 ///
@@ -48,6 +55,19 @@ pub fn op_of(op: Prim) -> Option<Op> {
         Prim::StrReplace => Op::StrReplace,
         Prim::TimeFormat => Op::TimeFormat,
         Prim::TimeParse => Op::TimeParse,
+        _ => return None,
+    })
+}
+
+/// The primitive `op` is a function from a double to a double the library computes, or `None`.
+///
+/// `sqrt` is not here and never will be: IEEE 754 requires it correctly rounded, so every target's
+/// own instruction is already the one answer. `sin` and `cos` have no such requirement, which is
+/// the whole of why they are linked — `beck_prim::math` is where that is argued.
+pub fn float_op_of(op: Prim) -> Option<FloatOp> {
+    Some(match op {
+        Prim::Sin => FloatOp::Sin,
+        Prim::Cos => FloatOp::Cos,
         _ => return None,
     })
 }

@@ -598,6 +598,9 @@ impl Client {
             // `presence` is refused Mode B (`B0516`), because who is connected is a fact the
             // server holds about its own sockets and is in neither the accumulator nor the log.
             edge::presence([]),
+            // Empty for the same reason and by the same rule: a component that reads `awareness`
+            // is refused Mode B (`B0521`), so this argument is unobservable here too.
+            edge::no_awareness(),
             // The one edge value this side answers and the server cannot (`B0518`).
             self.freshness(),
         ]) {

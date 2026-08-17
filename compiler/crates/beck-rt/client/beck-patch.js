@@ -5,15 +5,35 @@
 // "hand-written JavaScript never appears in the source — it's compiler residue", and there is one
 // piece of residue rather than one per mode.
 (() => {
-  const build = (h) => {
+  // An element belongs to a namespace, and `createElement` only ever guesses HTML.
+  //
+  // Server-side rendering goes through the browser's own HTML parser, which knows that `<svg>`
+  // opens a different namespace and that `<foreignObject>` closes it again. This interpreter is the
+  // other half of the same page and has to know the same thing: an `svg` built as HTML is not an
+  // `SVGElement`, so it lays out as nothing and a chart that paints on first load vanishes the
+  // first time its data changes. `createElementNS` is also what keeps `linearGradient` and
+  // `clipPath` their own case, which `createElement` lowercases in an HTML document.
+  const HTML = "http://www.w3.org/1999/xhtml";
+  const SVG = "http://www.w3.org/2000/svg";
+
+  // Which namespace a *child* of this node is built in. Inherited, except at the two edges.
+  const within = (node) =>
+    node && node.namespaceURI === SVG && node.localName !== "foreignObject" ? SVG : HTML;
+
+  const build = (h, ns) => {
     if (typeof h === "string") return document.createTextNode(h);
-    const el = document.createElement(h[0]);
+    const tag = h[0];
+    // A patch can carry a subtree whose root is `svg` or a subtree that starts inside one, so the
+    // namespace comes from the tag when the tag opens one and from the destination otherwise.
+    const here = tag === "svg" ? SVG : ns || HTML;
+    const el = document.createElementNS(here, tag);
     // Pairs, in the order the server wrote them: an element rebuilt here carries its attributes in
     // the order the same element has in the server-rendered document.
     const attrs = h[1];
     for (let a = 0; a < attrs.length; a++) el.setAttribute(attrs[a][0], attrs[a][1]);
     const kids = h[2];
-    for (let i = 0; i < kids.length; i++) el.appendChild(build(kids[i]));
+    const inner = here === SVG && tag !== "foreignObject" ? SVG : HTML;
+    for (let i = 0; i < kids.length; i++) el.appendChild(build(kids[i], inner));
     return el;
   };
 
@@ -134,8 +154,10 @@
       const path = op[1];
       switch (op[0]) {
         case 0: { // replace
-          const next = build(op[2]);
           const node = at(path);
+          // The namespace of what is being built comes from where it is going, which is the parent
+          // of what it replaces — an op whose root is a `rect` says nothing about namespaces itself.
+          const next = build(op[2], within(node ? node.parentNode : root));
           if (node) node.replaceWith(next);
           else root.appendChild(next);
           const kept = scrolled[i];
@@ -153,7 +175,7 @@
         case 3: at(path).removeAttribute(op[2]); break;      // remove attribute
         case 4: { // insert child
           const parent = at(path);
-          parent.insertBefore(build(op[3]), parent.childNodes[op[2]] || null);
+          parent.insertBefore(build(op[3], within(parent)), parent.childNodes[op[2]] || null);
           break;
         }
         case 5: { // remove child

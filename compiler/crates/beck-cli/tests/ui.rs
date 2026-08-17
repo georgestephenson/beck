@@ -277,3 +277,46 @@ ui!(
         BASE
     )
 );
+
+// ---------------------------------------------------------------------------------------------
+// The `ui:` vocabulary, docs/104 §104.8's Wall 2
+// ---------------------------------------------------------------------------------------------
+
+ui!(
+    an_event_the_client_does_not_listen_for,
+    &edited(
+        "span(on_click=Toggle(id=t.id)): t.text",
+        "span(on_keydown=Toggle(id=t.id)): t.text"
+    )
+);
+
+// `cls=` is the spelling docs/01 §1.3's own sketch uses, so this is the message a reader arriving
+// from that page gets. A distance search would say `cols`, which is one edit away and useless.
+ui!(
+    the_spelling_the_original_sketch_uses,
+    &edited("class=done_class(t)", "cls=done_class(t)")
+);
+
+// The systematic mistake rather than the random one: `ui:` turns `_` into `-`, and HTML spells
+// this attribute with nothing in between.
+ui!(
+    an_attribute_written_the_way_the_language_spells_everything_else,
+    &edited(
+        "input(placeholder=\"what needs doing?\", autofocus=\"on\",",
+        "input(placeholder=\"what needs doing?\", autofocus=\"on\", max_length=\"80\","
+    )
+);
+
+// ---------------------------------------------------------------------------------------------
+// D1's non-durable fold, docs/104 §104.8's Wall 1
+// ---------------------------------------------------------------------------------------------
+
+// A program whose only accumulator is an unwrapped fold used to be reported as a *library* with no
+// durable state, which sends its author to add the `durable` they deliberately left off.
+ui!(
+    a_fold_nobody_wrapped_in_durable,
+    &edited(
+        "todos: Signal[State] = durable(fold(",
+        "todos: Signal[State] = (fold("
+    )
+);

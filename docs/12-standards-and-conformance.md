@@ -61,7 +61,7 @@ test.
 
 | Standard | Status | What exists | What is missing, and where it is scheduled |
 |---|---|---|---|
-| **IEEE 754-2019** | **Partial** | Arithmetic is binary64. SICP's printed doubles are asserted digit-for-digit (`beck-cli/tests/sicp.rs`) — a reassociation or FMA anywhere would fail the suite. The differential runs corpus programs on the evaluator and both native backends ([`93`](93-the-native-backends-report.md)). `Value` identity canonicalises `-0.0` and NaN — a chosen deviation from §5.11, recorded as [`10`](10-decisions.md) D27 | No WASM tier yet, so "across tiers" is a two-backend claim. F9's deterministic libm is **owed, not pending** — [`08`](08-roadmap.md) §8.5.2 records its trigger as already passed |
+| **IEEE 754-2019** | **Partial** | Arithmetic is binary64. SICP's printed doubles are asserted digit-for-digit (`beck-cli/tests/sicp.rs`) — a reassociation or FMA anywhere would fail the suite. The differential runs corpus programs on the evaluator and both native backends ([`93`](93-the-native-backends-report.md)). `Value` identity canonicalises `-0.0` and NaN — a chosen deviation from §5.11, recorded as [`10`](10-decisions.md) D27 | No WASM tier yet, so "across tiers" is a two-backend claim. F9's deterministic libm is **done**: `sin` and `cos` are computed in the runtime library and correctly rounded, so they are a fact about the mathematics rather than about the host ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)) |
 | **Unicode, pinned per release** — currently **17.0**, identifiers **UTS #39 ASCII-Only** | **Partial** | The pin is `beck_syntax::security::UNICODE`; the identifier profile is UTS #39's strictest restriction level, satisfied by construction; bidirectional and zero-width controls are refused in both surfaces (`B0102`, the Trojan Source class, CVE-2021-42574). Vectors: `beck-cli/tests/identifiers.rs`, grouped by the attack each defeats. Source files are UTF-8 | This row previously claimed "Unicode 15+", NFC normalisation and UAX #29/#31 — none of which was the artefact built. NFC and segmentation have no implementation and no caller today; they come due when the string library grows operations that need them ([`46`](46-standard-library-report.md) §46.16), and enter this table with vectors when they do |
 | **RFC 3339** | **Verified, narrow** | `time_format`/`time_parse` in the prelude, UTC-only by choice — replay wants an instant, not a zone, so an offset is rejected (`beck-cli/tests/stdlib.rs`) | RFC 9557 zoned suffixes: watch, per [`35`](35-standards-landscape.md) §35.3 — adopted only if a zoned type ever enters the library |
 | **RFC 8259 (JSON)** | **Partial** | A JSON reader/writer in the standard library ([`46`](46-standard-library-report.md)), `serde_json` host-side | No conformance vectors run. A JSONTestSuite-class vector run is a small artefact — chartered, [`08`](08-roadmap.md) §8.5.4's standards ledger |
@@ -92,16 +92,19 @@ is real and rare: the `ui:` macro emits a typed tree, so **WCAG 2.2 AA and ARIA 
 *checkable* at compile time** in a way no template language can match. But checkable is not
 checked: there is no accessibility diagnostic among the 137 codes, no contrast check over any style
 value, and no axe-core anywhere in the tree. Until an artefact exists this is a design advantage,
-not a conformance claim — and the tree is less checked than "typed" suggests, because `ui:` has no
-vocabulary of attributes or events at all
-([`104`](104-styling-and-the-component-library.md) §104.8).
+not a conformance claim. The prerequisite is now met: `ui:` **has** a vocabulary
+([`104`](104-styling-and-the-component-library.md) §104.8), so the tree these checks would run over
+is one whose element and attribute names mean something — `beck_macro::vocabulary::ELEMENTS` is
+what tells an `img` from a `button`, and it is a table these checks read rather than one they
+bring.
 
 The positions ([`08`](08-roadmap.md) §8.5.4's standards ledger, then Phase 4):
 
 - **The first three checks** — an `img` without alt text, a button without an accessible name, a
   form input without a label — are a small artefact over the existing `ui:` tree, each a compile
   error with the escape hatch `@a11y(exempt, reason=...)`, lintable and auditable. These need
-  nothing that is not built.
+  nothing that is not built, and since the vocabulary landed they need no table of their own
+  either: `B0217`/`B0218` are the shape each of them takes.
 - Colour-contrast over statically-known style values, and runtime conformance (focus preservation,
   live-region announcements) tested with axe-core in the e2e suite: **Phase 4**, with the client
   polish it audits.

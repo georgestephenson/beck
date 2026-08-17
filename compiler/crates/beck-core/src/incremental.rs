@@ -216,8 +216,10 @@ fn per_session_closure(placed: &Placed) -> BTreeSet<SigId> {
         // `presence` joins the session on this side of the cut, for the reason
         // [`crate::plan::Op::Presence`] gives: what it produces is not a function of the
         // accumulator, and the shared dataflow is versioned by the accumulator.
-        if matches!(node.op, Op::PerSession { .. } | Op::Presence)
-            || node.inputs.iter().any(|i| below.contains(i))
+        if matches!(
+            node.op,
+            Op::PerSession { .. } | Op::Presence | Op::Awareness { .. }
+        ) || node.inputs.iter().any(|i| below.contains(i))
         {
             below.insert(id);
         }

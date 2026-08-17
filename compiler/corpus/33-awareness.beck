@@ -1,0 +1,111 @@
+# What everybody is *doing* now, which is the second thing on a page that is not in the log.
+#
+# `32-here.beck` next door is the roster: who is connected. This is the roster carrying a value —
+# each connection says where it is, and every other connection can see it. That is the shape Yjs
+# calls awareness and the one a cursor, a selection or a "three people are looking at this" badge
+# is made of, and it is the reason `presence()` alone was not enough: a count cannot say *what*.
+#
+# `awareness(f)` takes a function of a `Session`, not a signal. That is the whole design in one
+# line: the subscribers are the runtime's fact and not the graph's, so a program cannot name
+# another connection's session — it can only say what it would like to know about one, and the
+# runtime applies that to every connection it holds.
+#
+# Everything true of the roster is true of this, for the same reasons and in the same places:
+#
+#   * it is **server-placed without an annotation**, because `awareness` performs `cap.presence`
+#     and no tier below the server discharges a capability (§3.3);
+#   * `validate` cannot see it — the chokepoint reading it is `B0520`, because what somebody was
+#     looking at when an event was recorded is written down nowhere;
+#   * a page that reads it cannot render in the browser — `B0521`, because the runtime holds it
+#     one row per socket and a browser handed the accumulator would have nothing to render it from.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model State:
+    notes: Map[Str, Str]
+
+# The accumulator and the two rosters, met: what was recorded, beside who is looking and at what.
+model Room:
+    notes: Map[Str, Str]
+    reading: Map[Str, Str]
+
+union Command:
+    Post(text: Str)
+
+union Event:
+    Posted(text: Str)
+
+union Rejection:
+    Blank
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Posted(text):
+            return s.with(notes=map_insert(s.notes, env.actor, text))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Post(text):
+            if str_is_empty(str_trim(text)):
+                return Err(error=Blank)
+            return Ok(value=[Posted(text=text)])
+
+## What this client tells the others about itself. A pure function of one session, evaluated by
+## the runtime once per connection and again whenever that connection's session moves.
+def whereabouts(session: Session) -> Str:
+    return session.path
+
+def combine(s: State, reading: Map[Str, Str]) -> Room:
+    return Room(notes=s.notes, reading=reading)
+
+def view(r: Room, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "standup"
+            p: (str(map_len(r.reading)) + " here")
+            ul:
+                for who in map_keys(r.reading):
+                    li(key=who): (who + " is at " + where_of(r, who) + note_of(r, who))
+            footer: ("you are " + session.actor)
+
+def where_of(r: Room, who: Str) -> Str:
+    return unwrap_or(map_get(r.reading, who), "nowhere")
+
+def note_of(r: Room, who: Str) -> Str:
+    match map_get(r.notes, who):
+        case Some(value):
+            return " — " + value
+        case None:
+            return ""
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, board, validate)
+board: Signal[State] = durable(fold(apply_event, State(notes={}), events))
+reading: Signal[Map[Str, Str]] = awareness(whereabouts)
+page: Signal[Html] = per_session(map2(combine, board, reading), view)
+
+# A test renders the page one actor sees while looking at it, so the roster it renders against is
+# that actor and nobody else — and the contribution in it is this program's own `whereabouts`
+# applied to the session the expectation names.
+test "the page says where the one person looking at it is":
+    given []
+    expect page(session("ana")) contains "1 here"
+    expect page(session("ana")) contains "ana is at /"
+
+test "a note appears beside its author":
+    given [Posted(text="shipping the slicer")] by "ana"
+    expect page(session("ana")) contains "ana is at / — shipping the slicer"
+
+test "a blank note never reaches the log":
+    given []
+    when Post(text="   ")
+    expect Err(error=Blank)
+
+test "the awareness roster is the server's and the page is the browser's":
+    expect place(reading) == server
+    expect place(board) == data
+    expect place(page) == client
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "here"

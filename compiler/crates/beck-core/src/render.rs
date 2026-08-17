@@ -279,6 +279,9 @@ pub struct Decision {
     pub uses: SessionUse,
     /// True when the view reads `presence()`, which is the second fact that decides it.
     pub reads_presence: bool,
+    /// True when the view reads `awareness()`, which decides it for the same reason: a roster with
+    /// a payload is still a fact the server holds about its own sockets.
+    pub reads_awareness: bool,
     /// True when the view reads `freshness()`. The only condition here that refuses **Mode A**:
     /// a server renders the state it has recorded, so its answer is `Confirmed` and nothing else,
     /// and a page that branches on it is a page with a dead branch.
@@ -325,6 +328,7 @@ impl Decision {
             per_session: roles.view_is_per_session,
             uses: SessionUse::of(&roles.view, defs),
             reads_presence: roles.view_reads_presence,
+            reads_awareness: roles.awareness.is_some(),
             reads_freshness: roles.view_reads_freshness,
             // A declared mode is refused where it was written; a defaulted one, at the component.
             span: declared.map_or(span, |(_, s)| s),
@@ -417,6 +421,14 @@ impl Decision {
                 "This page reads `presence`, so it cannot move to the browser: `@render(client)` \
                  would be refused (B0516). Who is connected is in neither the accumulator nor the \
                  log — it is a fact the server holds about its own sockets.\n",
+            );
+            return out;
+        }
+        if self.mode == Mode::Server && self.reads_awareness {
+            out.push_str(
+                "This page reads `awareness`, so it cannot move to the browser: `@render(client)` \
+                 would be refused (B0521). What every other connection is contributing is in \
+                 neither the accumulator nor the log.\n",
             );
             return out;
         }
@@ -539,6 +551,30 @@ impl Decision {
                 .with_fix(
                     "render this component on the server (the default), or take `presence` out of \
                      its page",
+                ),
+            );
+        }
+        if self.reads_awareness {
+            diags.push(
+                Diagnostic::error(
+                    "B0521",
+                    format!(
+                        "`{}` reads `awareness`, so it cannot render on the client",
+                        self.component
+                    ),
+                    self.span,
+                )
+                .with_primary_label("`@render(client)` sends the browser the accumulator")
+                .with_note(
+                    "What every other connection is contributing is not in the accumulator and \
+                     is not in the log: like `presence`, it is a fact the server holds about its \
+                     own sockets, and unlike `presence` it carries a value each of those sockets \
+                     chose. A browser handed the state would have nothing to render this part of \
+                     the page from.",
+                )
+                .with_fix(
+                    "render this component on the server (the default), or take `awareness` out \
+                     of its page",
                 ),
             );
         }

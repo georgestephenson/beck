@@ -41,11 +41,11 @@ the property §12.10 prizes.
 **What it still lacks.** The row claims `f32`/`f64` "across tiers — WASM and native must agree
 bit-for-bit". There is one float (binary64) and one tier computing it — the evaluator; no WASM or
 native backend exists ([`27`](27-the-walls-come-down-report.md) §27.10). The cross-tier half of the claim is
-still design, and [`14`](14-review-findings.md) F9's price — a correctly-rounded deterministic
-libm, FMA and fast-math off in fold-reachable code — comes due with the second backend or the
-first transcendental, whichever arrives first: today the prelude's only root is `sqrt`, which
-IEEE 754 requires correctly rounded and is therefore portable, and `sin`/`cos`/`pow` — where
-libms actually diverge — do not exist yet. Exact rationals and bignums remain refused
+still design. [`14`](14-review-findings.md) F9's price — a correctly-rounded deterministic libm —
+has since been **paid**: `sin` and `cos` are computed in the runtime library rather than asked of
+the host ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)),
+`sqrt` is IEEE 754's own correctly-rounded answer and stays each target's instruction, and `pow`
+does not exist yet and would arrive the same way. Exact rationals and bignums remain refused
 (`rational.beck`); the tower has one floor of three,
 said plainly in §27.10.
 
@@ -272,9 +272,10 @@ Each item enters [`12`](12-standards-and-conformance.md) only with its artefact,
 
 1. **Numeric follow-ons, now that the reals are built** ([`27`](27-the-walls-come-down-report.md)):
    the `NaN == NaN` / `-0.0` canonicalisation deviation moves from §27.8 — a report, which is
-   history — into the Phase 5 spec as current state, with a D-number; F9's deterministic libm
-   gates the first transcendental or the second backend, whichever lands first; ISO/IEC 10967
-   read once when the rationals/bignums floors are attempted (§35.1, §35.3).
+   history — into the Phase 5 spec as current state, with a D-number; ISO/IEC 10967 read once
+   when the rationals/bignums floors are attempted (§35.1, §35.3). F9's deterministic libm was the
+   third item here and is **done**
+   ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)).
 2. ~~**Identifier rules**: pin the Unicode version per release; add UTS #39's security profile
    with conformance vectors (§35.1).~~ **Done** — `beck_syntax::security` pins the version and
    states the profile Beck is at (**ASCII-Only**, UTS #39's strictest restriction level, satisfied

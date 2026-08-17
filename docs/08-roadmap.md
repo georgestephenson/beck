@@ -404,7 +404,6 @@ and its algebraic half moved two rows of Phase 3's exit table at once
 | Virtualized **disk**, and **elapsed time** | F11; [`13`](13-testing.md) §13.4 | Now. The clock is supplied rather than ambient ([`44`](44-wave-0-report.md) §44.3) and the network is a seam with three implementations ([`46`](46-standard-library-report.md) §46.11); these two are what is left, and every Phase 4 bullet is a distributed-systems bullet whose stated test methodology is the simulator |
 | Trusted publishing on crates.io | [`42`](42-security-assurance.md) §42.7 | The **first** `cargo publish` — a long-lived token used once is a risk already taken |
 | Diverse double-compiling / bootstrappability | [`42`](42-security-assurance.md) §42.7 | The first `beck` built by `beck` (Phase 5) |
-| Deterministic libm (F9) | [`35`](35-standards-landscape.md) §35.5 item 1 | **Passed, and now measured rather than asserted.** Three backends reach three different libms: the evaluator calls Rust's `f64::sin` ([`interp.rs`](../compiler/crates/beck-eval/src/interp.rs)), the LLVM emitter emits `llvm.sin.f64` and the Cranelift emitter calls the extern symbol `sin` — all of which resolve to the *host's* libm. `sqrt` is safe because IEEE 754 requires it correctly rounded; **`sin` and `cos` are not required to be**, and implementations differ in the last ulp — between libms, and between versions of one libm. So a fold that computes `sin` can replay to a different state on a different machine, which is the determinism claim [`10`](10-decisions.md) D3 rests the data tier on, and the three-way differential passes today only because all three paths resolve to one host's libm. **It now has a position** (§8.5.4) rather than a status |
 
 ### 8.5.3 The traps still live
 
@@ -432,15 +431,6 @@ the one place in `docs/` that holds an order. The list stopped being all-**S** w
 item larger than anything else here, one **G**, and a ledger of small artefacts behind chartered
 rows.
 
-- **Deterministic transcendentals** (R, and **first**, because it is the only item here that makes a
-  *shipped* claim false rather than merely unbuilt): `sin` and `cos` resolve to whatever libm the
-  host supplies, in all three backends, and IEEE 754 does not require either to be correctly
-  rounded — so two machines can fold the same log to two different states, which is the one thing
-  [`10`](10-decisions.md) D3 needs never to happen. §8.5.2 has the evidence. The fix is a vendored
-  correctly-rounded implementation behind the three `Prim`s, and the gate is the one that would have
-  caught it: the three-way differential run on **two different libms**, which is a CI matrix row
-  rather than a new harness. Small, overdue, and cheap only until something depends on the current
-  answers. `DEFECTS.md::libm-determinism` is the entry, with the gate a fix owes.
 - **The data tier's means of combination** (F, and now the **largest item left**, since the macro
   interpreter below has landed — [`99`](99-the-data-tier-means-of-combination.md) §99.7 lists five
   already-written-down items it closes): `arrange_by`, `join`, the loop-plus-lookup recognition,
@@ -493,6 +483,18 @@ rows.
   answer two calls at once. [`93`](93-the-native-backends-report.md) §93.15 is the list, and the
   largest refusal class behind it is a **function value at a boundary**, which is moved by compiling
   definitions called only by *other compiled definitions*.
+- **A fast path in front of the exact sine** (S, and the successor of the item that was first
+  here): `sin` and `cos` are computed rather than asked for and are correctly rounded
+  ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)), which closed
+  the retrofit item and the defect under it. What that costs is **~640 ns against a platform
+  libm's 11 ns**, and the missing piece is not a faster exact path — that is what an exact path costs —
+  but Ziv's technique in front of it: a double-double first pass answers unless its own error
+  bound leaves the rounding in doubt, and the exact path arbitrates the rest, which is under one
+  call in 2^45. It **changes no answer**, because the exact path stays the definition of what the
+  answer is, and that is why it is S rather than R: nothing depends on it and no claim is false
+  without it. The measured impact today is 0.1% of `awfy/cd.beck`, the only program in the tree
+  that calls either function — below that benchmark's own variance. Lane E, or wherever
+  `beck-prim` is held to sit.
 - **A worker that can answer two calls at once** (S, and it is what is left of cancelling a child
   blocked in the host): the tree-walker stops a child inside an outbound call now
   ([`80`](80-structured-concurrency-report.md) §80.14), and `beck-llvm` passes `Stop::never()`
@@ -512,12 +514,24 @@ rows.
   subscriber, and §48.13 says "one file would change". It was in no phase. Its successor is
   [`99`](99-the-data-tier-means-of-combination.md) decision 3: presence moves when `seq` does not, so
   a join against presence is the one case the algebra above must refuse, and it should refuse it with
-  a diagnostic rather than a surprise until this exists.
-- **Comment-preserving printing** (S, due rather than nice): ordinary `#` comments are dropped by the
-  lexer, so `beck fmt` deletes them — a formatter that eats comments is one nobody runs twice, and
-  `textDocument/formatting` waits on it (`DEFECTS.md::fmt-comments`). It has been in §8.5.5's Lane C
-  cell since that table was written, and **a lane is a collision map rather than an order**, which is
-  how it stayed unpositioned.
+  a diagnostic rather than a surprise until this exists. **`awareness(f)` now sits on the same
+  clock and doubles what this row is worth**: a second roster, per subscriber for the same reason,
+  moving more often than the first because it follows navigations rather than connections.
+- **Awareness over a client-local value** (M): `awareness(f)` is built for `f : Session -> T`
+  ([`10`](10-decisions.md) D6, `corpus/33-awareness.beck`), which is *who is looking at what*. A
+  cursor or a selection needs a value the client holds and can publish, and there is none —
+  `beck-patch.js` listens for five events and `mousemove` is not among them. That prerequisite is
+  the same one the client-local fold for interface state has
+  ([`104`](104-styling-and-the-component-library.md) §104.8), so the two are **one piece of work**:
+  a client-local stream, a client-placed non-durable fold over it, and `awareness` accepting a
+  signal as well as a function.
+- **Comment-preserving printing** (S, due rather than nice). **Done.** Ordinary `#` comments were
+  dropped by the lexer, so `beck fmt` deleted them — a formatter that eats comments is one nobody
+  runs twice, which is why `textDocument/formatting` was withheld rather than missing. They are now
+  collected by position in the pass that already collected documentation, in the three positions a
+  comment holds, and the LSP offers formatting in the same change so the fix has a caller. It had
+  been in §8.5.5's Lane C cell since that table was written, and **a lane is a collision map rather
+  than an order**, which is how it stayed unpositioned for as long as it did.
 - **Chapters 4 and 5 of SICP** (S): no predecessors, and they never acquire any.
 - **Trusted publishing** (R, above): an account setting rather than a branch.
 - **Grammar-aware fuzzing and Kani proofs of the solver's invariants** (S, due rather than
@@ -552,19 +566,25 @@ rows.
   ([`DEFECTS.md`](../DEFECTS.md)). They are grouped here because they share a lane and a document,
   not because they are one item; the first four are each smaller than the paragraph describing
   them.
-  1. **The SVG namespace** (S, and **first** because it is the cheapest thing on this list that
-     unblocks a whole component class): `beck-patch.js` builds patched-in subtrees with
-     `document.createElement`, so a chart paints once and does not render after the patch that
-     changes it. Gated by a browser test asserting a patched `rect` has a non-zero box
-     (`DEFECTS.md::svg-namespace`). Lane B.
-  2. **A vocabulary for `ui:`** (G): known events, known attributes, a diagnostic with a suggestion
-     and an escape hatch for a genuine custom attribute. **G** because §12.4's three accessibility
-     checks — alt text, accessible name, input label — are already scheduled in the standards
-     ledger below over the same typed tree, and a tree that accepts `on_keydown` and `cls=` in
-     silence cannot honestly carry an accessibility claim; the two are one artefact and should be
-     one change. `DEFECTS.md::ui-vocabulary`. Lane C, with a `beck-macro` half — and the vocabulary
-     is a **table**, not expander code, because typed macros above retire the compiler-provided
-     `ui:` special case (D22) and a user-written `ui:` has to be held to the same names.
+  1. **The SVG namespace** (S, and it was **first** because it was the cheapest thing on this list
+     that unblocks a whole component class). **Done.** `beck-patch.js` built patched-in subtrees
+     with `document.createElement`, so a chart painted once and did not render after the patch that
+     changed it; it now takes the namespace from the tag where the tag opens one and from the
+     destination otherwise. Gated by `browser.rs::a_patched_in_chart_is_still_a_chart`, which
+     asserts the **laid-out width** of a patched `rect` in two positions — a fix that reads only the
+     tag fails the second ([`104`](104-styling-and-the-component-library.md) §104.9). Lane B.
+  2. **A vocabulary for `ui:`** (G). **Done.** `beck_macro::vocabulary` is the table — five events,
+     the HTML and SVG attribute names, and the elements §12.4's checks read — with `B0217` refusing
+     an event the client does not listen for, `B0218` an attribute HTML does not have, and
+     `data_…`/`aria_…` admitted by prefix, because the escape hatch for an attribute that is
+     genuinely yours is HTML's own. It was **G** because §12.4's three accessibility checks are
+     scheduled over the same typed tree and a tree that accepted `on_keydown` and `cls=` in silence
+     could not honestly carry an accessibility claim; those three now read `ELEMENTS` rather than
+     bringing a table. The events are held to the client's own listener table by a test that reads
+     `beck-patch.js`, in both directions
+     ([`104`](104-styling-and-the-component-library.md) §104.8). A **table** rather than expander
+     code, because typed macros above retire the compiler-provided `ui:` special case (D22) and a
+     user-written `ui:` has to be held to the same names. Lane C, with a `beck-macro` half.
   3. **`class=` takes a list, and `Class` is a type** (F): the prerequisite for everything else in
      the styling half, and what makes the editor's existing completion, hover and rename answer for
      utilities without an extension ([`65`](65-the-editor-report.md)). Lane A.
@@ -629,7 +649,7 @@ directories.
 |---|---|---|---|
 | **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3, 6 and 7 (§8.5.4) — `Class` as a type, where interface state lives, and focus as an attribute | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned; the styling cluster's items 1, 4 and 5 (§8.5.4) — the SVG namespace in `client/beck-patch.js`, the sheet emitter that retires `css.rs`, and the theme | Nothing in A, C, E or F |
-| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Comment-preserving printing — `textDocument/formatting` waits on it, and `beck fmt` deleting `#` comments is why it is due rather than nice (`fmt-comments` in [`DEFECTS.md`](../DEFECTS.md)); code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4); the `ui:` vocabulary (§8.5.4's styling item 2), whose diagnostics are here and whose macro half is `beck-macro` | A, if a syntax decision changes what the checker sees |
+| **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4). Comment-preserving printing and the `ui:` vocabulary were this lane's and are done | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
 | **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-wasmgen/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15, of which the two-calls-at-once worker is now what blocks cancelling a compiled child | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |
 | **F — infrastructure** | `beck-infra/` | Effect-derived NetworkPolicy/RBAC/grants; Crossplane emitter; conformance rungs | Nothing |
@@ -705,12 +725,12 @@ be stale), and **look for it in §8.5.4** (a phase bullet is not a position, and
 | Found | Direction | Outcome |
 |---|---|---|
 | Macro expansion fuel (F17) | Document behind code | [`42`](42-security-assurance.md) §42.4 said "absent — nothing in `beck-macro` bounds expansion". `MAX_EXPANSION` is 100,000 nodes, `B0214` refuses, `macro_bomb.rs` gates it both ways, and `pending_security.rs` had already deleted its own test saying so. **Corrected in place** |
-| Deterministic transcendentals (F9) | Unscheduled | §8.5.2 said "owed rather than pending" for three phases. Now §8.5.4's first item, and `DEFECTS.md::libm-determinism` — it is a **defect** rather than an absence, because the replay-determinism claim it falsifies is one this project ships |
+| Deterministic transcendentals (F9) | Unscheduled | §8.5.2 said "owed rather than pending" for three phases. Placed as §8.5.4's first item and recorded as a **defect** rather than an absence, because the replay-determinism claim it falsified is one this project ships — and **built** in the change that placed it ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)). It is the sweep's shortest path from *nobody scheduled this* to *it is done* |
 | The data tier's algebra | Unscheduled in *this* list | A Phase 4 bullet, never in the order. Now placed, in Lane B, and the largest item left now that the macro interpreter has landed. Its instrument is `DEFECTS.md::cost-report-undercount` |
 | Charting | Unscheduled **and undesigned** | Not in `docs/` at all until [`105`](105-the-ecosystem-answer.md), which ranked it, and [`104`](104-styling-and-the-component-library.md), which found the same defect from the UI side and owns the fix. Now the styling cluster's item 1 and `DEFECTS.md::svg-namespace`. **Two independent sweeps reached one line of JavaScript from opposite directions**, which is the strongest evidence in this section that the procedure works |
 | A columnar value / Arrow | Unscheduled | Committed in five documents as a *dependency choice*; nothing ever built the value it would apply to. Now placed, as the log-lifecycle G item's named predecessor |
 | The presence second clock | Unscheduled | [`48`](48-identity-report.md) §48.13's first row, in no phase, with a successor in [`99`](99-the-data-tier-means-of-combination.md) decision 3. Now placed |
-| Comment-preserving printing | In a lane, not in the order | §8.5.5's Lane C cell since that table existed. Now placed, and `DEFECTS.md::fmt-comments` |
+| Comment-preserving printing | In a lane, not in the order | §8.5.5's Lane C cell since that table existed. Placed, recorded as a defect, and **built** — the second item the sweep carried from *nobody scheduled this* to *it is done* |
 | The `@public` surface | Unscheduled in this list | A Phase 4 bullet with its own internal order (§101.10) and no position here. Now placed, G-first |
 
 **The gate this wants.** Everything above is a procedure a person has to remember, which is the

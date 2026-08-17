@@ -1,5 +1,12 @@
+# These drivers apply to a merge git performs, and to nothing else. GitHub does not read this file:
+# neither the mergeability it reports on a pull request nor the merge its button performs consults
+# a merge driver, so a branch that both sides have touched here reads as conflicting on GitHub
+# while `git merge` on a clone resolves it silently and correctly. Merging the base branch down
+# into the branch locally, and pushing that, is what clears it — see DEFECTS.md::union-merge-
+# is-local-only, which holds the gate a real fix owes.
+
 # CHANGELOG.md is the one file every branch touches, always at the same place — the top of the
-# list under "## Unreleased" — so two branches merged in parallel conflicted there every time.
+# list under "## Unreleased" — so two branches merged in parallel conflict there every time.
 # Union merge keeps both sides' bullets instead of conflicting. The file is a flat bullet list
 # with no topic headings precisely so this is safe: there is no shared header line for two
 # branches to both add, and a bullet that lands out of date order is left where it lands —

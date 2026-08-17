@@ -42,7 +42,7 @@
 //!
 //! # The protocol
 //!
-//! One call, `beck_prim`, and a mark rather than a return value:
+//! `beck_prim`, and a mark rather than a return value:
 //!
 //! 1. The caller passes the arena's high-water mark and up to three argument words.
 //! 2. This library allocates what its answer needs, starting at that mark.
@@ -58,11 +58,25 @@
 //! There is deliberately **no error path for a bad offset**. A caller here is a code generator in
 //! this workspace, not a program, and a defensive answer would be a second contract to keep in
 //! agreement with the first.
+//!
+//! # The second entry point, which carries no offsets at all
+//!
+//! [`math`] is here for a different reason from the rest of this crate. A digest is linked because
+//! emitting it would be a second implementation of somebody else's table; a sine is linked because
+//! **there is no answer to ask the host for** — IEEE 754 pins `sqrt` to one correctly-rounded
+//! result and pins neither `sin` nor `cos`, so a fold that reaches the platform's libm replays to
+//! a different state on a platform with a different one.
+//!
+//! A function from a double to a double needs no heap, so `beck_prim_f64` takes the argument
+//! itself and answers the result. Routing it through the mark protocol above would cost a lock, a
+//! bounds check and an outcome record per call, for a primitive whose whole input is 64 bits — and
+//! the arena's first paragraph, which is what buys all of that, has nothing to buy here.
 
 #[cfg(feature = "abi")]
 pub mod abi;
 pub mod arena;
 pub mod digest;
+pub mod math;
 pub mod text;
 pub mod time;
 
@@ -278,6 +292,53 @@ fn answer(r: Result<String, String>) -> Answer {
     match r {
         Ok(text) => Answer::Text(text),
         Err(why) => Answer::Raised(why),
+    }
+}
+
+/// A primitive that is a function from a double to a double, and the code the backends call it by.
+///
+/// A separate vocabulary from [`Op`] rather than two more of its variants, because the two share
+/// no part of their protocol: an [`Op`] reads text out of the arena and writes an outcome record
+/// above the mark, and one of these takes a number and answers one. Merging them would give every
+/// arm of the arena protocol a case that cannot happen.
+///
+/// The numbers are written out for [`Op`]'s reason: they are a protocol between a compiled program
+/// and a library it was linked against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FloatOp {
+    Sin = 1,
+    Cos = 2,
+}
+
+impl FloatOp {
+    pub const ALL: [FloatOp; 2] = [FloatOp::Sin, FloatOp::Cos];
+
+    pub fn code(self) -> i32 {
+        self as i32
+    }
+
+    pub fn from_code(code: i32) -> Option<FloatOp> {
+        FloatOp::ALL.into_iter().find(|o| o.code() == code)
+    }
+
+    /// The name the Beck program wrote, which is also `beck_core::Prim::name`.
+    pub fn name(self) -> &'static str {
+        match self {
+            FloatOp::Sin => "sin",
+            FloatOp::Cos => "cos",
+        }
+    }
+}
+
+/// Perform one primitive that is a function from a double to a double.
+///
+/// Separated from the ABI so that the evaluator reaches the same `match` a compiled program does,
+/// which is what makes the three-way differential a statement about one implementation rather than
+/// about three that agree.
+pub fn perform_f64(op: FloatOp, x: f64) -> f64 {
+    match op {
+        FloatOp::Sin => math::sin(x),
+        FloatOp::Cos => math::cos(x),
     }
 }
 

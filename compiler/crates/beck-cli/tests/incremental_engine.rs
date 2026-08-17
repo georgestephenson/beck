@@ -115,8 +115,14 @@ impl Subject {
             let state = self.state.clone();
             let session = self.runtime.session(actor);
             let here = beck_core::edge::presence_of(actor);
+            // The rosters `Runtime::view` renders the oracle against: one connection, this actor's
+            // own. An engine given an empty awareness roster would be held to a different page.
+            let aware = self
+                .runtime
+                .contribution(actor)
+                .unwrap_or_else(|e| panic!("{}: awareness: {e}", self.name));
             let got = self.engines[i]
-                .render(&state, &session, &here)
+                .render_all(&state, &session, &here, &aware)
                 .unwrap_or_else(|e| panic!("{}: engine: {e}", self.name));
             assert_eq!(
                 page(&self.name, got),
@@ -126,7 +132,14 @@ impl Subject {
             );
             let (got, version) = self
                 .shared
-                .render(&mut self.subscribers[i], &state, self.seq, &session, &here)
+                .render_all(
+                    &mut self.subscribers[i],
+                    &state,
+                    self.seq,
+                    &session,
+                    &here,
+                    &aware,
+                )
                 .unwrap_or_else(|e| panic!("{}: shared engine: {e}", self.name));
             assert_eq!(
                 page(&self.name, got),
@@ -226,12 +239,18 @@ fn a_cold_engine_and_a_warm_one_produce_the_same_page() {
         for actor in ACTORS {
             let session = subject.runtime.session(actor);
             let here = beck_core::edge::presence_of(actor);
+            let aware = subject.runtime.contribution(actor).expect("awareness");
             let mut cold = Engine::new(subject.prepared.clone());
             let fresh = cold
-                .render(&subject.state, &session, &here)
+                .render_all(&subject.state, &session, &here, &aware)
                 .expect("a cold render");
             let warm = subject.engines[0]
-                .render(&subject.state, &subject.runtime.session(actor), &here)
+                .render_all(
+                    &subject.state,
+                    &subject.runtime.session(actor),
+                    &here,
+                    &aware,
+                )
                 .expect("a warm render");
             assert_eq!(
                 fresh, warm,

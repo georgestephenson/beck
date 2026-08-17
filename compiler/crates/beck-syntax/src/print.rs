@@ -126,6 +126,7 @@ pub fn to_python(n: &Node) -> String {
     let mut p = Py {
         out: String::new(),
         indent: 0,
+        trailing: None,
     };
     if n.is_form(sym::MODULE) {
         for (i, item) in n.args.iter().skip(1).enumerate() {
@@ -133,9 +134,21 @@ pub fn to_python(n: &Node) -> String {
                 p.out.push('\n');
             }
             p.item(item);
+            p.comments_after(item);
         }
     } else {
         p.item(n);
+        p.comments_after(n);
+    }
+    // Whatever the file ended with, and anything `crate::doc` could not place. A module node's own
+    // comments are the file's tail, so they come last and at column zero.
+    if n.meta
+        .comments
+        .as_deref()
+        .is_some_and(|c| !c.after.is_empty())
+    {
+        p.out.push('\n');
+        p.comments_after(n);
     }
     p.out
 }
@@ -143,6 +156,11 @@ pub fn to_python(n: &Node) -> String {
 struct Py {
     out: String,
     indent: usize,
+    /// A comment to hang off the end of the next line printed.
+    ///
+    /// A statement may print several lines — an `if` and its block — and the comment belongs to
+    /// the one the node started on, so this is taken by the first `line` after it is set.
+    trailing: Option<String>,
 }
 
 impl Py {
@@ -151,7 +169,51 @@ impl Py {
             self.out.push_str("    ");
         }
         self.out.push_str(s);
+        if let Some(c) = self.trailing.take() {
+            self.out.push_str("  ");
+            self.out.push_str(&c);
+        }
         self.out.push('\n');
+    }
+
+    /// The comments written above this node, and the one written at the end of its line.
+    ///
+    /// Called at the places a node is printed on a line of its own — `item`, `stmt`, a match arm, a
+    /// model field, a union variant — because those are the positions a comment can hold. A
+    /// comment inside an expression has nowhere to go that would re-parse, and `crate::doc` does
+    /// not attach one there.
+    ///
+    /// **Ordinary comments print above the doc comment**, whichever order they were written in.
+    /// That is a normalisation and the one place this printer moves a comment: documentation
+    /// belongs immediately above the thing it documents, and a note about the note goes above
+    /// both. It is stable — formatting the result again changes nothing.
+    fn comments_before(&mut self, n: &Node) {
+        let Some(c) = n.meta.comments.as_deref() else {
+            return;
+        };
+        for line in &c.before {
+            // A blank line inside a comment block is a blank line, not four spaces of one.
+            if line.is_empty() {
+                self.out.push('\n');
+            } else {
+                self.line(line);
+            }
+        }
+        self.trailing = c.trailing.as_deref().map(str::to_string);
+    }
+
+    /// The comments below this node that had nothing after them in their block.
+    fn comments_after(&mut self, n: &Node) {
+        let Some(c) = n.meta.comments.as_deref() else {
+            return;
+        };
+        for line in &c.after {
+            if line.is_empty() {
+                self.out.push('\n');
+            } else {
+                self.line(line);
+            }
+        }
     }
 
     /// Emit the node's doc comment, if it has one, at the current indentation.
@@ -168,7 +230,18 @@ impl Py {
     }
 
     fn item(&mut self, n: &Node) {
+        self.comments_before(n);
         self.docs(n);
+        self.item_body(n);
+    }
+
+    /// A declaration, with its comments already printed.
+    ///
+    /// Split from [`Py::item`] for the reason [`Py::stmt`] is split from `stmt_body`: a top-level
+    /// signal declaration is an item *and* a statement, and `item` hands it to the statement
+    /// printer — so a single entry point would print its comments once on the way in and again on
+    /// the way through, which is what the tree-wide idempotence gate caught.
+    fn item_body(&mut self, n: &Node) {
         match n.head_name() {
             Some(sym::DECORATE) => {
                 let deco = self.expr(&n.args[0]);
@@ -191,6 +264,8 @@ impl Py {
                     self.line("pass");
                 }
                 for f in &n.args[2..] {
+                    // A field is a line of its own, so it holds comments like any other.
+                    self.comments_before(f);
                     self.docs(f);
                     let fname = self.expr(&f.args[0]);
                     let fty = self.type_expr(&f.args[1]);
@@ -204,6 +279,8 @@ impl Py {
                 self.line(&format!("union {name}{typarams}:"));
                 self.indent += 1;
                 for v in &n.args[2..] {
+                    // A variant is a line of its own, so it holds comments like any other.
+                    self.comments_before(v);
                     self.docs(v);
                     let vname = self.expr(&v.args[0]);
                     if v.args.len() == 1 {
@@ -276,7 +353,7 @@ impl Py {
                 self.line(&format!("property {name}({params}):"));
                 self.body(&n.args[2]);
             }
-            _ => self.stmt(n),
+            _ => self.stmt_body(n),
         }
     }
 
@@ -366,6 +443,12 @@ impl Py {
     }
 
     fn stmt(&mut self, n: &Node) {
+        self.comments_before(n);
+        self.stmt_body(n);
+        self.comments_after(n);
+    }
+
+    fn stmt_body(&mut self, n: &Node) {
         match n.head_name() {
             Some(sym::DO) => {
                 for s in &n.args {
@@ -494,8 +577,12 @@ impl Py {
                 self.line(&format!("match {s}:"));
                 self.indent += 1;
                 for arm in &n.args[1..] {
+                    // An arm is a statement position too — a comment above `case` is about that
+                    // arm — even though an arm is not a statement anywhere else in this printer.
+                    self.comments_before(arm);
                     self.line(&format!("case {}:", self.case_head(arm)));
                     self.body(&arm.args[1]);
+                    self.comments_after(arm);
                 }
                 self.indent -= 1;
             }
@@ -612,6 +699,7 @@ impl Py {
                     self.line(&format!("stub {atom}:"));
                     self.indent += 1;
                     for arm in &body.args {
+                        self.comments_before(arm);
                         self.line(&format!("case {}:", self.case_head(arm)));
                         self.body(&arm.args[1]);
                     }

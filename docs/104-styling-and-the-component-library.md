@@ -367,16 +367,162 @@ data tier, replayed on every genesis replay, and included in the state digest. A
 to next year is twelve permanent log entries. This is not a performance nit; it is the semantics
 being wrong about what happened. Nobody *decided* it, which is why it is a wall and not a trade-off.
 
-Three candidate answers, in increasing order of ambition, and this document does not pick:
+#### What other systems do, and what they agree on
 
-- **A client-placed non-durable fold** over the client's own commands. Cheapest, and it needs a
-  client-local stream, which does not exist: the only stream is `merge_clients()`, and it is
-  server-placed by §3.5.
-- **The URL.** State that deserves a bookmark should be in `session.path` — [`94`](94-the-client-report.md)
-  §94.3 already makes a route a field of `Session` and not a router. This is the *right* answer for
-  a table's sort and filter and the wrong one for a tooltip.
-- **The platform.** §104.9: for a large fraction of these components the browser will hold the state
-  if asked in markup, and then it is nobody's state at all.
+Surveyed August 2026, because the question is old enough everywhere else to have an answer:
+
+| System | The homes it offers | What it says |
+|---|---|---|
+| **Redux / React** | store, or local component state | [organizing state](https://redux.js.org/faq/organizing-state): "The classic example is tracking an `isDropdownOpen` flag. In most situations, the rest of the app doesn't care about this, so in most cases it should stay in component state" |
+| **Remix** | the URL, then cookies, then client state | [state management](https://v2.remix.run/docs/discussion/state-management): "read and set the state in the URL directly with boring old HTML forms" |
+| **SwiftUI** | `@State`, `@SceneStorage`, `@AppStorage` | three lifetimes, chosen **at the declaration** — transient, scene-restored, app-persisted |
+| **Akka** | `Behaviors`, or `EventSourcedBehavior` | the same fold either way; journalling is opt-in per behaviour |
+| **Phoenix LiveView** | per-connection `assigns` | the closest architecture to Beck's, and its known weakness is the gap itself: LiveView cannot tell which assigns are transient and which are permanent |
+
+Two things they agree on, and neither is one of the three candidates below.
+
+**The lifetime is a declaration, not an inference.** Every system that has more than one home makes
+the author name which one, at the point of declaration. Beck already does this for the one
+distinction it has — `durable(fold(…))` against `fold(…)` — which is why D1's construct is the right
+shape and not merely an available one.
+
+**The assignment is by audience, not by mechanism.** "Does anybody else need to see this, and should
+it be here tomorrow" decides the home; the storage follows. That is what makes Redux's rule about
+`isDropdownOpen` and Remix's rule about the URL the *same* rule stated twice.
+
+#### The five homes, and the rule this document recommends
+
+Not three candidates but five homes with an order of preference, which is the form the survey says
+the answer takes. **This is a recommendation and not a decision**: adopting it wants a D-number, in
+[`10`](10-decisions.md)'s sense, because the last of them changes what a replay has to reproduce.
+
+1. **The platform, first.** §104.9: `<dialog>`, `popover`, `<details name>` and command invokers hold
+   a large fraction of this state if asked in markup, and then it is nobody's state at all — no
+   command, no event, no fold, nothing to place. A modal's open flag is this row.
+2. **The URL**, for anything that deserves a bookmark — a table's sort, a filter, a selected tab.
+   [`94`](94-the-client-report.md) §94.3 already makes a route a field of `Session` rather than a
+   router, so this home exists today and is unused for anything but routing.
+3. **Awareness**, for ephemera a *second person* must see: a cursor, a selection, a typing
+   indicator. This is the home a search for counter-examples turned up, and it is not a fold —
+   [Yjs](https://docs.yjs.dev/getting-started/adding-awareness), the canonical collaborative stack,
+   keeps it in a protocol of its own precisely because "awareness information isn't stored in the
+   Yjs document, as it doesn't need to be persisted across sessions", and its shape is a
+   `Map<client, state>` that is broadcast and deleted on disconnect. It was nine-tenths built
+   before anything was written for it, because `presence()` is that map with no payload, and
+   **`awareness(f)` now exists** for the half of it a session can answer — see below for what that
+   half is and what the other half still waits on. It is what D1's "cursors" always wanted.
+4. **A client-placed non-durable fold**, for what is left after those three: ephemera that *nobody
+   else* sees — a combobox's highlighted option, a tooltip's target. It needs a client-local stream,
+   which does not exist; the only stream is `merge_clients()` and it is server-placed by §3.5.
+5. **The durable log**, only for what a second person *and* a later day should see. Which is where
+   all of it goes today.
+
+The order is the recommendation. Its value is that the first two are **free** — one is markup and
+the other is a field that already exists — and the third is nine-tenths built, so the expensive home
+is needed for far less than it looks.
+
+**The client-local fold is the only home that has to be built, and nothing found needs a
+server-side one.** A
+search for counter-examples returned exactly one server-side ephemeral need — awareness, above — and
+its shape is a keyed map of each client's latest value, not an accumulation over occurrences. The
+other candidates were already answered: rate counters are §82.5's deliberately *sharded* table,
+sessions and presence are connections, and a cache "does not exist as a concept" because the
+incrementally-maintained views are the cache ([`15`](15-scale-and-distribution.md)). So D1's
+sentence names the right problem and the wrong mechanism, and the correction is that **ephemerality
+comes from the stream and the audience, never from the absence of a `durable` wrapper**.
+
+#### What awareness is, and the half of it that is built
+
+**The construct**, which exists. Awareness is a signal operation and not a command: nothing about a
+cursor is proposed, validated or recorded.
+
+```python
+reading: Signal[Map[Str, Str]] = awareness(whereabouts)
+```
+
+`f` produces this client's contribution and the roster is everybody's latest, keyed by actor.
+`compiler/corpus/33-awareness.beck` is the program, `beck-cli/tests/awareness.rs` is the gate, and
+`beck_rt::awareness` is the registry that applies `f` to each connection's `Session` and publishes
+what comes back.
+
+`f` is a function of a `Session` rather than a signal, and that signature is the whole design:
+**the subscribers are the runtime's fact and not the graph's**, so a program cannot name another
+connection's session — it can only say what it would like to know about one. Nothing in the signal
+graph could have expressed the roster; the runtime holds it, one row per socket, and hands it to the
+view as a source beside `presence`.
+
+It inherits `presence()`'s three rules unchanged, which is why it was built there:
+
+- it is a **non-log input to a view**, so everything below it runs per subscriber — the shared
+  dataflow is versioned by the log's `seq` and this moves when the log does not;
+- it is **capacity-bounded** (§82.5's table-bounds-the-attacker finding applies verbatim, since the
+  key is again a name the client chooses) — *and* bounded a second time, per contribution, which
+  presence needs no equivalent of: a roster of counts costs its capacity, and a roster of values
+  costs its capacity times whatever the program's `f` returns;
+- it **may not reach the chokepoint** (`B0520`) — an event whose existence depended on where
+  somebody's cursor was would not survive a replay — and it **may not render in the browser**
+  (`B0521`), because a client handed the accumulator holds nothing this could be rendered from.
+
+**And it splits in two, which was the finding and still is.** What `f` may read decides how much of
+it can be built:
+
+- **`f : Session -> T` is built, and needed no wire change at all.** The server already holds every
+  subscriber's `Session` — the route arrives on `hello` and on every `Nav` — so it computes each
+  client's contribution itself and never asks. *Who is looking at what* is the most-wanted awareness
+  feature after presence itself, and it cost a source, a role and an aggregation.
+- **`f` over a client-local value — a cursor, a selection — is not**, and not for a protocol reason:
+  the client has nothing to derive one *from*. `beck-patch.js` listens for five events and
+  `mousemove` is not among them (§104.8's Wall 2), so there is no client-local value in the language
+  to publish. Arbitrary awareness therefore has the **same prerequisite as the client-local fold**,
+  and the two are one piece of work rather than two.
+
+So the remaining order is: the client-local value next, which lets `awareness` take a client-placed
+signal and gives the full [Yjs](https://docs.yjs.dev/getting-started/adding-awareness) shape; and
+the client-local fold falls out of the same work.
+
+#### What the client-local fold costs to build, which is why this needs a D-number
+
+D1's non-durable fold is not blocked on plumbing.
+`DEFECTS.md::non-durable-fold` has the finding: an accumulator outside the log is **not a function
+of the log**, `beck-cli/tests/replay.rs` asserts `digest(replayed) == digest(live)`, and
+[`10`](10-decisions.md) D3 rests on that digest. So the construct needs an answer to *what the state
+digest covers* before it needs any code.
+
+And the volume half of D1's own motivation is untouched by it: §3.7 logs **every validated event**,
+so a cursor that moves a hundred times a second writes a hundred log entries whether or not the
+accumulator they feed is durable. An un-journalled accumulator is not an un-journalled stream, and
+D1's examples — presence, cursors — want the second.
+
+**Scoped after awareness shipped, and it splits the same way**, which is the finding rather than a
+coincidence: both are a client-held value that a *rendered page* has to see, so both are decided by
+where the page renders.
+
+- **What is needed is a stream, and the type is what would route it.** Today the only stream is
+  `merge_clients()` and §3.5 places it on the server, so every `on_click` in the language becomes a
+  proposal. The shape that fits is a **second, client-placed source over a second union** — a `Ui`
+  where `Command` is the one the chokepoint sees — so a variant's *type* decides whether an
+  interaction becomes a log entry or stays in the tab. Nothing about it is an annotation, and
+  `merge_clients()` stays the sole chokepoint because a `Ui` value is not a `Command` and can never
+  reach `validate`.
+- **In Mode B it needs no wire at all.** The browser already holds the accumulator, runs the fold and
+  renders the page (`beck-wasm`'s kernel), so a second accumulator folded from a client-local stream
+  and passed to the view is entirely inside the tab. Nothing is logged, nothing is replayed, nothing
+  enters the digest, and `DEFECTS.md::non-durable-fold`'s question — *what does the state digest
+  cover* — is not asked, because this accumulator is not a projection of the log in the first place.
+  `B0519` would narrow from "a non-durable fold is not built" to "a non-durable fold whose stream is
+  not client-local".
+- **In Mode A it cannot work without one, and choosing that wire is the D-number.** A Mode A page is
+  rendered where the state is, so a value the *browser* holds reaches it only by being sent — and
+  once sent it is a per-connection accumulator the **server** folds. That is a real option and not a
+  defeat: it is presence's shape rather than the log's, so it is bounded per connection, dropped on
+  disconnect, and outside the digest exactly as the roster is. But it is a second kind of state in
+  the runtime and a second thing an operator has to reason about, and it is the sentence D1 does not
+  contain.
+
+So the decision this needs is narrow and nameable: **does a client-local fold exist only where the
+client renders, or does Mode A get a per-connection accumulator on the server to make it work
+there too?** The first is buildable now and refuses `@render(server)` with a diagnostic; the second
+is the more useful feature and the larger claim.
 
 ### Wall 2 — the event vocabulary is five, and an unknown one is silent
 
@@ -385,7 +531,7 @@ Three candidate answers, in increasing order of ambition, and this document does
 serious component is held to — want arrows, `Home`, `End`, `Escape`, `Space`, `PageUp`/`PageDown`
 and typeahead, plus `focus` and `blur`.
 
-That gap is expected for a young client. What is not expected is that **the compiler does not know
+That gap is expected for a young client. What was not expected is that **the compiler did not know
 about it**:
 
 ```
@@ -401,10 +547,10 @@ and the page snapshot the harness then records as *correct* contains
 <span data-b-keydown="{&quot;c&quot;:&quot;Toggle&quot;…}" data-b-mouseenter="{…}">bread</span>
 ```
 
-Two dead attributes, shipped to the browser on every render, wired to nothing. `beck check` is
-happy, `beck test` is happy, and the snapshot — the gate [`22`](22-phase-3-report.md) §22.10 added
+Two dead attributes, shipped to the browser on every render, wired to nothing. `beck check` was
+happy, `beck test` was happy, and the snapshot — the gate [`22`](22-phase-3-report.md) §22.10 added
 precisely because "`contains` asserts one string somebody thought to name and a snapshot asserts
-every attribute" — has pinned the defect as the expected output.
+every attribute" — had pinned the defect as the expected output.
 
 The same hole swallows attribute names, and the spelling it swallows is one a reader will arrive
 with: [`01`](01-vision-and-premise.md) §1.3 writes `cls=`, faithfully, because the original sketch
@@ -415,15 +561,41 @@ happens to somebody who copies it is measured:
 <li cls="done" data-b-k="1">
 ```
 
-`cls` is not an HTML attribute. The page loses its styling, the browser ignores it, and every gate
-stays green. **The `ui:` macro has no vocabulary**, so a typo in a handler name or an attribute name
-is not a compile error, not a lint, and not visible in a snapshot review — it is a page that quietly
-does less than it says.
+`cls` is not an HTML attribute. The page lost its styling, the browser ignored it, and every gate
+stayed green. **The `ui:` macro had no vocabulary**, so a typo in a handler name or an attribute
+name was not a compile error, not a lint, and not visible in a snapshot review — it was a page that
+quietly did less than it said.
 
-This is [`82`](82-the-edge-report.md) §82.10's pattern again — a gate that cannot fail, written by
-people who knew what they meant. The fix is small and owed — a known set of events (which
-the client's own listener table already is) and a known set of attributes, with a diagnostic and an
-escape hatch for genuine custom attributes.
+That was [`82`](82-the-edge-report.md) §82.10's pattern again — a gate that cannot fail, written by
+people who knew what they meant.
+
+**Fixed.** `beck_macro::vocabulary` is the table: five events, the HTML and SVG attribute names, and
+the elements §12.4's checks will read. `B0217` refuses an event the client does not listen for and
+`B0218` an attribute HTML does not have, with **`data_…` and `aria_…` admitted by prefix** — the
+escape hatch for an attribute that is genuinely yours is HTML's own, so there was none to invent.
+
+Three things about the fix are worth more than the table.
+
+- **It is a table in a crate, not a check in the expander.** `ui:` is a compiler-provided special
+  case standing in for a user-written macro, and typed macros retire it
+  ([`10`](10-decisions.md) D22); a vocabulary buried in today's expander would be written twice, and
+  the second copy is the one that drifts. §12.4's three accessibility checks read `ELEMENTS` rather
+  than a list of their own, which is what makes them a day's work rather than a table's.
+- **The events are asserted to be the client's, not declared to be.** They are written in different
+  languages in different crates, so `client.rs::the_event_vocabulary_is_what_the_client_listens_for`
+  reads `beck-patch.js`'s own `on(…, "data-b-…")` registrations and compares the two sets **in both
+  directions**. An event the client drops is a handler that compiles and does nothing — this defect
+  arriving from the other side.
+- **The suggestion is a rule, not a list.** `ui:` turns `_` into `-`, so a program that writes
+  `max_length=` reaches HTML as `max-length` and the attribute is `maxlength` — squashing the
+  hyphens out and looking again catches every attribute of that shape at once. `cls` is the one that
+  needs an alias, because it is *one* edit from `cols` and two from `class`, so a distance search
+  confidently says the wrong thing to exactly the reader §1.3 sent.
+
+What is **not** refused is an unknown *element*, and that is a limit of today's surface rather than
+a judgement: inside a `ui:` block a lowercase call whose arguments are all keyword arguments is
+indistinguishable from an element, so refusing one would refuse a user's own helper. It is where
+typed macros make a difference rather than a table.
 
 ### Wall 3 — focus is not a function of state
 
@@ -474,20 +646,26 @@ be absent elsewhere, and [`94`](94-the-client-report.md) §94.15 already lists "
 Chromium" as not built. A component library that leans on the platform needs a support matrix and a
 degradation story per row, and neither exists.
 
-**And one defect blocks the chart of §104.7 outright.** `beck-patch.js:10` builds patched-in
-subtrees with `document.createElement(tag)` — no namespace. Measured in the same Chromium, on the
-same tree the patch carries:
+**One defect blocked the chart of §104.7 outright, and is now fixed.** `beck-patch.js` built
+patched-in subtrees with `document.createElement(tag)` — no namespace. Measured in the same
+Chromium, on the same tree the patch carries:
 
 | path | namespace | `instanceof SVGElement` | rendered width of a `rect` |
 |---|---|---|---|
 | server-side render (the HTML parser) | `…/2000/svg` | true | **50** |
 | a patch (`createElement`) | `…/1999/xhtml` | false | **0** |
 
-So an SVG chart paints on first load and **vanishes the first time it changes** — which is every
-time the data it is a function of changes, which is the only reason to have drawn it. The fix is
-`createElementNS` with a namespace inherited from the ancestor, and the gate is a browser test that
-asserts a patched `rect` has a non-zero box. It is not fixed here, because a client change wants its
-own change and its own browser gate; it is item 1 of §104.11 for the same reason.
+So an SVG chart painted on first load and **vanished the first time it changed** — which is every
+time the data it is a function of changes, which is the only reason to have drawn it. The client
+now builds with `createElementNS`, taking the namespace from the tag when the tag opens one
+(`svg`) and from **the destination** otherwise, with `foreignObject` handing it back to HTML.
+
+The second half of that sentence is the whole of the fix's difficulty, and the gate is built around
+it: `browser.rs::a_patched_in_chart_is_still_a_chart` drives two patches — one that replaces a
+paragraph with the whole `svg`, and one that adds a bar to a chart already in the document — and
+asserts the **laid-out width** of every `rect` rather than its namespace. A fix that reads the tag
+and ignores the destination passes the first and measures `30,0` on the second. `examples/chart.beck`
+is what it runs, and it is the first program in the tree whose page is an SVG.
 
 ## 104.10 Which components Beck should own, and why some of them it should own better
 
@@ -525,14 +703,16 @@ The list is not repeated here, because two documents holding one order is how an
 followed. What this section owes it is the *reason for the order*, which is not visible from a
 schedule:
 
-- **The first two are defects, not features** — the SVG namespace and the `ui:` vocabulary — and
-  they are in [`DEFECTS.md`](../DEFECTS.md) with the gate each fix owes. They come first because
-  each makes something already claimed untrue rather than something desired absent, and because
-  neither is expensive.
-- **The vocabulary is a `G`** in §8.5.4's classification: §12.4's three accessibility checks are
-  already scheduled over the same typed tree, and a tree that swallows `on_keydown` and `cls=` in
-  silence cannot honestly carry an accessibility claim. The two are one artefact and should be one
-  change.
+- **The first two were defects, not features** — the SVG namespace and the `ui:` vocabulary. They
+  came first because each made something already claimed untrue rather than something desired
+  absent, and because neither was expensive. **Both are done**: §104.9 has the namespace fix and its
+  gate, and Wall 2 above has the vocabulary's. Neither cost more than a day, which is the argument
+  for the ordering rather than a remark about it.
+- **The vocabulary was a `G`** in §8.5.4's classification: §12.4's three accessibility checks are
+  scheduled over the same typed tree, and a tree that swallowed `on_keydown` and `cls=` in silence
+  could not honestly carry an accessibility claim. **Done**, and what it leaves behind for those
+  checks is `ELEMENTS` — the table that tells an `img` from a `button` — so they are now a day's
+  work over an existing table rather than a table plus a day.
 - **`class=` as a list is the `F`.** Everything in the styling half is behind it, and so is the
   editor affordance that costs nothing once it exists.
 - **The last three are behind a decision, not behind effort.** Where interface state lives (Wall 1)

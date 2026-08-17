@@ -365,6 +365,24 @@ pub const INDEX: &[CodeEntry] = &[
          for `adr/0012`'s reason: a diagnostic that depends on the build profile is not a \
          diagnostic.",
     ),
+    e(
+        "B0217",
+        Stage::Macros,
+        "that is not an event the client listens for",
+        "A handler is a declarative attribute carrying a command, and the client interprets a \
+         closed set of them — `on_click`, `on_enter`, `on_submit`, `on_input`, `on_change`. Any \
+         other name reaches the browser as an attribute wired to nothing, which is why this is a \
+         refusal rather than a lint: there is no such thing as a custom event here.",
+    ),
+    e(
+        "B0218",
+        Stage::Macros,
+        "that is not an HTML attribute",
+        "A `ui:` element carries its keyword arguments to the page as attributes, and a name HTML \
+         does not have is one the browser ignores — a page that quietly does less than it says. An \
+         attribute of your own is spelled `data_…`, which is HTML's own extension point; `aria_…` \
+         is admitted the same way.",
+    ),
     // ------------------------------------------------------- B03xx: names, types and effects
     e(
         "B0300",
@@ -1050,6 +1068,37 @@ pub const INDEX: &[CodeEntry] = &[
          every position of every log and the page's other branch would be unreachable. This is \
          `B0516` from the other side: `@render(client)` is what makes a guess possible, and \
          therefore what makes saying so possible (docs/94 §94.5).",
+    ),
+    e(
+        "B0519",
+        Stage::Signals,
+        "a non-durable fold is not built yet",
+        "`docs/10` D1 provides for a fold that is not wrapped in `durable` — \"high-churn ephemera \
+         get non-durable folds, same semantics, no log persistence\" — and it is decided rather \
+         than built. Until this diagnostic existed, such a program was reported as a *library* \
+         with no durable state, which sent its author to add the `durable` they had deliberately \
+         left off. What stands in the way is not plumbing: an accumulator outside the log is not a \
+         function of the log, so it cannot be replayed into and cannot be in the state digest that \
+         `tests/replay.rs` holds a replay to — and D3 rests on that digest. The question is what \
+         the digest covers, and it is open.",
+    ),
+    e(
+        "B0520",
+        Stage::Signals,
+        "the chokepoint reads `awareness`, which is not in the log",
+        "`B0515` for the roster that carries a payload. What each connection was contributing \
+         when an event was recorded is written down nowhere, so a `validate` that decided from it \
+         would decide one thing now and another on replay. Record the fact instead: propose a \
+         command when the thing you are deciding from happens, and decide from the state that \
+         fold produces.",
+    ),
+    e(
+        "B0521",
+        Stage::Signals,
+        "reads `awareness`, so it cannot render on the client",
+        "`B0516` for the roster that carries a payload. `@render(client)` sends the browser the \
+         accumulator, and what every *other* connection is contributing is in neither the \
+         accumulator nor the log — the runtime holds it, one row per socket.",
     ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(

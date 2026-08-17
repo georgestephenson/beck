@@ -608,6 +608,66 @@ fn a_rename_it_will_not_do_says_why_rather_than_doing_nothing() {
     server.shutdown();
 }
 
+/// The editor can format, and formatting keeps the comments — which is why it can.
+///
+/// `textDocument/formatting` was deliberately withheld: the lexer skipped `#` lines, so `beck fmt`
+/// deleted every one of them, and a formatter an editor runs on save must not delete what somebody
+/// wrote (`docs/65` §65.8, `DEFECTS.md::fmt-comments`). The capability and the property are
+/// asserted together, because either alone is the wrong half.
+#[test]
+fn the_editor_formats_and_the_comments_come_back() {
+    let mut server = handshake();
+    let uri = "file:///tmp/fmt.beck";
+    // Deliberately misformatted, so the reply is an edit rather than nothing.
+    let src = "# a note about the model\nmodel P:\n    x:   Int  # a note about the field\n";
+    server.open(uri, src);
+    assert!(server.diagnostics(uri).is_empty());
+
+    let reply = server.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri },
+            "options": { "tabSize": 4, "insertSpaces": true },
+        }),
+    );
+    let edits = reply
+        .pointer("/result")
+        .and_then(Value::as_array)
+        .expect("an array of edits")
+        .clone();
+    assert_eq!(edits.len(), 1, "one edit for the whole document: {reply}");
+    let text = edits[0]["newText"].as_str().expect("replacement text");
+    assert!(text.contains("# a note about the model"), "{text:?}");
+    assert!(text.contains("# a note about the field"), "{text:?}");
+    assert_eq!(
+        text,
+        "# a note about the model\nmodel P:\n    x: Int  # a note about the field\n"
+    );
+
+    // A second format is a no-op, and says so with an empty list rather than an identical edit:
+    // an editor that marked the buffer dirty on every save would be worse than no formatter.
+    server.open("file:///tmp/done.beck", text);
+    let again = server.request(
+        "textDocument/formatting",
+        json!({ "textDocument": { "uri": "file:///tmp/done.beck" } }),
+    );
+    assert_eq!(
+        again.pointer("/result").and_then(Value::as_array),
+        Some(&vec![]),
+        "{again}"
+    );
+
+    // And a file that does not parse is formatted by nobody.
+    server.open("file:///tmp/broken.beck", "def f(\n");
+    let broken = server.request(
+        "textDocument/formatting",
+        json!({ "textDocument": { "uri": "file:///tmp/broken.beck" } }),
+    );
+    assert!(broken["result"].is_null(), "{broken}");
+
+    server.shutdown();
+}
+
 #[test]
 fn an_inlay_hint_is_the_placement_the_solver_chose_and_the_row_it_inferred() {
     let mut server = handshake();

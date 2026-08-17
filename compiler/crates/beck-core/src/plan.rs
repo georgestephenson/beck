@@ -97,6 +97,13 @@ pub enum Op {
     /// the log does not. Sharing it would need a second version, which is
     /// [`docs/48`](../../../../../docs/48-identity-report.md) §48.13's first unbuilt item.
     Presence,
+    /// What everybody is doing — `awareness(f)`, supplied by the caller like the other sources.
+    ///
+    /// [`Op::Presence`]'s rules, for [`Op::Presence`]'s reason: a roster with a payload is not a
+    /// function of the accumulator either, and the shared dataflow is versioned by the log's
+    /// `seq`. A separate source rather than a field of the roster because the two move
+    /// independently — a client that moves its cursor changes this and not presence.
+    Awareness,
     /// A closed expression, evaluated once when the plan is prepared.
     Const,
     /// Recomputed when an input changed. Carries a `Lam` over its inputs.
@@ -145,6 +152,7 @@ pub const OPERATORS: &[&str] = &[
     "state",
     "session",
     "presence",
+    "awareness",
     "const",
     "recompute",
     "map_values",
@@ -164,6 +172,7 @@ impl Op {
             Op::State => "state",
             Op::Session => "session",
             Op::Presence => "presence",
+            Op::Awareness => "awareness",
             Op::Const => "const",
             Op::Pointwise { .. } => "recompute",
             Op::MapValues => "map_values",
@@ -196,7 +205,10 @@ impl Op {
 
     /// Whether this is an input to the dataflow rather than a step in it.
     pub fn is_source(&self) -> bool {
-        matches!(self, Op::State | Op::Session | Op::Presence | Op::Const)
+        matches!(
+            self,
+            Op::State | Op::Session | Op::Presence | Op::Awareness | Op::Const
+        )
     }
 
     /// What orders this operator's arrangement — the table in this module's own documentation, as
@@ -204,7 +216,7 @@ impl Op {
     /// consequence of the plan rather than of a sort at the end.
     pub fn key(&self) -> &'static str {
         match self {
-            Op::State | Op::Session | Op::Presence | Op::Const => "a source",
+            Op::State | Op::Session | Op::Presence | Op::Awareness | Op::Const => "a source",
             Op::Pointwise { .. } | Op::Count | Op::IsEmpty => "a value, not an arrangement",
             Op::MapValues => "the map's key",
             Op::MapList { .. } | Op::FilterList { .. } => "the input's key, unchanged",
@@ -258,6 +270,7 @@ pub struct Plan {
     pub state: OpId,
     pub session: OpId,
     pub presence: OpId,
+    pub awareness: OpId,
     /// The declared signals that survived as nodes, so a report can use the program's own names.
     pub signals: Vec<(Arc<str>, OpId)>,
 }
@@ -308,11 +321,13 @@ impl Plan {
             state: 0,
             session: 0,
             presence: 0,
+            awareness: 0,
             vertices: BTreeMap::new(),
         };
         b.state = b.push(Op::State, Vec::new(), None);
         b.session = b.push(Op::Session, Vec::new(), None);
         b.presence = b.push(Op::Presence, Vec::new(), None);
+        b.awareness = b.push(Op::Awareness, Vec::new(), None);
 
         let root = match graph.by_name.get(&placed.roles.page_name).copied() {
             Some(page) if page < graph.nodes.len() => b.vertex(graph, page),
@@ -352,6 +367,7 @@ impl Plan {
             state: b.state,
             session: b.session,
             presence: b.presence,
+            awareness: b.awareness,
             signals,
         };
         plan.finish();
@@ -366,7 +382,7 @@ impl Plan {
             node.consumers = 0;
         }
         for i in 0..self.nodes.len() {
-            let per = matches!(self.nodes[i].op, Op::Session | Op::Presence)
+            let per = matches!(self.nodes[i].op, Op::Session | Op::Presence | Op::Awareness)
                 || self.nodes[i]
                     .inputs
                     .iter()
@@ -403,7 +419,13 @@ impl Plan {
     /// keeps its operator alive whether or not the page reads it.
     pub(crate) fn prune(&mut self) -> BTreeMap<OpId, OpId> {
         let mut live = vec![false; self.nodes.len()];
-        let mut stack = vec![self.root, self.state, self.session, self.presence];
+        let mut stack = vec![
+            self.root,
+            self.state,
+            self.session,
+            self.presence,
+            self.awareness,
+        ];
         stack.extend(self.signals.iter().map(|(_, id)| *id));
         while let Some(id) = stack.pop() {
             if std::mem::replace(&mut live[id], true) {
@@ -446,6 +468,7 @@ impl Plan {
         self.state = map[&self.state];
         self.session = map[&self.session];
         self.presence = map[&self.presence];
+        self.awareness = map[&self.awareness];
         self.finish();
         map
     }
@@ -554,7 +577,9 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
         .filter(|&j| plan.nodes[j].op.is_arrangement())
         .collect();
     match &node.op {
-        Op::State | Op::Session | Op::Presence => "—  a source, read by reference".to_string(),
+        Op::State | Op::Session | Op::Presence | Op::Awareness => {
+            "—  a source, read by reference".to_string()
+        }
         Op::Const => "—  evaluated once, when the plan is prepared".to_string(),
         Op::Pointwise { .. } if forced.is_empty() => {
             "1 recompute, and only when an input moved".to_string()
@@ -582,6 +607,96 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
     }
 }
 
+/// How often an operator's value moves, which is what decides whether capturing it costs anything.
+///
+/// A per-element function that captured another operator is a different function when that
+/// operator moves, so the whole collection is reconsidered. Whether that is a defect or a
+/// non-event depends entirely on **what it captured**: a constant never moves, a session moves
+/// when a subscriber navigates, and anything downstream of the state moves on every event the fold
+/// admits. Printing the three the same way is what
+/// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.3 found, and it
+/// left a reader tracing inputs back to `#0` by hand — one of the real cases in the corpus is two
+/// hops away.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Cadence {
+    /// Constants all the way down: computed once when the plan is prepared.
+    Never,
+    /// The session or the roster. It moves while a subscription is open, but not with the log.
+    PerSubscription,
+    /// The state. It moves on every event.
+    PerEvent,
+}
+
+impl Cadence {
+    /// What a capture of something moving this often costs, as the whole clause.
+    ///
+    /// One sentence per cadence rather than a rate and a reason assembled separately, because the
+    /// three differ in what a reader should *do* about them and not only in a frequency.
+    fn line(self, captured: &str) -> String {
+        match self {
+            Cadence::PerEvent => format!(
+                "n applications on every event — its function captured {captured}, which is \
+                 downstream of the state"
+            ),
+            Cadence::PerSubscription => format!(
+                "n applications when the session moves, which is not per event — its function \
+                 captured {captured}"
+            ),
+            Cadence::Never => {
+                format!("no cost per event — its function captured {captured}, which never moves")
+            }
+        }
+    }
+}
+
+/// Every operator's [`Cadence`], in one pass.
+///
+/// One pass is enough because the plan's nodes are in dependency order — every input's index is
+/// less than its consumer's, which [`Plan`] states as its invariant — so an input's answer is
+/// always already in hand.
+fn cadences(plan: &Plan) -> Vec<Cadence> {
+    let mut out: Vec<Cadence> = Vec::with_capacity(plan.nodes.len());
+    for (i, node) in plan.nodes.iter().enumerate() {
+        let own = match node.op {
+            Op::State => Cadence::PerEvent,
+            Op::Session | Op::Presence | Op::Awareness => Cadence::PerSubscription,
+            _ => Cadence::Never,
+        };
+        let inherited = node
+            .inputs
+            .iter()
+            .map(|&j| {
+                debug_assert!(j < i, "the plan's nodes are in dependency order");
+                out[j]
+            })
+            .max()
+            .unwrap_or(Cadence::Never);
+        out.push(own.max(inherited));
+    }
+    out
+}
+
+/// One operator's line in the report, and the facts the summary is counted from.
+///
+/// The summary is derived from these rather than recomputed beside them, which is the shape of the
+/// defect this replaced: the tally counted one thing and the body printed another, so a program
+/// whose loop captured the accumulator was told "1 of 29" when two operators cost `O(n)`.
+struct Charge {
+    cost: String,
+    /// What the operator's per-element function captured, and how often that moves.
+    captured: Option<(Vec<OpId>, Cadence)>,
+    /// Why this operator costs `O(n)` per event, or `None` when it does not.
+    linear: Option<Linear>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Linear {
+    /// It forces an arrangement into a list.
+    Forced,
+    /// Its per-element function captured something that moves with the state.
+    Captured,
+}
+
 /// `beck explain cost` — what one event costs this view.
 ///
 /// [`20`](../../../../../docs/20-phase-2-report.md) §20.5 left this command unbuilt with a reason
@@ -592,63 +707,121 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
 /// running, and no placement decision can see them.
 pub fn cost_report(plan: &Plan) -> String {
     use std::fmt::Write;
+    let moves = cadences(plan);
+    let charges: Vec<Charge> = (0..plan.nodes.len())
+        .map(|i| {
+            let cost = op_cost(plan, i);
+            let captures = match &plan.nodes[i].op {
+                Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } => {
+                    f.captures.clone()
+                }
+                _ => Vec::new(),
+            };
+            let captured = captures
+                .iter()
+                .map(|&j| moves[j])
+                .max()
+                .map(|worst| (captures, worst));
+            let linear = if cost.contains("n entries copied") {
+                Some(Linear::Forced)
+            } else if captured
+                .as_ref()
+                .is_some_and(|(_, c)| *c == Cadence::PerEvent)
+            {
+                Some(Linear::Captured)
+            } else {
+                None
+            };
+            Charge {
+                cost,
+                captured,
+                linear,
+            }
+        })
+        .collect();
+
     let mut out = String::new();
     let _ = writeln!(
         out,
         "what one event costs this view, in the units the engine counts (§3.8).\n\
          \x20 δ is how many entries moved; n is how many the collection holds.\n"
     );
-    let mut linear: Vec<OpId> = Vec::new();
-    for i in 0..plan.nodes.len() {
-        let cost = op_cost(plan, i);
-        if cost.contains("n entries copied") {
-            linear.push(i);
-        }
-        let _ = writeln!(out, "  #{:<3} {:<14} {}", i, plan.nodes[i].op.name(), cost);
-        // An operator whose per-element function reads another operator is a different function
-        // when that one moves, so the whole collection is reconsidered. It is not per event — a
-        // session is constant for a subscription — but it is the one place δ stops bounding the
-        // work, and a reader who does not know that will misread every line above.
-        let captures = match &plan.nodes[i].op {
-            Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } => {
-                f.captures.clone()
-            }
-            _ => Vec::new(),
-        };
-        if !captures.is_empty() {
-            let _ = writeln!(
-                out,
-                "       {:<14} n applications whenever {} moves — its function captured it",
-                "",
-                captures
-                    .iter()
-                    .map(|j| format!("#{j}"))
-                    .collect::<Vec<_>>()
-                    .join(" or ")
-            );
-        }
-    }
-    let _ = writeln!(out);
-    if linear.is_empty() {
+    for (i, charge) in charges.iter().enumerate() {
         let _ = writeln!(
             out,
-            "  Nothing here is proportional to the collection: no operator forces an arrangement\n\
-             \x20 into a list, so one event costs what the event changed."
+            "  #{:<3} {:<14} {}",
+            i,
+            plan.nodes[i].op.name(),
+            charge.cost
         );
-    } else {
-        let _ = writeln!(
-            out,
-            "  {} of {} operators cost O(n) per event, and all of them for the same reason: a\n\
-             \x20 recompute needs a `list`, and an arrangement is a keyed collection. That is\n\
-             \x20 docs/23 §23.8's remaining constant factor, at {}.",
-            linear.len(),
-            plan.nodes.len(),
-            linear
+        // An operator whose per-element function reads another operator is a different function
+        // when that one moves, so the whole collection is reconsidered. Saying *what it captured*
+        // is not enough — a reader needs to know how often that thing moves, which is the
+        // difference between a non-event and the most expensive line in the report.
+        if let Some((captured, cadence)) = &charge.captured {
+            let names = captured
                 .iter()
                 .map(|j| format!("#{j}"))
                 .collect::<Vec<_>>()
-                .join(" ")
+                .join(" or ");
+            let _ = writeln!(out, "       {:<14} {}", "", cadence.line(&names));
+        }
+    }
+    let _ = writeln!(out);
+
+    let of = |which: Linear| -> Vec<String> {
+        charges
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.linear == Some(which))
+            .map(|(i, _)| format!("#{i}"))
+            .collect()
+    };
+    let (forced, captured) = (of(Linear::Forced), of(Linear::Captured));
+    let total = forced.len() + captured.len();
+    if total == 0 {
+        let _ = writeln!(
+            out,
+            "  Nothing here is proportional to the collection: no operator forces an arrangement\n\
+             \x20 into a list, and no per-element function captured anything that moves with the\n\
+             \x20 state, so one event costs what the event changed."
         );
+    } else {
+        // Two reasons, counted together and named apart. They are not the same defect and they do
+        // not have the same fix: one is a constant factor of the arrangement's representation, and
+        // the other is a program that escaped the view algebra.
+        let _ = writeln!(
+            out,
+            "  {total} of {} operators cost O(n) per event, for {} reason{}:",
+            plan.nodes.len(),
+            if forced.is_empty() || captured.is_empty() {
+                "one"
+            } else {
+                "two"
+            },
+            if forced.is_empty() || captured.is_empty() {
+                ""
+            } else {
+                "s"
+            }
+        );
+        if !forced.is_empty() {
+            let _ = writeln!(
+                out,
+                "    {}  a recompute needs a `list` and an arrangement is a keyed collection —\n\
+                 \x20        docs/23 §23.8's remaining constant factor.",
+                forced.join(" ")
+            );
+        }
+        if !captured.is_empty() {
+            let _ = writeln!(
+                out,
+                "    {}  a per-element function captured the state, so the whole collection is\n\
+                 \x20        reconsidered on every event — docs/99 §99.3, and the algebra has no\n\
+                 \x20        operator for what this program is doing.",
+                captured.join(" ")
+            );
+        }
     }
     let _ = writeln!(
         out,
@@ -673,6 +846,7 @@ struct Builder<'a> {
     state: OpId,
     session: OpId,
     presence: OpId,
+    awareness: OpId,
     vertices: BTreeMap<SigId, OpId>,
 }
 
@@ -769,6 +943,10 @@ impl Builder<'_> {
                 )
             }
             SigOp::Presence => self.presence,
+            // Like presence, and for the same reason: what `f` is applied to is every *other*
+            // subscriber's session, which this dataflow does not hold. The runtime does
+            // (`beck_rt::awareness`), and hands the answer in as a source.
+            SigOp::Awareness { .. } => self.awareness,
             // Not a source: a **constant**, and that is the whole statement this plan makes about
             // freshness. A plan is what the *server* renders through, and a server renders the
             // state it has recorded — so `freshness()` here is `Confirmed` and never moves. The

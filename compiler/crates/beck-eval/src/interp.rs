@@ -1503,8 +1503,12 @@ impl<'h> Interp<'h> {
                     EvalError::new(format!("`{}` expects a Float", op.name()), span)
                 })?;
                 Ok(match op {
-                    Prim::Sin => Value::float(f.sin()),
-                    Prim::Cos => Value::float(f.cos()),
+                    // The runtime library rather than the host's libm, and `beck_prim::math` is
+                    // why: IEEE 754 pins neither of these, so a fold that reached the platform's
+                    // implementation would replay to a different state on a platform with a
+                    // different one.
+                    Prim::Sin => Value::float(beck_prim::math::sin(f)),
+                    Prim::Cos => Value::float(beck_prim::math::cos(f)),
                     // `as` on a float is saturating in Rust and toward zero, which is the rule the
                     // prelude states. A NaN becomes zero, which is the only total answer.
                     _ => Value::Int(f as i64),
@@ -2221,6 +2225,7 @@ impl<'h> Interp<'h> {
             // compiler bug rather than a program error — so it says so.
             Prim::MergeClients
             | Prim::Presence
+            | Prim::Awareness
             | Prim::Freshness
             | Prim::StreamFilterMap
             | Prim::Fold

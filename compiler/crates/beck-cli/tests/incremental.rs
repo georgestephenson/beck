@@ -15,6 +15,12 @@
 use beck_core::incremental::{assess, report, verdicts, Verdict, RULES};
 use beck_core::Placed;
 
+/// `beck explain cost` over a program, which is `explain incremental`'s sibling about the same
+/// plan: that one says whether a view *can* be maintained, this one says what maintaining it costs.
+fn cost(p: &Placed) -> String {
+    beck_core::plan::cost_report(&beck_core::plan::Plan::compile(p))
+}
+
 fn ok(name: &str, src: &str) -> Placed {
     let (placed, d, map) = beck_core::compile_str(name, src);
     assert!(!d.has_errors(), "{name}:\n{}", d.render(&map));
@@ -72,6 +78,162 @@ events: Stream[Event] = decide(proposals, items, validate)
 items: Signal[State] = durable(fold(apply_event, State(items={{}}), events))
 {view_signal}
 page: Signal[Html] = per_session(chosen, show)
+"#
+    )
+}
+
+/// The tally counts every line the report itself printed as `O(n)` per event.
+///
+/// It did not. The summary counted operators whose cost mentions `n entries copied` and the
+/// capture line — the one that says a per-element function captured a plan node — was written
+/// *after* the count, so a program whose loop captured the accumulator was told "1 of 29" when two
+/// operators cost `O(n)`. The headline was wrong on exactly the programs where the cost matters,
+/// and wrong in the reassuring direction (`docs/99` §99.3).
+///
+/// So this reads both numbers **out of the printed text** rather than from the plan. A test that
+/// recomputed the count from the plan would agree with a report that printed something else, which
+/// is the shape of the defect rather than a check on it.
+#[test]
+fn the_tally_counts_every_line_the_report_prints() {
+    // `27-review.beck` is the program §99.3 quotes: its loop body captured the accumulator.
+    let text = cost(&corpus("27-review.beck"));
+    let printed = text
+        .lines()
+        .filter(|l| l.contains("n entries copied") || l.contains("n applications on every event"))
+        .count();
+    assert!(
+        printed >= 2,
+        "this program should show both reasons:\n{text}"
+    );
+
+    let headline = text
+        .lines()
+        .find(|l| l.contains("operators cost O(n) per event"))
+        .unwrap_or_else(|| panic!("no tally at all:\n{text}"));
+    let counted: usize = headline
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("the tally is not a number: {headline:?}"));
+    assert_eq!(
+        counted, printed,
+        "the report printed {printed} operators costing O(n) per event and said {counted}:\n{text}"
+    );
+
+    // And both reasons are named, because they are not the same defect and do not have the same
+    // fix: one is the arrangement's representation, the other is a program that left the algebra.
+    assert!(
+        text.contains("an arrangement is a keyed collection"),
+        "{text}"
+    );
+    assert!(text.contains("captured the state"), "{text}");
+}
+
+/// A capture says how often what it captured *moves*, because that is the whole of what it costs.
+///
+/// The line used to name the captured node and stop. A captured constant never moves, a captured
+/// session moves when somebody navigates, and a captured state moves on every event — the same
+/// sentence for all three, leaving a reader to trace inputs back to `#0` by hand. One of the real
+/// cases in the corpus is two hops away (`docs/99` §99.3).
+///
+/// Three programs differing in that one respect, and the assertion is that the three lines differ.
+/// A fix that classified nothing would print three identical lines and still pass a test that only
+/// looked at one of them, which is why all three are here and why they are compared to each other
+/// as well as to what they should say.
+#[test]
+fn a_capture_says_how_often_what_it_captured_moves() {
+    let captured_line = |rows: &str| -> String {
+        let text = cost(&ok("captures.beck", &capturing(rows)));
+        text.lines()
+            .find(|l| l.contains("its function captured"))
+            .unwrap_or_else(|| panic!("nothing captured anything:\n{text}"))
+            .trim()
+            .to_string()
+    };
+
+    // Captured: a list that is closed, so the plan evaluates it once and it never moves again.
+    let never = captured_line(
+        "def palette() -> list[Str]:\n    \
+             return [\"a\", \"b\", \"c\"]\n\
+         \ndef rows(s: State, session: Session) -> list[Str]:\n    \
+             ps = palette()\n    \
+             return map_list(map_keys(s.items), lambda k: k + str(list_len(ps)))\n",
+    );
+
+    // Captured: the session. It moves while a subscription is open, but not with the log — which
+    // is `examples/todo.beck`'s own shape, and the reason this is not simply an expensive case.
+    let per_subscription = captured_line(
+        "def rows(s: State, session: Session) -> list[Str]:\n    \
+             return filter_list(map_keys(s.items), lambda k: k != session.actor)\n",
+    );
+
+    // Captured: the state, which is the expensive one and the reason this report exists.
+    let per_event = captured_line(
+        "def rows(s: State, session: Session) -> list[Str]:\n    \
+             return map_list(map_keys(s.items), \
+                             lambda k: k + str(list_len(map_keys(s.items))))\n",
+    );
+
+    assert!(
+        never.contains("never moves") && never.contains("no cost per event"),
+        "a captured constant costs nothing and should say so: {never:?}"
+    );
+    assert!(
+        per_subscription.contains("when the session moves")
+            && per_subscription.contains("not per event"),
+        "a captured session is not a per-event cost: {per_subscription:?}"
+    );
+    assert!(
+        per_event.contains("on every event") && per_event.contains("downstream of the state"),
+        "a captured state is the expensive one: {per_event:?}"
+    );
+    assert_ne!(never, per_subscription);
+    assert_ne!(per_subscription, per_event);
+    assert_ne!(never, per_event);
+}
+
+/// A program whose page is a list built by `rows`, so that what `rows`'s lambda captures is the
+/// only thing that differs between the three above.
+fn capturing(rows: &str) -> String {
+    format!(
+        r#"
+model State:
+    items: Map[Str, Int]
+
+union Command:
+    Add(k: Str)
+
+union Event:
+    Added(k: Str)
+
+union Rejection:
+    Blank
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Added(k):
+            return s.with(items=map_insert(s.items, k, 1))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Add(k):
+            if str_is_empty(str_trim(k)):
+                return Err(error=Blank)
+            return Ok(value=[Added(k=k)])
+
+{rows}
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            ul:
+                for r in rows(s, session):
+                    li: r
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, items, validate)
+items: Signal[State] = durable(fold(apply_event, State(items={{}}), events))
+page: Signal[Html] = per_session(items, view)
 "#
     )
 }

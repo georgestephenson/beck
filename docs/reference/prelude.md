@@ -33,7 +33,7 @@ What a user's type may implement to join something the language already has. `Nu
 
 ## Names
 
-101 of them.
+102 of them.
 
 | Name | Type |
 |---|---|
@@ -50,6 +50,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `>=` | `(a, a) -> Bool` |
 | `abs` | `(Int) -> Int` |
 | `and` | `(Bool, Bool) -> Bool` |
+| `awareness` | `((Session) -> a) -> Signal[Map[Str, a]] ! {cap.presence}` |
 | `base64_decode` | `(Str) -> Str ! {raises(EncodingError)}` |
 | `base64_encode` | `(Str) -> Str` |
 | `concat_lists` | `(list[list[a]]) -> list[a]` |

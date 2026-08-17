@@ -17,6 +17,248 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-17 — `main` merged down, and the union driver's reach written down where it is relied
+  on.** This branch reported as conflicting on GitHub while `git merge` on a clone resolved it
+  silently: the only conflict was [`CHANGELOG.md`](CHANGELOG.md), the file
+  [`.gitattributes`](.gitattributes) sets `merge=union` on, and **GitHub reads neither that file nor
+  any merge driver** — so the driver is in force exactly where nobody looks. Merging `main` down
+  locally applies it and leaves the pull request nothing to merge. `DEFECTS.md::union-merge-is-local-only`
+  records the general case, since every branch is required to prepend a bullet here and so every
+  branch open across another's merge hits it; its gate is that two branches recording a change merge
+  cleanly **with no `.gitattributes` in the tree**, which is GitHub's configuration and is red today.
+  The `.gitattributes` comment claimed the conflict was solved and is corrected in place to say
+  where. Both halves of the gate were run before being written down — conflict with the file absent,
+  clean with it present — and `core.attributesFile` is recorded as the wrong way to model it, because
+  it leaves the in-tree file in force and passes for the wrong reason. Nothing else conflicted:
+  `CHANGELOG.md` kept every bullet from both sides and `DEFECTS.md` was untouched by `main`, so the
+  driver never ran on it. `cargo test --workspace` is green over 102 suites, with
+  `cargo clippy --workspace --all-targets`, `cargo fmt --all --check` and
+  `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` clean.
+
+- **2026-08-16 — The client-local fold, scoped: it splits where awareness splits, and the decision
+  is one sentence.** [`docs/104`](docs/104-styling-and-the-component-library.md) §104.8. What it
+  needs is a **stream**, not an accumulator: the only stream is `merge_clients()` and §3.5 places it
+  on the server, so every `on_click` in the language becomes a proposal. A second, client-placed
+  source over a second union — a `Ui` where `Command` is the one the chokepoint sees — routes an
+  interaction by its *type*, and `merge_clients()` stays the sole chokepoint because a `Ui` value can
+  never reach `validate`. In **Mode B** that needs no wire at all and does not touch the digest, so
+  `DEFECTS.md::non-durable-fold`'s open question is not even asked; in **Mode A** the page renders
+  where the state is, so a browser-held value reaches it only by being sent — and then it is a
+  per-connection accumulator the server folds, which is presence's shape rather than the log's. The
+  decision, and it wants a D-number: *does a client-local fold exist only where the client renders,
+  or does Mode A get a per-connection accumulator so it works there too?* Also corrected in place:
+  §104.8's list said "four homes" over a five-item list and used "the fifth home" for the fourth —
+  the homes are now counted right and the one that has to be built is **named** rather than
+  numbered, since the numbering is what drifted.
+
+- **2026-08-16 — `awareness(f)` is built: the roster with a payload, for the half a session can
+  answer.** [`docs/10`](docs/10-decisions.md) D6 gains the construct beside presence:
+  `awareness(f) : Signal[Map[Str, T]] ! {cap.presence}`, where `f : Session -> T` produces one
+  client's contribution and **the runtime applies it to every connection it holds** — `f` is a
+  function rather than a signal because the subscribers are the runtime's fact and not the graph's,
+  so a program cannot name another connection's session. It is a fifth view parameter and a plan
+  source beside `presence`, a `Roles::awareness` role beside the view, and `beck_rt::awareness`, a
+  registry modelled on `beck_rt::presence` with a second bound presence needs no equivalent of: a
+  roster of counts costs its capacity, a roster of values costs its capacity times whatever `f`
+  returns, so a contribution past `Config::each` is refused and the actor keeps its last one.
+  Refused at the chokepoint (`B0520`) and to a Mode B page (`B0521`), for `B0515`'s and `B0516`'s
+  reasons with one noun changed. `corpus/33-awareness.beck` is the program;
+  `beck-cli/tests/awareness.rs` is the gate, fourteen tests, including the end-to-end one that
+  presence could not have: a second client **navigating** — nobody arriving, nobody leaving, nothing
+  appended to the log — moves the first client's page. The control gate was rewritten after a
+  mutation: asserting "no frame reaches a program that reads no awareness" passes even with the
+  wakeup wrongly armed, because such a page renders identically and diffs to nothing, so what it
+  asserts now is the **row** — a client of such a program holds none — which an unconditional join
+  turns red ([`docs/82`](docs/82-the-edge-report.md) §82.10). Client-local awareness — a cursor —
+  is unchanged and still waits on a client-local stream
+  ([`docs/104`](docs/104-styling-and-the-component-library.md) §104.8).
+
+- **2026-08-16 — Awareness, scoped against the tree, and the scoping splits it in two.**
+  [`docs/104`](docs/104-styling-and-the-component-library.md) §104.8 now specifies the construct:
+  `awareness(f) : Signal[Map[ActorId, T]]`, a signal operation rather than a command, inheriting
+  `presence()`'s three rules unchanged — non-log input to a view, capacity-bounded for §82.5's
+  reason since the key is again a name the client chooses, and forbidden from the chokepoint, which
+  is `B0515`'s reasoning with one noun changed. What the scoping found is that **what `f` may read
+  splits the feature**. With `f : Session -> T` it is buildable today and needs **no wire change at
+  all**, because the server already holds every subscriber's route — it arrives on `hello` and on
+  every `Nav` — so *who is looking at what* costs a source, a role and an aggregation. With `f` over
+  a client-local value — a cursor, a selection — it is not, and not for a protocol reason: the
+  client has nothing to derive one from, since it listens for five events and `mousemove` is not
+  among them. So arbitrary awareness has the **same prerequisite as the client-local fold**, and the
+  two are one piece of work rather than two independent ones.
+
+- **2026-08-16 — A search for counter-examples finds one, and it is D1's own: awareness.**
+  [`docs/104`](docs/104-styling-and-the-component-library.md) §104.8's recommendation said to build
+  nothing server-side, on the reasoning that presence, quotas and caches already answer every
+  server-side ephemeral need. A search for counter-examples returned one it missed — **awareness**:
+  a cursor, a selection, a typing indicator, which a *second person* must see and which therefore no
+  client-local anything can hold. [Yjs](https://docs.yjs.dev/getting-started/adding-awareness) keeps
+  it in a protocol of its own because it "isn't stored in the Yjs document, as it doesn't need to be
+  persisted across sessions", and its shape is a `Map<client, state>` that is broadcast, expires
+  after thirty seconds of silence and is deleted on disconnect. Two things follow. **It is not a
+  fold** — it is a keyed map of each client's latest value — so it is still true that nothing found
+  needs a server-side ephemeral *fold*. And **Beck has nine-tenths of it**: `presence()` is that map
+  with no payload, already a non-log input to a view, already capacity-bounded (§82.5), already
+  forbidden from the chokepoint (`B0515`). The homes go from four to five, ordered, and the
+  correction underneath them is that ephemerality comes from the stream and the audience, never from
+  the absence of a `durable` wrapper — which is what D1's sentence gets wrong.
+
+- **2026-08-16 — A non-durable fold says what it is, and the reason it is unbuilt is written down.**
+  A program whose only accumulator is a `fold` nobody wrapped in `durable` was reported as *a
+  library with no durable state* — which sends its author to add the `durable` they deliberately
+  left off. **B0519** names the construct instead ([`docs/10`](docs/10-decisions.md) D1), says it is
+  decided rather than built, and says what stands in the way. The construct itself is still unbuilt,
+  and the investigation is why: an accumulator outside the log is **not a function of the log**,
+  `replay.rs` asserts `digest(replayed) == digest(live)`, and D3 rests on that digest — so the first
+  question is what the digest covers, which is a decision and not a branch. The volume half of D1's
+  own motivation is untouched by any of it, because [`docs/03`](docs/03-type-and-effect-system.md)
+  §3.7 logs **every validated event**: a cursor that moves a hundred times a second writes a hundred
+  entries whether or not the accumulator is durable, so an un-journalled accumulator is not an
+  un-journalled stream. `DEFECTS.md::non-durable-fold` is rewritten around that finding, and
+  [`docs/104`](docs/104-styling-and-the-component-library.md) §104.8's Wall 1 gains a survey of what
+  Redux, Remix, SwiftUI, Akka and Phoenix LiveView do — they agree that the lifetime is a
+  declaration and that the assignment is by audience — and a recommended order of four homes, marked
+  as a recommendation because adopting it wants a D-number.
+
+- **2026-08-16 — Correct what `docs/15` said about non-durable folds, which was wrong twice.**
+  Its Redis-replacement ladder said hot ephemeral state is answered by non-durable folds, "already a
+  language construct (D1)", and that "quota counters (F3) are exactly this". Neither holds. The
+  construct is decided and **unbuilt** — that is `DEFECTS.md::non-durable-fold` — and F3's quota is
+  not an instance of it and could not be: it is a **sharded** fixed table precisely because a
+  per-actor map is unbounded memory keyed by a name the client chooses, which is the denial of
+  service it exists to prevent ([`docs/82`](docs/82-the-edge-report.md) §82.5), and a fold would be
+  that map. Presence is not an instance either — it is D6's first-class non-durable `Signal`, a
+  compiler-provided source moved by *connections* rather than by events, which its own module
+  documentation states as the one thing that makes it unusual. So nothing in the tree is a
+  non-durable fold, where two things looked like one. Found by doubting the sentence rather than by
+  a gate, which is [`docs/08`](docs/08-roadmap.md) §8.5.6's second direction of decay and the one
+  nothing outside `pending_security.rs` catches.
+
+- **2026-08-16 — `beck fmt` keeps comments, and the editor can format because of it.**
+  The lexer skipped ordinary `#` comments, so formatting a file deleted every one of them — which
+  is why `textDocument/formatting` was withheld rather than missing: a formatter an editor runs on
+  save must not delete what somebody wrote. Comments are now collected from the source **by
+  position, in the pass that already collected documentation**, which is what keeps a comment at
+  column zero from closing an indented block, and it is one pass rather than two because what
+  separates the two kinds is one decision about `#` and `##`. Three positions, each attaching
+  differently: above a node, at the end of its own line (found by a scan that skips string
+  literals, since `"a # b"` is not a comment), and below it with nothing after — which attaches
+  *backwards*, or the note at the bottom of a function body would move out of the block it was
+  written in. Gated three ways over the tree: `roundtrip.rs` now parses the way `beck fmt` does
+  rather than through the bare parser, so its idempotence property covers comments at all
+  (**it caught ten programs immediately**), plus `formatting_keeps_every_comment` — **1,850
+  comments across every program in the tree, none deleted** — and a fixture with a comment in every
+  position the grammar allows, byte-identical after a format. `textDocument/formatting` is enabled
+  in the same change so the fix has a caller: one edit for the document, an empty list when there
+  is nothing to do, `null` for a file that does not parse. Two older defects surfaced on the way
+  and are fixed with it: a doc comment was lost outright when an ordinary comment sat between it
+  and its declaration, and a node reached through both `item` and `stmt` printed its comments
+  twice. Deletes `DEFECTS.md::fmt-comments`; corrects [`docs/02`](docs/02-syntax.md) §2.2 and
+  [`docs/65`](docs/65-the-editor-report.md) in place.
+- **2026-08-16 — CI retries the toolchain download it cannot control.**
+  `rustup target add wasm32-unknown-unknown` failed a run with `Connection reset by peer` part-way
+  through a component download from `static.rust-lang.org`; rustup keeps the partial file and says
+  "please try again" in as many words, so trying again is the whole fix. Three attempts with a
+  growing pause, and the loop still fails when the failure is real — checked both ways by hand,
+  because a retry that swallowed a genuine failure would be worse than the flake it replaced.
+
+- **2026-08-16 — `ui:` has a vocabulary: an event the client cannot hear and an attribute HTML does
+  not have are compile errors.**
+  `ui:` turned any `name=value` into an attribute and any `on_x=` into `data-b-x`, knowing nothing
+  about either — so `span(on_mouseenter=…)` shipped a dead attribute to a browser that listens for
+  five events and passed every gate, and `cls="done"`, the spelling
+  [`docs/01`](docs/01-vision-and-premise.md) §1.3's own sketch uses, silently lost a page its
+  styling. `beck_macro::vocabulary` is now the table: the five events, the HTML and SVG attribute
+  names, and the elements [`docs/12`](docs/12-standards-and-conformance.md) §12.4's accessibility
+  checks will read. **B0217** refuses an event the client does not listen for and **B0218** an
+  attribute HTML does not have, with `data_…` and `aria_…` admitted by prefix — the escape hatch for
+  an attribute that is genuinely yours is HTML's own, so there was none to invent. A table in a
+  crate rather than a check in the expander, because typed macros retire the compiler-provided `ui:`
+  ([`docs/10`](docs/10-decisions.md) D22) and the second copy is the one that drifts. Two things
+  make it more than a list: `client.rs::the_event_vocabulary_is_what_the_client_listens_for` reads
+  `beck-patch.js`'s own registrations and compares the two sets **in both directions**, so an event
+  the client drops is caught as well as one the compiler invents; and the suggestion is a rule —
+  squashing the hyphens `ui:` writes and looking again turns `max_length` into `maxlength` and
+  covers every attribute of that shape, with `cls` needing the one alias because it is *one* edit
+  from `cols` and two from `class`. An unknown **element** is not refused, and the reason is in the
+  module: a lowercase all-keyword call inside `ui:` is indistinguishable from a helper function.
+  Gated by three rendered-diagnostic snapshots and two client tests, all four of which go red on the
+  previous expander. Deletes `DEFECTS.md::ui-vocabulary`; item 2 of
+  [`docs/104`](docs/104-styling-and-the-component-library.md) §104.11's cluster, and the **G** that
+  §12.4's three checks were waiting behind.
+
+- **2026-08-16 — `beck explain cost` counts what it prints, and says how often a capture moves.**
+  The summary collected operators whose cost mentions `n entries copied` and the capture line was
+  written after the count, so `corpus/27-review.beck` — the one program in the corpus that contains
+  a join — was told **1 of 29** operators cost `O(n)` per event when two do, wrong in the
+  reassuring direction. The tally is now derived from the same per-operator record the body is
+  printed from, so the two cannot disagree, and it reports **2 of 29** with the two reasons named
+  apart: an arrangement forced into a list is `docs/23` §23.8's constant factor, a per-element
+  function that captured the state is a program that left the view algebra. The capture line also
+  carries the **cadence** of what it captured — never, per subscription, or per event — traced back
+  to a source in one pass over the plan's dependency order, so a captured `const`, a captured
+  `session` and a captured *state* print three different sentences instead of one; §99.3's sweep
+  found 18 capture sites of which only 3 are the expensive kind, and one of those is two hops from
+  `#0`. Gated by `incremental.rs::the_tally_counts_every_line_the_report_prints`, which reads both
+  numbers out of the printed text rather than recomputing either, and
+  `a_capture_says_how_often_what_it_captured_moves`, which builds one program per cadence; both go
+  red on the previous behaviour. Deletes `DEFECTS.md::cost-report-undercount`; item 2 of
+  [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9, the instrument every item below
+  it is read through.
+
+- **2026-08-16 — A patched-in chart is a chart: the client builds SVG in the right namespace.**
+  `beck-patch.js` built every subtree with `document.createElement`, which only ever guesses HTML,
+  while server-side rendering goes through the browser's own parser and gets it right. An `svg`
+  built that way is not an `SVGElement`, so it lays out as nothing: a chart painted on first load
+  and vanished the first time its data changed, which is the only reason to have drawn it. The
+  client now uses `createElementNS`, taking the namespace **from the tag** where the tag opens one
+  and **from the destination** otherwise, with `foreignObject` handing it back to HTML — and the
+  second half is where the difficulty is, because a patch that adds a bar to an existing chart
+  carries no `svg` tag of its own. Gated by
+  `browser.rs::a_patched_in_chart_is_still_a_chart` over the new `examples/chart.beck`, the first
+  program in the tree whose page is an SVG: two patches, and the assertion is the **laid-out width**
+  of every `rect` rather than its namespace. Checked against three wrong versions — the original
+  measures 0 on the first patch, a tag-only fix measures 0 too, and a fix with subtree inheritance
+  but no destination measures `30,0` on the second. Deletes `DEFECTS.md::svg-namespace`; item 1 of
+  [`docs/104`](docs/104-styling-and-the-component-library.md) §104.11's cluster.
+
+- **2026-08-16 — A cancellation gate stops betting on the scheduler.**
+  `concurrency.rs::a_sibling_blocked_in_an_outbound_call_is_stopped_in_the_call` asserts that a
+  scope reaches a child *blocked in the host*, and what put the sibling inside its call was
+  arithmetic — twenty fast fetches first, on the reasoning that this made it "provably inside".
+  Nothing enforced it, so under load the sibling was cancelled by the step counter before it ever
+  entered a call and the test failed on its own guard while cancellation was working. The host now
+  **holds** the failing child's first call until the sibling is blocked (a condvar, with a backstop
+  that goes red rather than hanging), and the sibling has 4,000 steps to take before its fetch — so
+  the hazard is exercised every run rather than only on a busy machine. Checked both ways: with the
+  latch removed the test fails deterministically with the message that was seen intermittently, and
+  it passes with it. Deletes `DEFECTS.md::blocked-sibling-race`;
+  [`docs/80`](docs/80-structured-concurrency-report.md) §80.14 is the property it guards.
+
+- **2026-08-16 — `sin` and `cos` are computed here, correctly rounded, and no longer the host's.**
+  IEEE 754 requires `sqrt` correctly rounded and requires **nothing** of the transcendentals, so
+  three backends reaching three platform libms meant a `durable` fold that computed a sine could
+  replay to a different state on a different machine — the one thing
+  [`docs/10`](docs/10-decisions.md) D3 rests the data tier on. `beck_prim::math` computes them
+  instead, and every backend calls it: the evaluator directly, the two native emitters through a
+  new `beck_prim_f64` entry point that carries no arena because a function from a double to a
+  double allocates nothing. The answer is **correctly rounded**, which makes the specification the
+  mathematics rather than a vendored file — a later rewrite cannot change a bit of any replay — and
+  the implementation performs **no rounded floating-point operation at all**: exact integer
+  reduction over 1472 bits of 2/π, an integer series, one rounding at the end. Measured
+  (`cargo test -p beck-prim --release --test transcendentals -- --nocapture`): ~640 ns a call
+  against a platform libm's 11 ns, and the same cost at `10^300` as at 1, which is the shape that
+  gate holds; 400 calls per run of `awfy/cd.beck` — the only program in the tree that calls either
+  — is 0.1% of it. Ziv's fast path in front of it is
+  [`docs/08`](docs/08-roadmap.md) §8.5.4 and changes no answer. Gated by
+  `beck-prim/tests/transcendentals.rs`, which recomputes 4,000 arguments at 1408 bits by a
+  deliberately different route — Bailey–Borwein–Plouffe rather than Machin, binary long division
+  rather than a window into 2/π, a term recurrence rather than Horner — and by
+  `the_host_libm_would_fail_this`, which asserts that **11 of 8,000** of those answers are ones
+  glibc does not give, so a change back to `f64::sin` goes red rather than unnoticed; plus a
+  structural gate per backend (`native.rs`, `cranelift.rs`) that the module names the library and
+  no libm symbol. Closes F9 ([`docs/14`](docs/14-review-findings.md)) and
+  `DEFECTS.md::libm-determinism`; [`adr/0031`](docs/adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md).
 - **2026-08-16 — The host half of the native protocol becomes one definition, and three sweeps of
   dead code and stale links.** A codebase audit against the standards
   [`AGENTS.md`](AGENTS.md) already sets. `beck-clif` and `beck-llvm` each carried their own

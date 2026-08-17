@@ -285,6 +285,89 @@ async fn mode_a_applies_the_servers_patches() {
 }
 
 browser_test! {
+/// A chart the client built is a chart, and not a subtree that lays out as nothing.
+///
+/// An element carries a namespace. Server-side rendering goes through the browser's own HTML
+/// parser, which knows that `<svg>` opens one; `beck-patch.js` builds its subtrees itself and used
+/// `createElement`, which only ever guesses HTML. An `svg` built that way is not an `SVGElement`,
+/// so it lays out as a box of zero size — a chart paints on first load and **vanishes the first
+/// time its data changes**, which is the only reason to have drawn it.
+///
+/// **The box, not the namespace.** Asserting `namespaceURI` would pass on a fix that got the
+/// element right and its children wrong, and the children are where the second half of the bug is.
+/// `getBoundingClientRect().width` is the property somebody actually wanted.
+///
+/// So there are two patches here and they are different jobs:
+///
+/// * the first bump replaces a paragraph with the whole `svg`, where the namespace comes from
+///   **the tag**;
+/// * the second adds a bar to the chart that is already there, where the new `rect` carries no
+///   namespace of its own and has to inherit it from **the destination**.
+///
+/// A fix that only special-cases the `svg` tag passes the first and fails the second, which is why
+/// the second is here.
+async fn a_patched_in_chart_is_still_a_chart() {
+    let Some(mut browser) = browser::shared().await else {
+        return;
+    };
+    let serving = Serving::start(example("chart.beck")).await;
+    let page = browser.open(&serving.url()).await;
+    page.wait_for(
+        &mut browser,
+        "document.getElementById('b-root').dataset.bReady === 'a'",
+    )
+    .await;
+
+    // The width of the widest `rect` the page is showing, as the browser lays it out. Zero when
+    // there is no rect at all, which is also what a wrongly-built one measures — so every
+    // assertion below is about a number the layout engine produced.
+    let widest = "String(Math.max(0, ...Array.from(document.querySelectorAll('rect')) \
+                   .map((r) => r.getBoundingClientRect().width)))";
+
+    assert_eq!(
+        page.text(&mut browser, widest).await,
+        "0",
+        "nothing has been recorded, so there is no chart yet"
+    );
+
+    let bump = |which: &str| {
+        format!("document.querySelectorAll('.controls button')[{which}].click()")
+    };
+
+    // One bar: the `svg` itself arrives in a patch.
+    page.eval(&mut browser, &bump("0")).await;
+    page.wait_for(&mut browser, "document.querySelectorAll('rect').length === 1")
+        .await;
+    assert_eq!(
+        page.text(&mut browser, widest).await,
+        "30",
+        "the chart the client built has no size, so it was built in the wrong namespace"
+    );
+
+    // Two bars: the second `rect` arrives into an `svg` that is already in the document, and says
+    // nothing about namespaces itself.
+    page.eval(&mut browser, &bump("1")).await;
+    page.wait_for(&mut browser, "document.querySelectorAll('rect').length === 2")
+        .await;
+    let each = "Array.from(document.querySelectorAll('rect')) \
+                .map((r) => r.getBoundingClientRect().width).join(',')";
+    assert_eq!(
+        page.text(&mut browser, each).await,
+        "30,30",
+        "a bar added to a chart that was already there has no size, so it did not inherit its \
+         namespace from where it was going"
+    );
+
+    // And the document the client holds is the document the server would have rendered.
+    assert_eq!(
+        dom(&page, &mut browser).await,
+        serving.rendered("ana").await,
+        "the browser's DOM and the server's render disagree"
+    );
+}
+}
+
+browser_test! {
 /// A closed client stops dialling, including the retry that was already armed.
 ///
 /// `beck.connect` re-arms its reconnect from the transport's own `close` handler, and nothing but

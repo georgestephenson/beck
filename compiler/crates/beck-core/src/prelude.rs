@@ -119,10 +119,12 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
         // are what Are We Fast Yet's collision detector is written in, and a numeric tower with a
         // square root and no sine is a gap rather than a decision (`docs/53` §53.5).
         //
-        // All three are the host's, in `lib/README.md`'s sense: `sin` is somebody else's polynomial
-        // and truncation is the format's own rule about which way a real falls. Composition would
-        // be a slower, less correct copy — and unlike `money.beck`'s arithmetic there is nothing
-        // here that Beck *should* be expressing.
+        // All three are primitives in `lib/README.md`'s sense — composition would be a slower,
+        // less correct copy, and unlike `money.beck`'s arithmetic there is nothing here that Beck
+        // *should* be expressing — but only truncation is the *host's*. `sin` and `cos` are
+        // computed in the runtime library and correctly rounded, because IEEE 754 pins neither and
+        // a fold that reached the platform's libm would replay differently on another machine
+        // (`beck_prim::math`, `adr/0031`).
         (
             "sin",
             Prim::Sin,
@@ -842,6 +844,31 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
                 Ty::signal(Ty::map(Ty::str_(), Ty::int())),
                 Row::of([Effect::Cap(Arc::from("presence"))]),
             )),
+        ),
+        // `awareness : (Session -> T) -> Signal[Map[Str, T]]` — presence with a payload.
+        //
+        // Every subscriber contributes `f(session)` and reads everybody's, keyed by actor. The
+        // roster is what `presence()` gives with the payload it does not carry, and the shape is
+        // [Yjs's awareness protocol](https://docs.yjs.dev/getting-started/adding-awareness)
+        // deliberately: cursors, selections and typing indicators are ephemeral by nature and
+        // belong nowhere near the log.
+        //
+        // `f` reads the **`Session`** and nothing else, which is what makes this half buildable
+        // without a byte of new protocol — the server already holds every subscriber's route, and
+        // it arrives on `hello` and on every navigation. `docs/104` §104.8 is where the other half
+        // is specified, and what it waits on is a client-local value to publish rather than a way
+        // to publish one.
+        (
+            "awareness",
+            Prim::Awareness,
+            poly(
+                &[A],
+                fun_eff(
+                    vec![fun(vec![Ty::con("Session")], v(A))],
+                    Ty::signal(Ty::map(Ty::str_(), v(A))),
+                    Row::of([Effect::Cap(Arc::from("presence"))]),
+                ),
+            ),
         ),
         // `freshness : () -> Signal[Freshness]` — §3.7's freshness dimension, as a source.
         //

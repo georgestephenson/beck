@@ -146,9 +146,12 @@ are written down rather than discovered later:
 - **No unions, so no `Option`.** `str_to_int`, `str_index_of` and `list_get` return one, so they
   are not compile-time builtins; indexing (`xs[i]`) is, and refuses out of range rather than
   answering `None`. `match` is refused for the same reason — its patterns are about variants.
-- **No transcendentals.** `sqrt`, `sin` and `cos` would make what the compiler *produces* depend on
-  the host's libm, and F9 ([`35`](35-standards-landscape.md) §35.5 item 1) is an open question this
-  is not the place to prejudge. A macro that needs one emits the call instead of performing it.
+- **No transcendentals.** `sqrt`, `sin` and `cos` are absent from the macro environment. The
+  reason they were refused — that what the compiler *produced* would depend on the host's libm —
+  no longer holds, since these are computed rather than asked for
+  ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)); what is
+  left is that nothing has asked for them at compile time. A macro that needs one emits the call
+  instead of performing it.
 
 Both are refusals with a reason, which is the shape this project asks for; neither is a limitation
 a caller has to discover by hitting it, because the diagnostic names the environment.
