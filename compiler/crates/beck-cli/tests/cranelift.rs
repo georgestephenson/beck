@@ -1,14 +1,14 @@
 //! The Cranelift backend, against the tree-walker **and** against LLVM.
 //!
 //! [`docs/07-dependencies.md`](../../../../docs/07-dependencies.md) §7.3 chooses two code
-//! generators and says what each is for; [`93`](../docs/93-the-native-backends-report.md) built
+//! generators and says what each is for; [`93`](../../../../docs/93-the-native-backends-report.md) built
 //! the release one and listed the development one as unbuilt. This is the suite for the second,
 //! and it is a **three-way** differential rather than a second two-way one: the same call goes to
 //! the evaluator, to LLVM and to Cranelift, and all three have to answer the same thing.
 //!
 //! # Why three matters more than two
 //!
-//! [`93`](../docs/93-the-native-backends-report.md) §93.15's finding is that a differential
+//! [`93`](../../../../docs/93-the-native-backends-report.md) §93.15's finding is that a differential
 //! compares what somebody thought to write down, and its worst case is a boundary that normalises
 //! on both sides. Two independent emitters make a different kind of mistake available to
 //! detection: an agreement between the tree-walker and *both* of them is evidence about the
@@ -284,7 +284,7 @@ fn the_three_backends_agree_on_reals() {
 }
 
 /// The three places a real is normalised, each with a program that makes the difference
-/// observable — the same three [`93`](../docs/93-the-native-backends-report.md) §93.3 found the
+/// observable — the same three [`93`](../../../../docs/93-the-native-backends-report.md) §93.3 found the
 /// hard way, asserted here against a second emitter that had to make the same three decisions.
 #[test]
 fn a_negative_zero_and_a_nan_mean_here_what_they_mean_in_the_evaluator() {

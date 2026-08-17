@@ -12,6 +12,7 @@ description = "Mode B's client kernel: a component's slice, executed in the brow
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+beck-frame.workspace = true
 beck-core.workspace = true
 beck-eval.workspace = true
 serde.workspace = true

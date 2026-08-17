@@ -13,7 +13,7 @@
 //!
 //! **The children do now run at the same time** (`docs/80`), which §80.12 said would need the
 //! `Host` trait to become thread-safe — it did, for an unrelated reason, when
-//! [`docs/93`](../docs/93-the-native-backends-report.md) gave the four host atoms one
+//! [`docs/93`](../../../../docs/93-the-native-backends-report.md) gave the four host atoms one
 //! description that three backends could ask. `two_children_actually_overlap` is the gate, and it
 //! is not a timing test: it deadlocks-or-passes, because each child waits for the other to arrive
 //! before either may finish.

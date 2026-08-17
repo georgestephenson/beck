@@ -1,6 +1,6 @@
 //! The standard library: the half written in Beck, and the primitives it is written on.
 //!
-//! [`compiler/lib/README.md`](../../../../lib/README.md) states the division this harness enforces:
+//! [`compiler/lib/README.md`](../../../lib/README.md) states the division this harness enforces:
 //! a host's table or grammar is a primitive, and composition is a file in `lib/` written in the
 //! language. That claim is only worth making if the files in `lib/` actually run, so this is where
 //! they do.

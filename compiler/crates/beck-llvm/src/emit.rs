@@ -119,13 +119,6 @@ pub struct Signature {
     pub index: u32,
 }
 
-impl Signature {
-    /// Whether calling this needs the heap on the wire in either direction.
-    pub fn touches_heap(&self) -> bool {
-        self.ret.is_ref() || self.params.iter().any(|p| p.is_ref())
-    }
-}
-
 /// A definition that did not compile, and why.
 #[derive(Clone, Debug)]
 pub struct Refusal {

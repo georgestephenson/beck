@@ -283,6 +283,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "beck-frame"
+version = "0.3.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "beck-host"
 version = "0.3.0"
 dependencies = [
@@ -337,6 +344,7 @@ dependencies = [
  "beck-core",
  "beck-diag",
  "beck-eval",
+ "beck-frame",
  "beck-host",
  "beck-infra",
  "beck-macro",
@@ -403,6 +411,7 @@ version = "0.3.0"
 dependencies = [
  "beck-core",
  "beck-eval",
+ "beck-frame",
  "serde",
  "serde_json",
 ]

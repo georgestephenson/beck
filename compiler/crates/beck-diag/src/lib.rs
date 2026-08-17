@@ -130,15 +130,6 @@ impl SourceMap {
         &self.files[file.0 as usize].text
     }
 
-    pub fn snippet(&self, span: Span) -> &str {
-        if span.is_none() {
-            return "";
-        }
-        let text = self.text(span.file);
-        let (s, e) = (span.start as usize, (span.end as usize).min(text.len()));
-        text.get(s..e).unwrap_or("")
-    }
-
     /// 1-based line and column (column counted in characters, not bytes).
     ///
     /// A span from a file this map does not hold reports `1:1` rather than panicking. That is a
@@ -257,11 +248,6 @@ impl Diagnostic {
 
     pub fn with_fix(mut self, fix: impl Into<String>) -> Diagnostic {
         self.fix = Some(fix.into());
-        self
-    }
-
-    pub fn with_expansion(mut self, steps: Vec<ExpansionStep>) -> Diagnostic {
-        self.expansion = steps;
         self
     }
 }
