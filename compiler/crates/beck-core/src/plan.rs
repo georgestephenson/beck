@@ -1521,10 +1521,11 @@ impl Builder<'_> {
     /// `map_list(xs, f)` where `f` looks something up, as a join and a loop over its rows.
     ///
     /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.6: the loop is
-    /// not edited and no syntax is added — the operator is emitted for the program that was already
-    /// there. Three nodes come out of it: the index (a `map_values` the plan may already have, so
-    /// two joins on one collection share one index by the hash-consing that already exists —
-    /// §99.5 decision 4), the join, and the loop over the joined rows.
+    /// not edited and no syntax is added — the operators are emitted for the program that was
+    /// already there. Per lookup, two nodes: the index — a `map_values` the plan may already have,
+    /// so two joins on one collection share one index by the hash-consing that already exists
+    /// (§99.5 decision 4) — and the join, taking the previous join's rows on its left. Then one loop
+    /// over the last one's rows.
     ///
     /// `Err` carries the reason nothing was rewritten, which the caller hangs on the operator that
     /// pays for it; `Err(None)` is the ordinary case of a loop that relates nothing.
@@ -1549,13 +1550,17 @@ impl Builder<'_> {
             return Err(Some(crate::relate::Refusal::NothingSaved.because()));
         }
 
-        let m = self.expr(&found.map, scope);
-        let index = self.shared(format!("map_values/{m}"), Op::MapValues, vec![m], None);
-        let key = Fun {
-            code: lam(vec![found.elem], found.key),
-            captures: Vec::new(),
-        };
-        let join = self.push(Op::Join { key }, vec![xs, index], None);
+        let mut left = xs;
+        for lookup in found.lookups {
+            let m = self.expr(&lookup.map, scope);
+            let index = self.shared(format!("map_values/{m}"), Op::MapValues, vec![m], None);
+            let key = Fun {
+                code: lam(vec![lookup.param], lookup.key),
+                captures: Vec::new(),
+            };
+            left = self.push(Op::Join { key }, vec![left, index], None);
+        }
+        let join = left;
 
         let mut params = kept.clone();
         params.push(found.row);

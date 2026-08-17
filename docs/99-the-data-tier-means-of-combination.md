@@ -131,20 +131,31 @@ node. **Fixed**: every operator now carries the cadence of what it captured, com
 inputs back to a source in one pass over the plan's dependency order, and the three cases print
 three different sentences —
 `incremental.rs::a_capture_says_how_often_what_it_captured_moves` builds one program per cadence and
-asserts they differ from each other as well as from what each should say. Sweeping `beck explain cost` for `whenever #k moves` across the corpus and the examples and
-resolving each `#k` in `beck explain query` gives **18 capture sites in 10 programs**:
+asserts they differ from each other as well as from what each should say. Sweeping `beck explain cost` for the capture line across the corpus and the examples and resolving
+each `#k` in `beck explain query` gave **18 capture sites in 10 programs**, of which three moved per
+event: `27-review` (`#0`), `board` (`#0`) and `32-here` (`#4 ← #3 ← #0`). The third — `32-here`'s
+`#4` — is why item 2 of §99.9 was not cosmetic: it is a `recompute` node, so classifying it takes
+**tracing its inputs transitively back to the accumulator**, which the printed line did not do and a
+reader has no reason to do by hand.
+
+**Re-run after the join (2026-08-17), the same sweep gives 16 sites in 8 programs and one that moves
+per event:**
 
 | what the captured node is | sites | programs | when it moves |
 |---|---|---|---|
 | a `const` | 9 | `04-kanban` (6), `05-poll` (3) | never |
 | a definition used as a value, no inputs | 2 | `28-catalogue` | never |
 | the `session`, or derived from it | 4 | `02-chat`, `31-tenants`, `todo`, `routed` | per route change — benign, as the comment says |
-| the **state**, or derived from it | **3** | `27-review` (`#0`), `board` (`#0`), `32-here` (`#4 ← #3 ← #0`) | **every event** |
+| the **state**, or derived from it | **1** | `board` (`#0`) | **every event** |
 
-Fifteen of the eighteen are harmless. Three are the join. And the third one — `32-here`'s `#4` — is
-why item 2 of §99.9 is not cosmetic: it is a `recompute` node, so classifying it takes **tracing
-its inputs transitively back to the accumulator**, which the printed line does not do and a reader
-has no reason to do by hand.
+Two numbers in that comparison are worth separating, because only one of them is the operator's
+doing. `27-review` and `32-here` had the shape §99.6 recognises and lost their captures to it, which
+is the point. **`33-awareness` is the other number**: it had the shape too, it was never in the
+eighteen, and it was not missed — it did not exist, arriving with `awareness(f)` one change after
+this document was written, and nothing re-ran the sweep. That is [`08`](08-roadmap.md) §8.5.6's third
+decay direction, a *quoted figure going stale because the tree grew under it*, demonstrated one
+commit after the paragraph describing it. So three of four are closed rather than two of three, and
+`board` is the one left — which is a **grouping** rather than a lookup and waits on §99.9 item 3.
 
 **And the analysis disagrees with the plan.** `beck explain incremental corpus/27-review.beck`
 reports `flat_map ×1 maintained`. It is maintained in the sense the analysis means — the operator has
@@ -224,8 +235,8 @@ difference *by key* and union *by key* have delta rules with no representational
 `distinct` on **values** does not — it needs a count per distinct value, which is a new kind of
 arrangement.
 
-**Recommendation**: build join and grouping on the existing keyed representation, and treat
-`distinct`-on-values as a separate, later question. Do **not** adopt Z-sets wholesale to get two
+**Recommendation, and taken**: build join and grouping on the existing keyed representation, and
+treat `distinct`-on-values as a separate, later question. Do **not** adopt Z-sets wholesale to get two
 operators; the ordered-key property in decision 1 is worth more than basis minimality.
 
 ### 3. One clock, and where that stops being true
@@ -236,9 +247,20 @@ which moves atomically at one `seq`. **A join in Beck needs no timestamp lattice
 now is what stops a port of the literature from importing machinery this design does not need.
 
 The exception is already documented and should be named here rather than rediscovered:
-`presence()` moves when `seq` does not ([`48`](48-identity-report.md) §48.13). A join against
-presence is therefore the one case that needs the second clock §48.13 lists as unbuilt — so it is out
-of scope, deliberately, and that should be a refusal with a diagnostic rather than a surprise.
+`presence()` moves when `seq` does not ([`48`](48-identity-report.md) §48.13).
+
+**That exception was expected to force a refusal, and it does not — this paragraph used to say a
+join against a roster was out of scope and should be refused with a diagnostic.** It is not out of
+scope, and building it is what showed why: `corpus/33-awareness.beck` looks up in the awareness
+roster *and* in the accumulator, and both are joins. The second clock is a problem for **sharing**,
+not for **joining**. Everything downstream of `Op::Awareness` is already per-subscriber, so a join
+that reads one is per-subscriber too, and inside a single subscriber's engine the index and the left
+side advance in the same tick whatever provoked the render — which is all a delta rule needs. The
+second clock stays unbuilt and stays owed for the reason §48.13 gives, which is that the *roster*
+cannot be held once between subscribers; nothing about it stops the roster being joined against.
+`incremental.rs::a_loop_that_looks_up_twice_becomes_two_joins_and_captures_nothing` is the gate, and
+the differential drives the shared dataflow as well as a standalone engine, which is where a wrong
+answer about this would show.
 
 ### 4. Indexes are a second arrangement, and the sharing already exists
 
@@ -266,9 +288,13 @@ placement is inferred, the session cut is inferred, fusion is automatic. A join 
 [`plan.rs`](../compiler/crates/beck-core/src/plan.rs) has everything it needs to see one: it already
 computes the per-element function's free variables and knows which of them are plan nodes.
 
-**Built** ([`relate.rs`](../compiler/crates/beck-core/src/relate.rs)). `27-review.beck` compiles to a
-`Join` with no edit to the program, `beck explain query` prints it and what orders it, and
-`beck explain cost` no longer reports a per-event capture for it. The condition is stated as what an
+**Built** ([`relate.rs`](../compiler/crates/beck-core/src/relate.rs)). `27-review.beck`, `32-here.beck`
+and `33-awareness.beck` compile to joins with no edit to any of them, `beck explain query` prints
+them and what orders them, and `beck explain cost` reports a per-event capture for none of them.
+**Several lookups in one body are several joins, chained** — a row that shows two related things is
+an ordinary page, and refusing it would leave the capture in place and buy nothing. Each join takes
+the previous one's rows on its left, so the row a body finally reads is nested and the cost of the
+chain is memory rather than time (§99.5 decision 4). The condition is stated as what an
 expression *reads* rather than as a shape — `m` reads only what the loop captured, `k` reads only the
 element — and the recognition fires only when the rewrite removes a capture, so an index is never
 built for nothing.
@@ -292,8 +318,8 @@ The alternative — a comprehension surface with an explicit join, per
 is a cost with no benefit here, and the inferred version is strictly better for the programs that
 already exist.
 
-**Where inference cannot see it** — a non-equi predicate, or two lookups in one body where which to
-index is a plan choice — the honest outcome is the one Beck uses everywhere else: compile it the slow
+**Where inference cannot see it** — a non-equi predicate, a collection derived per element, a key
+that reads more than the element — the honest outcome is the one Beck uses everywhere else: compile it the slow
 way and *say so*, in `beck explain cost`, with the reason. That is built and each refusal names its
 own condition.
 
@@ -491,10 +517,14 @@ person is one entry moving on the right and several rows moving on the left. The
 (maintained vs recomputed, every event, byte for byte) is the correctness argument, unchanged, and it
 is what holds "several rows moved" — `contains` asks about a string somebody thought to name.
 
-**5. Recognise the loop-plus-lookup shape. Done** (§99.6): `27-review.beck` gets the operator with no
-edit, and the feature has no syntax. What it cost is one thing worth naming in advance for item 6:
-the recogniser had to **inline** to find a lookup written behind a call, which means the plan now
-carries a small β-reducer, and the honest bound on it is a nested lambda rather than a call depth.
+**5. Recognise the loop-plus-lookup shape. Done** (§99.6): `27-review.beck`, `32-here.beck` and
+`33-awareness.beck` get the operator with no edit, and the feature has no syntax. Two things it cost
+are worth naming in advance for item 6. The recogniser had to **inline** to find a lookup written
+behind a call, so the plan now carries a small β-reducer, and the honest bound on it is a nested
+lambda rather than a call depth. And a body with *several* lookups had to become several joins rather
+than a refusal: the first version refused it, which left `33-awareness` paying the whole cost, and a
+refusal that keeps a program at `O(n)` per event is not a conservative choice — it is the defect with
+a sentence attached.
 
 **6. `group by` and aggregates** — `count`, `sum`, `min`, `max` per group. `min`/`max` are the hard
 ones and should be said so in advance: deleting the current minimum of a group needs either a rescan
@@ -523,6 +553,7 @@ start afterwards, and treating it as one is how a guessed constant becomes perma
 |---|---|
 | item 4 (`join`) | **rungs 0 and 1 did not come due, and saying why is the point.** Both are about a solver *choosing* between plans, and the join that landed has nothing to choose: its right side is an index and its left is the loop the program wrote, so there is one plan. No cardinality, assumed or measured, reaches any decision, because no decision is taken. The rungs come due with `arrange_by` (item 3), which is the first time a join has two sides that could be swapped |
 | item 5 (recognition) | **rung 2** — the two programs that already contain a join, replayed under both plans, are the first real measurement, and `Work` is the unit |
+| item 3 (`arrange_by`) | **rungs 0 and 1**, which is where they land now that the join has shipped without them — the first time a join has two sides that could be swapped is the first time anything is chosen |
 | items 6–8 | **rung 4** — search, once replay is the oracle rather than the model |
 | Phase 4's `beck tune` | **rung 3** — the rate, fed back from a deployment, because it exists nowhere else |
 

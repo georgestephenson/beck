@@ -58,18 +58,41 @@ pub const RIGHT: &str = "right";
 /// a value that prints as `Join(left=…, right=…)` in a panic is worth the four bytes.
 pub const ROW: &str = "Join";
 
-/// A loop whose body looked something up, taken apart.
-pub struct Recognised {
+/// One lookup, as the join that answers it.
+pub struct Lookup {
     /// The collection to index, in the caller's variables: the first argument of the `map_get`.
     pub map: Core,
-    /// The join key as a function of the element alone — the `Fun` body of [`crate::plan::Op::Join`].
+    /// The join key, over the row the *previous* join in the chain produced — over the element
+    /// itself for the first. This is the `Fun` body of [`crate::plan::Op::Join`].
     pub key: Core,
-    /// The element parameter `key` is written over.
+    /// The parameter `key` is written over.
+    pub param: VarId,
+}
+
+/// A loop whose body looked things up, taken apart.
+///
+/// # Why this is a list rather than one lookup
+///
+/// A row that shows two related things is an ordinary shape — `corpus/33-awareness.beck` renders a
+/// person's whereabouts *and* their note, so its loop body looks up in two collections — and a rule
+/// that refused it would leave the capture in place and the whole collection reconsidered per event,
+/// which is the cost the operator exists to remove. So every qualifying lookup gets a join, chained:
+/// each takes the previous one's rows on its left, and the row a body finally reads is nested,
+/// `{left: {left: x, right: a₁}, right: a₂}`.
+///
+/// The chain is not free and the cost is memory rather than time: each join holds one row per left
+/// row (§99.5 decision 4), so a body with four lookups arranges the collection four times over. What
+/// it is *not* is the plan choice §99.8 is about — nothing here decides an order, because a lookup
+/// is against an index and there is no side to swap.
+pub struct Recognised {
+    /// One per lookup, in the order the joins are chained.
+    pub lookups: Vec<Lookup>,
+    /// The element parameter the original body was written over.
     pub elem: VarId,
-    /// The loop body, with the lookup replaced by a read of the joined row's right half, over a
-    /// fresh element parameter that is the row rather than the left value.
+    /// The loop body, with each lookup replaced by a read of the row that answers it, over a fresh
+    /// parameter that is the last join's row rather than the left value.
     pub body: Core,
-    /// The parameter `body` now takes: one joined row.
+    /// The parameter `body` now takes.
     pub row: VarId,
 }
 
@@ -82,8 +105,6 @@ pub struct Recognised {
 pub enum Refusal {
     /// No `map_get` anywhere in the body: this loop relates nothing.
     NoLookup,
-    /// More than one, and which to index on is a plan choice nothing here is equipped to make.
-    Several(usize),
     /// The collection looked up in is derived per element, so there is nothing to index once.
     MapReadsTheElement,
     /// The key reads something other than the element, so it is not an equi-join on the left row.
@@ -97,10 +118,6 @@ impl Refusal {
     pub fn because(&self) -> String {
         match self {
             Refusal::NoLookup => "its body relates nothing to the collection it loops over".into(),
-            Refusal::Several(n) => format!(
-                "its body looks up in {n} collections, and which one to index is a plan choice \
-                 (docs/99 §99.8)"
-            ),
             Refusal::MapReadsTheElement => {
                 "the collection it looks up in is derived from the element, so there is nothing to \
                  index once"
@@ -145,57 +162,97 @@ pub fn recognise(
     let mut fresh = 1 + max_var(&body).max(captured.iter().copied().max().unwrap_or(0));
     let body = inline(&body, defs, &mut Vec::new(), &mut fresh, DEPTH);
 
-    // The lookups, deepest-first is not wanted and neither is any order: there must be exactly one,
-    // because choosing between two is the plan question §99.8 opens and this is not it.
     let mut sites: Vec<Vec<usize>> = Vec::new();
     lookups(&body, &mut Vec::new(), &mut sites);
-    let site = match sites.len() {
-        0 => return Err(Refusal::NoLookup),
-        1 => sites.remove(0),
-        n => return Err(Refusal::Several(n)),
-    };
+    if sites.is_empty() {
+        return Err(Refusal::NoLookup);
+    }
 
-    let (map, key) = {
-        let at = follow(&body, &site);
-        let CoreKind::Prim { args, .. } = &at.kind else {
-            unreachable!("a site is where a `map_get` is")
+    // Each site tested on its own, and the first failure kept only in case *none* qualifies: a body
+    // with one lookup this can index and one it cannot is still worth indexing once.
+    let mut chosen: Vec<(Vec<usize>, Core, Core)> = Vec::new();
+    let mut why = Refusal::NoLookup;
+    for site in &sites {
+        // A lookup inside another one's arguments cannot qualify — its enclosing key would then read
+        // a captured collection — but the paths would also collide under the rewrite, so the check
+        // is here rather than left to the conditions.
+        if sites
+            .iter()
+            .any(|other| other != site && site.starts_with(other))
+        {
+            continue;
+        }
+        let (map, key) = {
+            let at = follow(&body, site);
+            let CoreKind::Prim { args, .. } = &at.kind else {
+                unreachable!("a site is where a `map_get` is")
+            };
+            (args[0].clone(), args[1].clone())
         };
-        (args[0].clone(), args[1].clone())
-    };
-    // Resolved against the `let`s the inliner left, because an argument that was not cheap enough
-    // to substitute is bound rather than copied — so the map may be a variable standing for one.
-    let mut lets = BTreeMap::new();
-    collect_lets(&body, &site, &mut lets);
-    let map = resolve(&map, &lets, DEPTH);
-    let key = resolve(&key, &lets, DEPTH);
+        // Resolved against the `let`s the inliner left, because an argument that was not cheap
+        // enough to substitute is bound rather than copied — so the map may be a variable standing
+        // for one.
+        let mut lets = BTreeMap::new();
+        collect_lets(&body, site, &mut lets);
+        let map = resolve(&map, &lets, DEPTH);
+        let key = resolve(&key, &lets, DEPTH);
 
-    if reads(&map).contains(&elem) {
-        return Err(Refusal::MapReadsTheElement);
+        let reads_map = reads(&map);
+        if reads_map.contains(&elem) || !reads_map.is_subset(captured) {
+            why = Refusal::MapReadsTheElement;
+            continue;
+        }
+        if !reads(&key).is_subset(&BTreeSet::from([elem])) {
+            why = Refusal::KeyReadsMoreThanTheElement;
+            continue;
+        }
+        chosen.push((site.clone(), map, key));
     }
-    if !reads(&map).is_subset(captured) {
-        return Err(Refusal::MapReadsTheElement);
-    }
-    if !reads(&key).is_subset(&BTreeSet::from([elem])) {
-        return Err(Refusal::KeyReadsMoreThanTheElement);
+    if chosen.is_empty() {
+        return Err(why);
     }
 
-    // The rewrite: the lookup becomes a read of the row's right half, and the element becomes a
-    // read of its left half. Both are `let`s rather than substitutions so the body is written once
-    // however many times it mentions the element.
+    // The rewrite. Each lookup becomes a read of the row that answers it, and the element becomes a
+    // read through the chain's left spine — `let`s rather than substitutions, so the body is written
+    // once however many times it mentions either.
     let row = fresh;
-    let answer = fresh + 1;
+    let n = chosen.len();
+    let answers: Vec<VarId> = (0..n as VarId).map(|k| fresh + 1 + k).collect();
     let mut rewritten = body;
-    let ty = follow(&rewritten, &site).ty.clone();
-    *follow_mut(&mut rewritten, &site) = var(answer, ty, Span::NONE);
-    let body = bind(
-        elem,
-        field(row, LEFT, Ty::unit()),
-        bind(answer, field(row, RIGHT, Ty::unit()), rewritten),
-    );
+    for ((site, _, _), &answer) in chosen.iter().zip(&answers) {
+        // Replacing a node with a variable changes no ancestor's arity and no sibling's path, and
+        // the descendants that would have been invalidated were skipped above — so the order these
+        // are applied in does not matter.
+        let ty = follow(&rewritten, site).ty.clone();
+        *follow_mut(&mut rewritten, site) = var(answer, ty, Span::NONE);
+    }
+    for (i, &answer) in answers.iter().enumerate().rev() {
+        rewritten = bind(answer, field_of(spine(row, n - 1 - i), RIGHT), rewritten);
+    }
+    let body = bind(elem, spine(row, n), rewritten);
+
+    // One join per lookup, each keyed over the row the one before it produced. `param` is fresh per
+    // stage because the key function is a `Fun` of its own and its parameter is not the element any
+    // more once there is a stage below it.
+    let lookups: Vec<Lookup> = chosen
+        .into_iter()
+        .enumerate()
+        .map(|(i, (_, map, key))| {
+            let param = fresh + 1 + n as VarId + i as VarId;
+            let mut key = key;
+            if i > 0 {
+                substitute(&mut key, elem, &spine(param, i));
+            }
+            Lookup {
+                map,
+                key,
+                param: if i == 0 { elem } else { param },
+            }
+        })
+        .collect();
 
     Ok(Recognised {
-        map,
-        key,
+        lookups,
         elem,
         body,
         row,
@@ -581,19 +638,32 @@ fn var(v: VarId, ty: Ty, span: Span) -> Core {
     }
 }
 
-fn field(base: VarId, name: &str, ty: Ty) -> Core {
+fn field_of(base: Core, name: &str) -> Core {
     Core {
         kind: CoreKind::Field {
-            base: Box::new(var(base, Ty::unit(), Span::NONE)),
+            base: Box::new(base),
             name: Arc::from(name),
         },
-        ty,
+        ty: Ty::unit(),
         tier: Tier::Any,
         span: Span::NONE,
         last_use: false,
         order: crate::fields::UNORDERED,
         locals: 0,
     }
+}
+
+/// A row's **left spine**: `row.left.left…`, `depth` steps up the chain of joins.
+///
+/// Stage `i`'s row holds stage `i - 1`'s row on its left and stage `i`'s answer on its right, so
+/// walking `depth` steps left from the last row is how the body reaches an earlier stage's answer —
+/// and walking all the way is how it reaches the element the loop was written over.
+fn spine(v: VarId, depth: usize) -> Core {
+    let mut out = var(v, Ty::unit(), Span::NONE);
+    for _ in 0..depth {
+        out = field_of(out, LEFT);
+    }
+    out
 }
 
 fn bind(v: VarId, value: Core, body: Core) -> Core {

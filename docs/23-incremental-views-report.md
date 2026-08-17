@@ -365,8 +365,9 @@ The shape was a join written as a loop with a lookup inside it, and there is now
 compile it to ([`99`](99-the-data-tier-means-of-combination.md) §99.6): `27-review` compiles to a
 `Join`, its `flat_map` captures nothing, and the two commands agree about it. §99.3 has the
 transcripts and the sweep that found three such sites in the tree among fifteen benign ones the same
-line reported identically — **one of the three is closed, one (`board`) is a grouping and waits on
-`arrange_by`, and the third is `32-here`**. What the episode leaves behind is the lesson rather than
+line reported identically — **three of four are closed, and the one left (`board`) is a grouping
+rather than a lookup and waits on `arrange_by`**. Four rather than three because a fourth site
+arrived with `awareness(f)` after that sweep was run and nothing re-ran it. What the episode leaves behind is the lesson rather than
 the case: two commands that are each true about one operator, and no reader who would run both.
 
 ## 23.9 One shared dataflow: the three choices
