@@ -555,10 +555,6 @@ impl Node {
             meta,
         }
     }
-
-    pub fn node_count(&self) -> usize {
-        1 + self.args.iter().map(Node::node_count).sum::<usize>()
-    }
 }
 
 #[cfg(test)]

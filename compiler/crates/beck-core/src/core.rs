@@ -1036,10 +1036,6 @@ impl Text {
         self.chars
     }
 
-    pub fn is_ascii_text(&self) -> bool {
-        self.ascii
-    }
-
     pub fn as_str(&self) -> &str {
         &self.bytes
     }
@@ -1270,19 +1266,6 @@ impl Env {
     #[inline]
     fn bound(&self) -> &[(VarId, Value)] {
         &self.frame[..self.used as usize]
-    }
-
-    /// Extend a parent that is **already** behind an `Arc` — which a closure's captured environment
-    /// is, so that a call clones a pointer instead of boxing a copy of the environment.
-    ///
-    /// This is the per-call path. `extend` above is the per-`let` path, where the parent is owned by
-    /// the evaluator's loop and has to be boxed; there are far fewer of those.
-    pub fn extend_shared(parent: &Arc<Env>, frame: Arc<[(VarId, Value)]>) -> Env {
-        Env {
-            used: frame.len() as u32,
-            frame,
-            parent: Some(Arc::clone(parent)),
-        }
     }
 
     /// An environment with nothing in it, behind an `Arc`, shared by every top-level definition.

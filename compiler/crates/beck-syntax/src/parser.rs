@@ -68,23 +68,6 @@ pub fn parse_module(file: FileId, name: &str, src: &str, diags: &mut Diagnostics
     Node::form(sym::MODULE, items, Span::new(file, 0..src.len()))
 }
 
-/// Parse a single expression — used by `beck ast` and by tests.
-pub fn parse_expr_str(file: FileId, src: &str, diags: &mut Diagnostics) -> Option<Node> {
-    let toks = lex(file, src, diags);
-    let mut p = Parser {
-        toks,
-        pos: 0,
-        diags,
-        file,
-        poisoned: false,
-        attached_block: false,
-        nesting: Nesting::new(),
-        in_test: 0,
-    };
-    p.skip_newlines();
-    p.expr()
-}
-
 impl<'a> Parser<'a> {
     // ---------------------------------------------------------------- token helpers
 

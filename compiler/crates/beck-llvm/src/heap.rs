@@ -327,15 +327,6 @@ pub const NODE_RIGHT: usize = 4;
 pub const DELTA: u64 = 3;
 pub const RATIO: u64 = 2;
 
-/// How many bytes a `Map` of `n` entries occupies: one node each.
-///
-/// A *fresh* map, which is what the host writes and what a literal builds. An insert allocates the
-/// path it rebuilt — `O(log n)` nodes — and shares the rest, so what a fold leaves behind is not
-/// this number times the events.
-pub fn map_bytes(n: u64) -> u64 {
-    n * MAP_NODE
-}
-
 /// What one value is, at the machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Repr {

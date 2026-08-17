@@ -12,6 +12,7 @@ description = "The playground: the compiler and the application, in a browser ta
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+beck-frame.workspace = true
 beck-core.workspace = true
 beck-diag.workspace = true
 beck-eval.workspace = true

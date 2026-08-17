@@ -35,12 +35,14 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use beck_core::backend::ExecError;
 use beck_core::host::Atoms;
 use beck_core::Value;
+use beck_diag::Span;
 
 use crate::heap::{Heap, Repr, RAISED_WORDS, WORD};
-use crate::worker::{Answer, Question};
-use crate::{Trap, Upcall};
+use crate::worker::{Answer, Question, Worker};
+use crate::{Signature, Trap, Upcall};
 
 /// What one call's questions did: how many there were, how much heap travelled, and the sentence a
 /// [`Trap::HostFailed`] cannot carry.
@@ -229,4 +231,79 @@ fn shape_of(heap: &Heap, at: u32) -> Result<Repr, String> {
     heap.shape(at).ok_or_else(|| {
         format!("the compiled program named shape {at}, and this module has no such shape")
     })
+}
+
+/// One call, from the host's side: arguments out, a value and the arena it left behind back.
+///
+/// This is the other direction of the same protocol [`answer`] serves, and it is here for the
+/// reason this module exists at all — it is host code rather than emitted code, so the argument
+/// that keeps the two emitters apart does not reach it. There is nothing for a second reading of
+/// *this* to disagree about: the trap codes it decodes are [`Trap`]'s, the words it writes are
+/// [`Heap`]'s, and both are already one definition. A second copy would be a second place for a
+/// new trap code to be forgotten.
+///
+/// The second number is what a **shape** gate reads: a program that allocates `n` objects of a
+/// known size has to use a known number of bytes, at every `n`, and a cost per object that grew
+/// with the number of objects would show up here with no clock in the measurement (`AGENTS.md`,
+/// and `docs/64` §64.1's pattern).
+pub fn exchange(
+    heap: &Heap,
+    spans: &[Span],
+    worker: &Worker,
+    atoms: &dyn Atoms,
+    asking: &Asking,
+    sig: &Signature,
+    args: &[Value],
+) -> Result<(Value, usize), ExecError> {
+    if args.len() != sig.params.len() {
+        return Err(ExecError::new(
+            format!(
+                "`{}` takes {} arguments, got {}",
+                sig.name,
+                sig.params.len(),
+                args.len()
+            ),
+            Span::NONE,
+        ));
+    }
+    // The arguments become eight bytes each, plus — when any of them is an object — the flat byte
+    // string of the graph they point into. `crate::heap` is the one description of that shape, so
+    // the host writes what the compiled code reads by construction.
+    let (cells, blob) = heap
+        .encode_args(args, &sig.params)
+        .map_err(|why| ExecError::new(format!("`{}` was given {why}", sig.name), Span::NONE))?;
+
+    asking.clear();
+    let reply = worker
+        .call(sig.index, &cells, &blob, &|q| {
+            answer(heap, atoms, asking, q)
+        })
+        .map_err(|e| ExecError::new(e, Span::NONE))?;
+    if reply.code != 0 {
+        let span = spans
+            .get(reply.span as usize)
+            .copied()
+            .unwrap_or(Span::NONE);
+        // The one failure that carries a value. `beck-eval`'s `EvalError::raise` renders the
+        // *value*, so this decodes rather than describing: a message saying a raise happened where
+        // the evaluator says which one is a divergence the differential would show.
+        if Trap::from_code(reply.code) == Some(Trap::Raised) {
+            let message = heap
+                .raised(reply.payload as u64, &reply.heap)
+                .map_or_else(|why| why, |v| format!("raised `{}`", v.display()));
+            return Err(ExecError::new(message, span));
+        }
+        // The sentence a `HostFailed` could not carry, if there is one: the trap's own message says
+        // only that the host could not answer, and the reason is what a reader can act on.
+        let message = match (Trap::from_code(reply.code), asking.take()) {
+            (Some(Trap::HostFailed), Some(why)) => why,
+            (Some(trap), _) => trap.message(reply.payload),
+            (None, _) => format!("the compiled program reported trap {}", reply.code),
+        };
+        return Err(ExecError::new(message, span));
+    }
+    let value = heap
+        .decode(reply.value, sig.ret, &reply.heap)
+        .map_err(|why| ExecError::new(why, Span::NONE))?;
+    Ok((value, reply.heap.len()))
 }

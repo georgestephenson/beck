@@ -51,51 +51,14 @@ pub use kernel::{Client, Proposed, Viewer};
 #[cfg(target_arch = "wasm32")]
 mod exports {
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
 
     use super::kernel::{Client, Viewer};
+    // The buffer table and the frame, which `beck-play`'s module hands its page too.
+    use beck_frame::{error, reply, request, reserve, take};
 
     thread_local! {
-        /// Buffers this module has handed the host, by the address of each one's allocation.
-        ///
-        /// Moving a `Vec` moves three words and not the bytes, so the address stays the one that
-        /// was returned. WebAssembly is single-threaded here, which is what makes a thread-local
-        /// the whole of the synchronisation story.
-        static BUFFERS: RefCell<BTreeMap<i32, Vec<u8>>> = const { RefCell::new(BTreeMap::new()) };
         /// The loaded component. One per module instance, because one module instance is one tab.
         static CLIENT: RefCell<Option<Client>> = const { RefCell::new(None) };
-    }
-
-    fn reserve(len: usize) -> i32 {
-        let mut buffer = vec![0u8; len];
-        let ptr = buffer.as_mut_ptr() as i32;
-        BUFFERS.with(|b| b.borrow_mut().insert(ptr, buffer));
-        ptr
-    }
-
-    fn take(ptr: i32) -> Option<Vec<u8>> {
-        BUFFERS.with(|b| b.borrow_mut().remove(&ptr))
-    }
-
-    /// Hand the host a length-prefixed response and keep it alive until `beck_free`.
-    fn respond(body: Vec<u8>) -> i32 {
-        let mut framed = Vec::with_capacity(4 + body.len());
-        framed.extend_from_slice(&(body.len() as u32).to_le_bytes());
-        framed.extend_from_slice(&body);
-        let ptr = framed.as_mut_ptr() as i32;
-        // The frame is what the host reads, so the address that identifies it is the frame's own.
-        BUFFERS.with(|b| b.borrow_mut().insert(ptr, framed));
-        ptr
-    }
-
-    fn reply(value: serde_json::Value) -> i32 {
-        respond(
-            serde_json::to_vec(&value).unwrap_or_else(|_| b"{\"error\":\"unencodable\"}".to_vec()),
-        )
-    }
-
-    fn error(why: impl std::fmt::Display) -> i32 {
-        reply(serde_json::json!({ "error": why.to_string() }))
     }
 
     #[allow(unsafe_code)] // the export attribute, and nothing else — see the crate docs
@@ -119,10 +82,9 @@ mod exports {
     #[allow(unsafe_code)] // the export attribute, and nothing else — see the crate docs
     #[no_mangle]
     pub extern "C" fn beck_load(ptr: i32, len: i32) -> i32 {
-        let Some(bytes) = take(ptr) else {
+        let Some(bytes) = request(ptr, len) else {
             return error("no such buffer");
         };
-        let bytes = &bytes[..(len.max(0) as usize).min(bytes.len())];
         if bytes.len() < 4 {
             return error("a load needs a viewer and a bundle");
         }
@@ -152,11 +114,10 @@ mod exports {
     #[allow(unsafe_code)] // the export attribute, and nothing else — see the crate docs
     #[no_mangle]
     pub extern "C" fn beck_call(ptr: i32, len: i32) -> i32 {
-        let Some(bytes) = take(ptr) else {
+        let Some(bytes) = request(ptr, len) else {
             return error("no such buffer");
         };
-        let bytes = &bytes[..(len.max(0) as usize).min(bytes.len())];
-        let request: serde_json::Value = match serde_json::from_slice(bytes) {
+        let request: serde_json::Value = match serde_json::from_slice(&bytes) {
             Ok(v) => v,
             Err(e) => return error(e),
         };

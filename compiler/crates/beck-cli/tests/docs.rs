@@ -600,6 +600,79 @@ fn a_relative_link_out_of_a_rustdoc_page_lands_on_the_file_it_names() {
     );
 }
 
+/// Every `.rs` file under a crate's `tests/`, which is what the sweep above excludes.
+fn test_sources() -> Vec<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(compiler_root().join("crates")).expect("the crates") {
+        walk(&entry.expect("an entry").path().join("tests"), &mut out);
+    }
+    out.sort();
+    assert!(out.len() > 20, "the test listing is wrong, not the repo");
+    out
+}
+
+/// A relative link in a harness resolves to the file it names — counted from the *file*.
+///
+/// The sweep above checks the sources `cargo doc` renders, and its arithmetic is the rendered
+/// page's depth. A harness is rendered by nothing: its `///` is read where it is written, so the
+/// only resolution that means anything is relative to the file's own directory. That is a second
+/// rule rather than a widening of the first, because the two counts differ for the same target and
+/// merging them would need one of the two to be wrong.
+///
+/// The gap this closes is the scope of the sweep above rather than its arithmetic. It excludes
+/// `tests/` — `compiler_sources` drops them, and the `docs/` filter dropped every link to
+/// `compiler/lib` and `compiler/awfy` besides — so the 150 links in the harnesses were checked by
+/// nothing, and eleven of them named a file that does not exist. Comment lines only: a `](../` in
+/// a string literal is a fragment being matched, not a link (`docs.rs` itself has one).
+#[test]
+fn a_relative_link_in_a_harness_lands_on_the_file_it_names() {
+    let mut checked = 0usize;
+    for path in test_sources() {
+        let text = std::fs::read_to_string(&path).expect("readable");
+        let dir = path.parent().expect("a file has a directory");
+        for (n, line) in text.lines().enumerate() {
+            if !line.trim_start().starts_with("//") {
+                continue;
+            }
+            for link in line.split("](").skip(1) {
+                let Some(target) = link.split(')').next() else {
+                    continue;
+                };
+                let named = target.split('#').next().unwrap_or(target);
+                if !named.starts_with("../") || !named.ends_with(".md") {
+                    continue;
+                }
+                assert!(
+                    dir.join(named).canonicalize().is_ok(),
+                    "{}:{}: `{target}` does not name a file — \
+                     a link here is counted from {}, which is where it is read",
+                    path.display(),
+                    n + 1,
+                    dir.display(),
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(
+        checked > 100,
+        "the harness link sweep found almost nothing: {checked}"
+    );
+}
+
 /// The published guide is the checked file, rendered — not a second copy of it.
 ///
 /// `docs/86-getting-started.md` is gated twice over: `getting_started.rs` compiles and runs every

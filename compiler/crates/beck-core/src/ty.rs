@@ -549,12 +549,6 @@ impl Subst {
         Ok(())
     }
 
-    /// Two rows denote the same set of effects. Used where a signature is *compared* rather than
-    /// checked — `.becki` agreement and `--wire-compat`.
-    pub fn rows_equal(&self, a: &Row, b: &Row) -> bool {
-        self.resolve_row(a) == self.resolve_row(b)
-    }
-
     /// The free variables of a resolved type.
     pub fn free_vars(&self, t: &Ty, out: &mut Vec<TyVarId>) {
         match self.resolve_shallow(t) {

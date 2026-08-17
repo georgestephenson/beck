@@ -58,7 +58,7 @@ use beck_core::core::CoreKind;
 use beck_core::{Core, Value};
 use beck_diag::Span;
 use beck_llvm::service::{self, Asking};
-use beck_llvm::{Refusal, Signature, Trap, Worker};
+use beck_llvm::{Refusal, Signature, Worker};
 
 pub use emit::{module, Module};
 pub use toolchain::Linker;
@@ -77,7 +77,6 @@ pub struct Artifact {
     asking: Asking,
     dir: Workspace,
     clif: PathBuf,
-    obj: PathBuf,
     exe: PathBuf,
     /// How long Cranelift itself took, which is the number §7.3's choice is about.
     codegen: std::time::Duration,
@@ -153,7 +152,6 @@ impl Artifact {
             asking: Asking::new(),
             dir,
             clif,
-            obj,
             exe,
             codegen,
         })
@@ -182,14 +180,6 @@ impl Artifact {
         &self.linker
     }
 
-    /// How long Cranelift took to turn the whole program into an object.
-    ///
-    /// Exported because §7.3's reason for having two code generators is a *compile time*, and a
-    /// claim about one that the compiler cannot report is a claim nobody can check.
-    pub fn codegen_time(&self) -> std::time::Duration {
-        self.codegen
-    }
-
     pub fn directory(&self) -> &Path {
         &self.dir.path
     }
@@ -197,11 +187,6 @@ impl Artifact {
     /// Where the textual IR was written.
     pub fn ir_path(&self) -> &Path {
         &self.clif
-    }
-
-    /// Where the object was written.
-    pub fn object_path(&self) -> &Path {
-        &self.obj
     }
 
     pub fn executable(&self) -> &Path {
@@ -246,64 +231,18 @@ impl Artifact {
     }
 
     fn exchange(&self, sig: &Signature, args: &[Value]) -> Result<(Value, usize), ExecError> {
-        if args.len() != sig.params.len() {
-            return Err(ExecError::new(
-                format!(
-                    "`{}` takes {} arguments, got {}",
-                    sig.name,
-                    sig.params.len(),
-                    args.len()
-                ),
-                Span::NONE,
-            ));
-        }
-        // The arguments become eight bytes each, plus — when any of them is an object — the flat
-        // byte string of the graph they point into. `beck_llvm::heap` is the one description of
-        // that shape, shared with the other backend and with the host.
-        let (cells, blob) = self
-            .module
-            .heap
-            .encode_args(args, &sig.params)
-            .map_err(|why| ExecError::new(format!("`{}` was given {why}", sig.name), Span::NONE))?;
-
-        self.asking.clear();
-        let reply = self
-            .worker
-            .call(sig.index, &cells, &blob, &|q| {
-                service::answer(&self.module.heap, &*self.atoms, &self.asking, q)
-            })
-            .map_err(|e| ExecError::new(e, Span::NONE))?;
-        if reply.code != 0 {
-            let span = self
-                .module
-                .spans
-                .get(reply.span as usize)
-                .copied()
-                .unwrap_or(Span::NONE);
-            // The one failure that carries a value; see `beck_llvm::Artifact`'s own arm, which this
-            // is the second half of one protocol rather than a second opinion about it.
-            if Trap::from_code(reply.code) == Some(Trap::Raised) {
-                let message = self
-                    .module
-                    .heap
-                    .raised(reply.payload as u64, &reply.heap)
-                    .map_or_else(|why| why, |v| format!("raised `{}`", v.display()));
-                return Err(ExecError::new(message, span));
-            }
-            // The sentence a `HostFailed` could not carry, if there is one.
-            let message = match (Trap::from_code(reply.code), self.asking.take()) {
-                (Some(Trap::HostFailed), Some(why)) => why,
-                (Some(trap), _) => trap.message(reply.payload),
-                (None, _) => format!("the compiled program reported trap {}", reply.code),
-            };
-            return Err(ExecError::new(message, span));
-        }
-        let value = self
-            .module
-            .heap
-            .decode(reply.value, sig.ret, &reply.heap)
-            .map_err(|why| ExecError::new(why, Span::NONE))?;
-        Ok((value, reply.heap.len()))
+        // The host's half of the protocol, and the one part of running a compiled program this
+        // crate does not write for itself: `beck_llvm::service` is the host, as `heap` is the
+        // layout and `worker` the wire. See this crate's docs for where the line is drawn.
+        service::exchange(
+            &self.module.heap,
+            &self.module.spans,
+            &self.worker,
+            &*self.atoms,
+            &self.asking,
+            sig,
+            args,
+        )
     }
 }
 

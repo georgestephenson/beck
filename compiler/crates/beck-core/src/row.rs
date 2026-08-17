@@ -217,10 +217,6 @@ impl Row {
         self.tails.is_empty()
     }
 
-    pub fn is_pure(&self) -> bool {
-        self.atoms.is_empty() && self.tails.is_empty()
-    }
-
     /// The union — the operation inference performs once per call.
     pub fn union(mut self, other: &Row) -> Row {
         self.atoms.extend(other.atoms.iter().cloned());

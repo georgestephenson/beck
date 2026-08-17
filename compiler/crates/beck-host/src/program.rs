@@ -293,11 +293,6 @@ impl Runtime {
     pub fn decode_command(&self, json: &serde_json::Value) -> Result<Value> {
         self.command.decode(json).map_err(|e| anyhow!(e))
     }
-
-    /// What this program's clients may send.
-    pub fn command_schema(&self) -> &beck_core::command::Schema {
-        &self.command
-    }
 }
 
 use beck_core::edge::session;
