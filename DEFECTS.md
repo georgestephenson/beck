@@ -77,3 +77,42 @@ The *language* question of where interface state should live is a decision rathe
 is scheduled separately in [`docs/08`](docs/08-roadmap.md) §8.5.4 — and this entry now knows it is
 the same decision rather than a separable one, because the client-local stream Wall 1 says does not
 exist is the same missing thing.
+
+---
+
+## `union-merge-is-local-only` — every pull request that touches `CHANGELOG.md` reads as conflicting
+
+**What is wrong.** [`.gitattributes`](.gitattributes) sets `merge=union` on
+[`CHANGELOG.md`](CHANGELOG.md) so that two branches each prepending a bullet under `## Unreleased`
+do not conflict. Git honours it. **GitHub does not read the file at all** — neither the
+`mergeable_state` it reports on a pull request nor the merge its button performs consults a merge
+driver — so the driver is in force exactly where nobody is looking and absent where everybody is.
+Since every change is required to add a bullet at the top of that list, and the list has no topic
+headings on purpose, *every* pull request open across another one's merge is reported as conflicting.
+
+**Why it is a defect rather than an inconvenience.** The report is not merely noisy, it is
+**misleading in the direction that costs the most**: a reviewer reading "this branch has conflicts
+that must be resolved" has no way to tell the one file the driver would have settled from a real
+disagreement in the compiler, and the honest response to the message — resolve the conflict by hand
+— is the one thing the flat-list design was built to make unnecessary. The comment in
+`.gitattributes` asserted the conflict was solved; it is solved on a clone and not on the forge, and
+that comment has been corrected in place.
+
+**The workaround, which is not the fix.** Merge the base branch down into the branch locally, where
+the driver applies, and push the merge. The pull request then has nothing left to merge and reports
+clean. This works and is what has been done, but it puts a merge commit on every branch that
+outlives one other merge, and it requires somebody to know why.
+
+**The gate a fix owes**, and it is the half that will be forgotten: a real fix removes the *reliance*
+on the driver rather than teaching the forge about it, most likely by giving each change its own
+file so two branches never write the same line. So the gate is **not** "the union driver keeps both
+bullets" — that passes today and pins the defect in place. It is that two branches each recording a
+change merge cleanly **in a tree with no `.gitattributes` at all**, which is the configuration
+GitHub runs: build the two branches, drop the file, merge, and assert no conflict.
+
+**Model the absent driver by removing the file, not by configuration.** `core.attributesFile` names
+the *global* attributes file and does not suppress the one in the tree, so a gate written that way
+runs with the driver still in force and passes for the wrong reason — [`docs/82`](docs/82-the-edge-report.md)
+§82.10's pattern, arrived at from the other direction. Checked both ways while this entry was
+written: two branches each prepending a bullet conflict with the file absent and merge clean with it
+present, so the gate goes red today and green on a fix.
