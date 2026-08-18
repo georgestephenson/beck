@@ -17,6 +17,22 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-17 — The vulnerability matrix, CWE half, with the gate that makes it evidence.**
+  [`docs/12`](docs/12-standards-and-conformance.md) §12.7 chartered one artefact restating §3.5's
+  guarantees in the auditor's vocabulary; it lives in [`docs/43`](docs/43-threat-model.md) §43.8
+  because that is where the threat model already is. All seven CWEs §12.7 names have a row —
+  **CWE-639 is the one an auditor should read first**, since ownership rests on an actor the default
+  provider does not verify, and `pending_security.rs` asserts that absence. `CWE-89`'s row states
+  the reason precisely rather than claiming parameter binding: a Beck program does not *write* SQL,
+  and the client protocol has no message that carries a query. The gate is
+  `docs.rs::every_test_the_vulnerability_matrix_names_exists`, which checks both halves of each
+  `suite.rs::name` citation — and it **earned itself before it was written**: the first draft cited
+  `macro_bomb.rs::a_macro_that_expands_forever_is_refused_rather_than_hanging`, a plausible name for
+  a test that does not exist. **The ISO/IEC 24772-1 half is not written, and that is a blocker
+  rather than a schedule**: the catalogue is a paywalled standard that is not in this tree, and
+  clause numbers from memory would be the failure §12.1 exists to prevent. Recorded in the matrix,
+  in §12.7, in [`docs/35`](docs/35-standards-landscape.md) §35.2 and in the ledger.
+
 - **2026-08-17 — Asked what the last three changes mean for Beck code that already exists, and
   found four false documents and one missing gate.** All 81 `.beck` files in the tree compile; the
   five that the accessibility checks refused were fixed with them. The exposure is Beck code *in

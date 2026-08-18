@@ -1075,3 +1075,73 @@ fn a_document_showing_a_refused_spelling_names_the_diagnostic_that_refuses_it() 
         bad.join("\n  ")
     );
 }
+
+/// **Every test the vulnerability matrix names exists.**
+///
+/// [`docs/43`](../../../../docs/43-threat-model.md) §43.8 restates §43.2's guarantees in CWE's
+/// vocabulary, and every row that claims something is *unrepresentable by construction* names the
+/// negative test that proves it. That naming is the artefact: a matrix whose citations have rotted
+/// is worse than no matrix, because it reads as evidence and is not — and rotting is the normal
+/// case, since a test may be renamed by somebody who has never read this document.
+///
+/// So the citations are checked mechanically. The form is `suite.rs::test_name`, and both halves
+/// have to be right: the file has to exist under `beck-cli/tests/`, and it has to define a function
+/// with that name.
+///
+/// It earned itself before it was written. The first draft of §43.8 cited
+/// `macro_bomb.rs::a_macro_that_expands_forever_is_refused_rather_than_hanging`, which is a
+/// plausible name for a test that does not exist; the real one is `a_doubling_macro_is_refused`.
+#[test]
+fn every_test_the_vulnerability_matrix_names_exists() {
+    let doc = repo_root().join("docs/43-threat-model.md");
+    let text = std::fs::read_to_string(&doc).expect("the threat model is checked in");
+    let tests = compiler_root().join("crates/beck-cli/tests");
+
+    // `suite.rs::name`, as the document writes it inside backticks.
+    let mut cited: Vec<(String, String)> = Vec::new();
+    for piece in text.split('`') {
+        let Some((file, name)) = piece.split_once(".rs::") else {
+            continue;
+        };
+        if file.is_empty()
+            || !file
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            || name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            continue;
+        }
+        cited.push((format!("{file}.rs"), name.to_string()));
+    }
+
+    assert!(
+        cited.len() >= 12,
+        "only {} citations were read out of §43.8 — the parser is wrong, not the document",
+        cited.len()
+    );
+
+    let mut bad = Vec::new();
+    for (file, name) in &cited {
+        let path = tests.join(file);
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            bad.push(format!(
+                "{file} does not exist, and §43.8 cites {name} in it"
+            ));
+            continue;
+        };
+        if !src.contains(&format!("fn {name}(")) {
+            bad.push(format!("{file} exists and defines no `{name}`"));
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "{} citation(s) in the vulnerability matrix name a test that is not there, so the matrix \
+         claims evidence it does not have:\n  {}",
+        bad.len(),
+        bad.join("\n  ")
+    );
+}

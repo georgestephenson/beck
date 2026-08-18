@@ -162,13 +162,18 @@ our terms; conformance means restating them in the auditor's terms and testing t
   `pending_security.rs` is the instrument this document previously failed to cite: **the absences
   of [`43`](43-threat-model.md) §43.4 asserted as absences**, six tests that go red when an unbuilt
   control is built, so closing a gap forces correcting the claim in the same change.
-- **The mapping is the missing half — Chartered, as one artefact.** No CWE number appears anywhere
-  in the tree, and no ASVS matrix exists. Rather than two documents, the charter adopts
-  [`35`](35-standards-landscape.md) §35.2's shape once: **a single vulnerability matrix** over
-  ISO/IEC 24772-1's catalogue and the CWE claims (CWE-79, -89, -915, -639, -200, -352, -674), each
-  entry marked *unrepresentable by construction* — naming the negative test that proves it —
-  *possible* (with the guidance 24772 asks a language to give), or *not applicable* (with the
-  reason), and a gate asserting every named test exists. OWASP Top 10:2025's A03 (supply chain —
+- **The mapping — Partial: the CWE half is built, the ISO half is not.** The charter adopts
+  [`35`](35-standards-landscape.md) §35.2's shape once, as **a single vulnerability matrix**, and it
+  lives in [`43`](43-threat-model.md) §43.8 because that is where the threat model is and a second
+  home for security claims is a second thing to keep true. All seven CWE claims (CWE-79, -89, -915,
+  -639, -200, -352, -674) have a row, each marked *unrepresentable by construction* — naming the
+  negative test that proves it — or *possible*, with the guidance; **CWE-639 is the row an auditor
+  should read first**, because ownership rests on an actor the default provider does not verify.
+  The gate the charter asked for is `docs.rs::every_test_the_vulnerability_matrix_names_exists`,
+  and it earned itself before it was written: the first draft cited a plausible test name that did
+  not exist. **The ISO/IEC 24772-1 half is not written and §43.8 says why** — the catalogue is a
+  paywalled standard that is not in this tree, and clause numbers from memory would be the failure
+  §12.1 exists to prevent. OWASP Top 10:2025's A03 (supply chain —
   §12.6) and A10 (exceptional conditions — CWE-674's home) fold into the same matrix. Position:
   the standards ledger, feeding Phase 4's external security review. The full **ASVS 5.0** matrix
   (~350 requirements) is Phase 4's, written with that review, never against 4.x
