@@ -1819,6 +1819,32 @@ impl Reader {
             Out::Val(v) => vec![v.clone()],
         })
     }
+
+    /// **How many rows one shared operator stands for, without building any of them.**
+    ///
+    /// [`Reader::read`] clones every entry, which is the honest cost of *answering* with rows. A
+    /// `select count(*)` does not want rows: it wants the number, and an arrangement is a
+    /// `BTreeMap` that already knows it. This is §3.8's "never a recount" reaching the SQL surface —
+    /// the same fact [`Op::Count`] reads for `list_len`, offered to a reader that is not the plan.
+    ///
+    /// `None` when the operator holds a *value* rather than an arrangement: a pointwise operator's
+    /// collection is a `Value::List` it recomputed, and how many rows that stands for is a question
+    /// about the value rather than about the dataflow. The caller falls back to a scan and is no
+    /// worse off than before.
+    pub fn len(&self, state: &Value, version: u64, id: OpId) -> Result<Option<u64>, ExecError> {
+        self.shared.advance(state, version)?;
+        let inner = self.shared.read();
+        if !inner.engine.owns.get(id).copied().unwrap_or(false) {
+            return Err(ExecError::new(
+                format!("operator {id} is not part of the shared dataflow"),
+                Span::NONE,
+            ));
+        }
+        Ok(match &inner.engine.cells[id].out {
+            Out::Arr(a) => Some(a.entries.len() as u64),
+            Out::Val(_) => None,
+        })
+    }
 }
 
 impl Engine {

@@ -339,7 +339,7 @@ One build item discharges five things already written down:
 | [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, aggregates — **nothing**" | the operators — the join is built, grouping and the aggregates are not |
 | [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, `group by`, aggregates other than `count(*)`" | the read-model SQL compiling **to the plan** rather than growing a second interpreter |
 | [`12`](12-standards-and-conformance.md) §12.5 `psql`'s `\d` unsupported because `pg_catalog` needs joins | the same |
-| [`23`](23-incremental-views-report.md) §23.19 "`count(*)` without scanning" | grouping, which is where a maintained count per group lives |
+| [`23`](23-incremental-views-report.md) §23.19 "`count(*)` without scanning" | grouping, which is where a maintained count *per group* lives — **the ungrouped one needed none of it** and is built: `select count(*) from t` reads the arrangement's size, which `Op::Count` has read since the engine existed. This row over-attributed: not every aggregate question is a grouping question |
 | [`08`](08-roadmap.md) §8.4's Phase 5 **TPC-H/ClickBench** row, "once §5.3's engine exists" | the engine that row is conditioned on and no phase builds |
 
 That last one is the reason this is a roadmap defect and not only a design gap: a Phase 5
