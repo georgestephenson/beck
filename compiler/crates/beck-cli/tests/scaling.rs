@@ -738,3 +738,178 @@ page: Signal[Html] = per_session(ranking, render)
          recount rather than a delta"
     );
 }
+
+/// **A loop that filters another collection by an equality pays for the group, not the collection.**
+///
+/// [`docs/99-the-data-tier-means-of-combination.md`](../../../../docs/99-the-data-tier-means-of-combination.md)
+/// §99.9 item 3, and the program it names: `examples/board.beck` renders three columns out of one
+/// map of cards, and each column is `filter_list(map_values(b.cards), lambda c: c.column == n)`
+/// inside a loop over the columns. That is a many-to-one equi-join over an index nobody built, so
+/// the loop's per-element function captured the accumulator and every event re-scanned every card
+/// once per column. `arrange_by` builds the index and the join probes the range under one key.
+///
+/// # What this gate measures, and why it is `materialised` rather than the other three
+///
+/// A group is entries copied out of an arrangement to hand a consumer a `Value::List`, which is
+/// exactly what [`beck_core::engine::Work::materialised`] counts — so the join's probe is counted
+/// there, and this is the one gate in this file that reads that counter rather than excluding it.
+/// The property is a **shape**: hold the probed group's size fixed and grow the collection around
+/// it, and the number must not move.
+///
+/// The gate carries its own evidence that it can fail, in the same run: put every card in the one
+/// column the last event touches and the same counter grows with the collection, because then the
+/// group *is* the collection. A fix that indexed nothing would report the second number in the
+/// first row.
+///
+/// # Why the switched-off path is asserted structurally here and measured with a clock elsewhere
+///
+/// [`Relate::Refuse`] is the off switch, and running it is what stops the paragraph above being a
+/// claim ([`docs/08`](../../../../docs/08-roadmap.md) §8.3 item 8). But `Work` **cannot see** what
+/// the refused plan costs: the whole page is rebuilt inside one per-element function, and the
+/// engine counts one application for it however much that function does. The refused board reports
+/// three applications at every size — which is not "cheap", it is the instrument looking away
+/// ([`DEFECTS.md`](../../../../DEFECTS.md) `work-cannot-see-inside-an-application`). So the
+/// off switch is held here to what it *changes* — the operators, and the capture the cost report
+/// names — and the rate it costs is measured with a clock in
+/// `measure_incremental::what_a_grouped_join_is_worth`, which is where a rate belongs.
+#[test]
+fn a_group_a_loop_filters_for_costs_the_group_and_not_the_collection() {
+    use beck_core::core::Fields;
+    use beck_core::engine::{Engine, Prepared};
+    use beck_core::plan::{Matching, Op, Plan, Relate};
+    use beck_core::Value;
+    use beck_rt::{Envelope, Instant, Runtime};
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/board.beck");
+    let src = std::fs::read_to_string(&path).expect("the board example is readable");
+    let (placed, diags, map) = beck_core::compile_str("board.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("the board example compiles");
+
+    let ops = |relate: Relate| -> (bool, bool) {
+        let plan = Plan::compile_with(&placed, relate);
+        (
+            plan.nodes
+                .iter()
+                .any(|n| matches!(n.op, Op::ArrangeBy { .. })),
+            plan.nodes.iter().any(|n| {
+                matches!(
+                    n.op,
+                    Op::Join {
+                        matched: Matching::Group,
+                        ..
+                    }
+                )
+            }),
+        )
+    };
+    assert_eq!(
+        ops(Relate::Recognise),
+        (true, true),
+        "examples/board.beck no longer compiles to an `arrange_by` and a join that answers with a \
+         group, so this gate measures something else"
+    );
+    assert_eq!(
+        ops(Relate::Refuse),
+        (false, false),
+        "`Relate::Refuse` left the index in the plan, so the off switch is not one"
+    );
+
+    // The other half of what the switch changes, and the half a reader of `beck explain cost`
+    // actually sees: refused, the loop's function captures the accumulator and the report says so;
+    // recognised, there is nothing left to say. This is the one thing `Work` and the clock agree
+    // about on this program, because it is read off the plan rather than counted.
+    let report =
+        |relate: Relate| beck_core::plan::cost_report(&Plan::compile_with(&placed, relate));
+    assert!(
+        report(Relate::Refuse).contains("downstream of the state"),
+        "with the join refused the loop still captures the accumulator, and the cost report has \
+         stopped saying so:\n{}",
+        report(Relate::Refuse)
+    );
+    assert!(
+        !report(Relate::Recognise).contains("downstream of the state"),
+        "a capture that moves per event survived the rewrite:\n{}",
+        report(Relate::Recognise)
+    );
+
+    let added = |i: usize| {
+        let mut fields = Fields::new();
+        fields.insert(Arc::from("id"), Value::str_(format!("c{i:06}")));
+        fields.insert(Arc::from("text"), Value::str_(format!("card {i}")));
+        Value::data(Arc::from("Event"), Some(Arc::from("Added")), fields)
+    };
+    let moved = |i: usize, column: i64| {
+        let mut fields = Fields::new();
+        fields.insert(Arc::from("id"), Value::str_(format!("c{i:06}")));
+        fields.insert(Arc::from("column"), Value::Int(column));
+        Value::data(Arc::from("Event"), Some(Arc::from("Moved")), fields)
+    };
+
+    // What one more card costs, once `n` are already on the board. `elsewhere` sends every earlier
+    // card to a column the last event does not touch, which is what holds the probed group's size
+    // fixed while the collection grows; without it every card lands in the column the last one does.
+    let cost_at = |n: usize, elsewhere: bool| -> u64 {
+        let backend = beck_eval::backend(&placed);
+        let plan = Arc::new(Plan::compile_with(&placed, Relate::Recognise));
+        let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("the plan prepares"));
+        let runtime = Runtime::new(placed.clone(), backend).expect("the program prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let mut seq = 0u64;
+        let mut state = runtime.initial_state().expect("an initial accumulator");
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: Instant(seq as i64),
+                actor: "ana".to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("folds")
+        };
+        for i in 0..n {
+            seq += 1;
+            state = fold(&state, added(i), seq);
+            if elsewhere {
+                seq += 1;
+                state = fold(&state, moved(i, 1 + (i as i64 % 2)), seq);
+            }
+        }
+        // The cold render builds every arrangement — `O(n)`, once, and not what is measured.
+        engine.render(&state, &session, &here).expect("renders");
+        seq += 1;
+        state = fold(&state, added(n + 1), seq);
+        engine.render(&state, &session, &here).expect("renders");
+
+        let work = engine.work();
+        println!(
+            "{n:>5} cards, group held {}: {:>5} materialised ({} applications, {} touched, {} \
+             recomputed)",
+            if elsewhere { "fixed  " } else { "growing" },
+            work.materialised,
+            work.applications,
+            work.touched,
+            work.recomputed
+        );
+        work.materialised
+    };
+
+    let (fixed_small, fixed_large) = (cost_at(200, true), cost_at(1_600, true));
+    let (growing_small, growing_large) = (cost_at(200, false), cost_at(1_600, false));
+
+    assert!(
+        fixed_large <= fixed_small,
+        "eight times the cards copied {fixed_large} entries against {fixed_small}, with the group \
+         the last event touches the same size in both. A loop that filters another collection by an \
+         equality is a many-to-one equi-join; without the index it re-scans the collection once per \
+         element of the loop — docs/99 §99.9 item 3"
+    );
+    assert!(
+        growing_large > growing_small * 3,
+        "with every card in one column, eight times the cards copied {growing_large} entries \
+         against {growing_small} — so the counter this gate reads did not follow the group, and \
+         the flat row above says nothing"
+    );
+}

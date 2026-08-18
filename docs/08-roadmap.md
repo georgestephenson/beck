@@ -95,7 +95,7 @@ ask in order:
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
-| "Can I relate two collections?" | **Yes for a lookup, and you write it as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index, maintained from both sides, and `beck explain query` shows it. `group by`, the aggregates and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
+| "Can I relate two collections?" | **Yes for a lookup and for a filtered group, and you write both as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index, and one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; both are maintained from both sides and `beck explain query` shows them. `group by`, the aggregates and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
 | "How do I make it look like anything?" | **Badly, and this is the newest row.** The stylesheet a running application serves is eight rules hard-coded in `beck-rt/src/css.rs`; `css:` appears in the tour and has no parser. Tailwind styles a Beck page with no configuration today, and its scanner cannot survive a package manager ([`104`](104-styling-and-the-component-library.md) §104.3), so the answer until §8.5.4's styling cluster lands is "bring npm" — which for a project whose product is one static binary is the wrong answer, not a smaller one |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
@@ -434,21 +434,24 @@ rows.
 
 - **The data tier's means of combination** (F, and still the **largest item left** —
   [`99`](99-the-data-tier-means-of-combination.md) §99.7 lists five already-written-down items it
-  closes). **The join has landed**: §99.9's gate (item 1), the `Join` operator with the bilinear
-  delta rule (item 4) and the recognition that emits it for a loop nobody wrote as a join (item 5).
-  `27-review.beck` gets it with no edit, and the gate reports **19 units of maintenance at 200 rows
-  and at 1,600, against 415 and 3,215 with the operator switched off**. What is left, in §99.9's
-  order: **`arrange_by`** (item 3, which moved *behind* the join rather than in front of it — the
-  join in the tree indexes a `Map` whose `map_values` arrangement is already keyed by the join key,
-  so building `arrange_by` first would have been an operator with no program; its program is
-  `examples/board.beck`), then **`group by` and the aggregates**, then `distinct` and difference,
-  fusion for the new operators, and the read-model SQL compiling into the plan. This was a Phase 4
-  bullet from the day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in
-  *this* list, which is the same defect §8.5 opens by describing one level down — a phase is not a
-  position. It lives in **Lane B** (`engine.rs`, `plan.rs`, `relate.rs`) and contends with nothing
-  in Lane A. §99.8's convergence rungs interleave with it rather than following it, and rungs 0–1
-  did not come due with the join because a join against an index has one plan and therefore no
-  choice to make.
+  closes). **The join has landed, and both of its indexes**: §99.9's gate (item 1), the `Join`
+  operator with the bilinear delta rule (item 4), the recognition that emits it for a loop nobody
+  wrote as a join (item 5), and **`arrange_by`** (item 3), which moved *behind* the join rather than
+  in front of it because the first join's right side is a `Map` whose `map_values` arrangement was
+  already keyed by the join key. `27-review.beck` gets the first with no edit, and its gate reports
+  **19 units of maintenance at 200 rows and at 1,600, against 415 and 3,215 with the operator
+  switched off**; `examples/board.beck` gets the second with no edit, and it is **4.5–4.9× less work
+  per event** with its cards spread over the columns — but **1.1×** with all of them in one, because
+  `arrange_by` removes the scan and leaves the group, which is what `group by` takes. What is left,
+  in §99.9's order: **`group by` and the aggregates**, then `distinct` and difference, fusion for the
+  new operators, and the read-model SQL compiling into the plan. This was a Phase 4 bullet from the
+  day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list,
+  which is the same defect §8.5 opens by describing one level down — a phase is not a position. It
+  lives in **Lane B** (`engine.rs`, `plan.rs`, `relate.rs`) and contends with nothing in Lane A.
+  §99.8's convergence rungs interleave with it rather than following it, and **rungs 0–1 have now
+  failed to come due twice**: a join inferred from a loop has the loop's order to preserve, which
+  fixes which side is the left before any cost is consulted. An inferred surface postpones the
+  solver, and §99.8's ladder says so now rather than predicting otherwise.
 - **A columnar value, and Arrow** (F, after the aggregates): the second representation
   [`105`](105-the-ecosystem-answer.md) §105.10 argues for — `Value::List(Arc<Vec<Value>>)` is 16
   boxed bytes an element, which is right for a keyed arrangement and wrong for a million doubles.

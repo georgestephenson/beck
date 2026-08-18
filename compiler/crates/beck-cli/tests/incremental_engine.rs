@@ -188,6 +188,14 @@ fn subjects() -> Vec<(Subject, Vec<Value>)> {
     let sketch = support::todo_program();
     let log = log_for(&sketch, "examples/todo.beck", 40);
     out.push((Subject::new("examples/todo.beck", sketch), log));
+    // The board is not in the corpus and is the only program that compiles to `arrange_by` and to
+    // a join answering with a group (docs/99 §99.9 item 3), so the maintained-against-recomputed
+    // oracle would not otherwise reach either.
+    let board = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/board.beck");
+    let src = std::fs::read_to_string(&board).expect("the board example is readable");
+    let placed = compile("board.beck", &src);
+    let log = log_for(&placed, "examples/board.beck", 40);
+    out.push((Subject::new("examples/board.beck", placed), log));
     for path in corpus_files() {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let src = std::fs::read_to_string(&path).expect("a readable corpus program");

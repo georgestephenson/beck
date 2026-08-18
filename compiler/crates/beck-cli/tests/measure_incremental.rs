@@ -651,3 +651,128 @@ fn what_the_arrangement_lifecycle_gives_back() {
          a lag of 70 retains 64 and that subscriber rebuilds instead."
     );
 }
+
+/// What the index under a filtered loop is worth, in a clock the counters cannot supply.
+///
+/// `docs/99` §99.9 item 3. `scaling.rs::a_group_a_loop_filters_for_costs_the_group_and_not_the_collection`
+/// holds the *shape* — the group is paid for and the collection is not — and it can say nothing
+/// about the switched-off path, because a refused board rebuilds the whole page inside one
+/// per-element function and [`beck_core::engine::Work`] counts that as one application
+/// (`DEFECTS.md::work-cannot-see-inside-an-application`). This is the table that says what the
+/// difference costs, which is a rate and therefore printed rather than thresholded (§13.7).
+///
+/// Two workloads, because they are the two ends of what the operator can be worth: `spread` puts
+/// the cards across the columns, which is what a board looks like, and `one column` puts every card
+/// in one, where the group *is* the collection and the index has nothing left to exclude.
+#[test]
+fn what_a_grouped_join_is_worth() {
+    use beck_core::plan::Relate;
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/board.beck");
+    let src = std::fs::read_to_string(&path).expect("the board example is readable");
+    let (placed, diags, map) = beck_core::compile_str("board.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("the board example compiles");
+
+    let event = |variant: &str, i: usize, column: i64| {
+        let mut fields = beck_core::core::Fields::new();
+        fields.insert(Arc::from("id"), Value::str_(format!("c{i:06}")));
+        if variant == "Added" {
+            fields.insert(Arc::from("text"), Value::str_(format!("card {i}")));
+        } else {
+            fields.insert(Arc::from("column"), Value::Int(column));
+        }
+        Value::data(Arc::from("Event"), Some(Arc::from(variant)), fields)
+    };
+
+    // The clock, and the counters beside it, because the second half of what this table shows is
+    // that the counters cannot see the difference the clock reports
+    // (`DEFECTS.md::work-cannot-see-inside-an-application`).
+    let once = |relate: Relate, n: usize, spread: bool| -> (u128, beck_core::engine::Work) {
+        let backend = beck_eval::backend(&placed);
+        let plan = Arc::new(Plan::compile_with(&placed, relate));
+        let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("prepares"));
+        let runtime = Runtime::new(placed.clone(), backend).expect("prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let mut seq = 0u64;
+        let mut state = runtime.initial_state().expect("initial");
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: At(seq as i64),
+                actor: "ana".to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("fold")
+        };
+        for i in 0..n {
+            seq += 1;
+            state = fold(&state, event("Added", i, 0), seq);
+            if spread {
+                seq += 1;
+                state = fold(&state, event("Moved", i, 1 + (i as i64 % 2)), seq);
+            }
+        }
+        engine.render(&state, &session, &here).expect("warm");
+        seq += 1;
+        let next = fold(&state, event("Added", n + 1, 0), seq);
+        let t = Instant::now();
+        engine.render(&next, &session, &here).expect("step");
+        (t.elapsed().as_micros(), engine.work())
+    };
+
+    // The first thing measured in a process pays for warm-up, and this suite has been caught by
+    // that before (CHANGELOG 2026-08-17).
+    let _ = once(Relate::Recognise, 200, true);
+
+    println!(
+        "\n{:>8}  {:>7}  {:>13} {:>11} {:>7}  {:>22} {:>22}",
+        "cards",
+        "layout",
+        "arrange_by µs",
+        "refused µs",
+        "ratio",
+        "arrange_by a/t/m/r",
+        "refused a/t/m/r"
+    );
+    let counted = |w: beck_core::engine::Work| {
+        format!(
+            "{}/{}/{}/{}",
+            w.applications, w.touched, w.materialised, w.recomputed
+        )
+    };
+    for spread in [true, false] {
+        for n in [200usize, 1_600] {
+            let runs = |relate: Relate| {
+                let mut out: Vec<(u128, beck_core::engine::Work)> =
+                    (0..3).map(|_| once(relate, n, spread)).collect();
+                out.sort_by_key(|(t, _)| *t);
+                out.remove(0)
+            };
+            let (with, with_work) = runs(Relate::Recognise);
+            let (without, without_work) = runs(Relate::Refuse);
+            println!(
+                "{n:>8}  {:>7}  {with:>13} {without:>11} {:>6.1}×  {:>22} {:>22}",
+                if spread { "spread" } else { "one col" },
+                without as f64 / with.max(1) as f64,
+                counted(with_work),
+                counted(without_work)
+            );
+        }
+    }
+    println!(
+        "\n  spread  — the cards across the three columns, which is what a board looks like.\n\
+         \x20 one col — every card in the column the last event touches, so the group is the\n\
+         \x20           whole collection and the index has nothing left to exclude. That row is\n\
+         \x20           the honest ceiling on this operator: it removes the scan, not the group\n\
+         \x20           (docs/99 §99.9 item 6 is what removes the group).\n\
+         \x20 a/t/m/r — applications, entries touched, entries materialised, operators\n\
+         \x20           recomputed. The refused column is the same four numbers at both sizes\n\
+         \x20           while its clock moves tenfold, because it rebuilds the page inside one\n\
+         \x20           per-element function and `Work` counts that as one application\n\
+         \x20           (DEFECTS.md::work-cannot-see-inside-an-application)."
+    );
+}

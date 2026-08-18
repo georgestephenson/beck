@@ -246,6 +246,71 @@ fn a_loop_that_is_not_read_as_a_join_says_why_after_fusion() {
     );
 }
 
+/// A loop whose body **filters** another collection is a join when the predicate is an equality,
+/// and says which half was missing when it is not.
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.6's second shape.
+/// `filter_list(xs, lambda y: g(y) == k(x))` is a many-to-one equi-join over an `arrange_by`; a
+/// predicate that is not an equality between one function of the row and one of the element is not
+/// an index probe at all, and the honest outcome is the slow compilation with the reason attached.
+/// Both halves are asserted, because a rule that refused *everything* would pass the second on its
+/// own.
+#[test]
+fn a_loop_that_filters_by_an_equality_is_a_join_and_one_that_does_not_says_so() {
+    use beck_core::plan::{Matching, Op, Plan};
+
+    let indexed = ok(
+        "grouped.beck",
+        &capturing(
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return map_list(map_keys(s.items), \
+                                 lambda k: str(list_len(filter_list(map_values(s.items), \
+                                                                    lambda v: str(v) == k))))\n",
+        ),
+    );
+    let plan = Plan::compile(&indexed);
+    assert!(
+        plan.nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::ArrangeBy { .. })),
+        "a loop that filters another collection by an equality is a join over an index it needs \
+         built: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+    assert!(
+        plan.nodes.iter().any(|n| matches!(
+            n.op,
+            Op::Join {
+                matched: Matching::Group,
+                ..
+            }
+        )),
+        "the join answers with the group, because a `filter_list` returned a list: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+
+    // The same loop with `<` where the `==` was. There is no key to arrange by, so there is no
+    // index — and the reason has to name *that* rather than one of the conditions the equality
+    // shape shares with a `map_get`.
+    let text = cost(&ok(
+        "not-an-equality.beck",
+        &capturing(
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return map_list(map_keys(s.items), \
+                                 lambda k: str(list_len(filter_list(map_values(s.items), \
+                                                                    lambda v: str(v) < k))))\n",
+        ),
+    ));
+    let line = text
+        .lines()
+        .find(|l| l.contains("not read as a join"))
+        .unwrap_or_else(|| panic!("the loop pays for a filter and does not say why:\n{text}"));
+    assert!(
+        line.contains("no key to arrange the collection by"),
+        "the reason names the wrong condition: {line:?}"
+    );
+}
+
 /// **Several lookups in one body are several joins**, chained — not a refusal.
 ///
 /// `corpus/33-awareness.beck` renders a person's whereabouts *and* their note, so its loop looks up

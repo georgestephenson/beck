@@ -52,7 +52,7 @@ use beck_diag::Span;
 
 use crate::backend::{Backend, Callable, ExecError};
 use crate::core::Value;
-use crate::plan::{Fun, Op, OpId, Plan};
+use crate::plan::{Fun, Matching, Op, OpId, Plan};
 use crate::pmap::PMap;
 use crate::split::Placed;
 
@@ -515,13 +515,17 @@ impl Engine {
                 Op::MapValues => self.map_values(up, id, cold)?,
                 Op::MapList { f } => self.map_list(up, id, f, cold)?,
                 Op::FilterList { f } => self.filter_list(up, id, f, cold)?,
-                Op::SortBy { f } => self.sort_by(up, id, f, cold)?,
+                // One function for the two, because the arrangement is the same one: `f(x)`
+                // followed by the input's key. What differs is who reads it — `sort_by`'s consumer
+                // iterates it, `arrange_by`'s probes it — and `Op::ArrangeBy`'s own documentation
+                // says why that is still two operators.
+                Op::SortBy { f } | Op::ArrangeBy { key: f } => self.sort_by(up, id, f, cold)?,
                 Op::Concat => self.concat(up, id, cold)?,
                 Op::Flatten => self.flatten(up, id, None, cold)?,
                 Op::FlatMap { f } => self.flatten(up, id, Some(f), cold)?,
                 Op::Count => self.aggregate(up, id, cold, false)?,
                 Op::IsEmpty => self.aggregate(up, id, cold, true)?,
-                Op::Join { key } => self.join(up, id, key, cold)?,
+                Op::Join { key, matched } => self.join(up, id, key, *matched, cold)?,
             }
         }
         Ok(())
@@ -938,13 +942,19 @@ impl Engine {
     /// index has advanced before this operator runs — the plan's nodes are in dependency order — so
     /// a left row re-looked-up in the first pass already has the answer the second would give it.
     ///
-    /// The output holds one row per left row, matched or not, because that is what the `map_get`
-    /// this replaced returned: an `Option`, never an absence.
+    /// The output holds one row per left row, matched or not, because that is what the expression
+    /// this replaced returned: `map_get`'s `Option`, or `filter_list`'s list — never an absence.
+    ///
+    /// [`Matching::Group`] differs in one place and it is the right-hand pass: a group is answered
+    /// by the *range* under its key, so a key that moved rebuilds the whole group rather than
+    /// substituting the row that moved. That is the honest half of §99.9 item 3 — the scan over the
+    /// collection is gone, the group's own size is not, and `group by` is what takes it.
     fn join(
         &mut self,
         up: Option<Upstream<'_>>,
         id: OpId,
         key: &Fun,
+        matching: Matching,
         cold: bool,
     ) -> Result<(), ExecError> {
         let plan = self.prepared.plan.clone();
@@ -1002,8 +1012,8 @@ impl Engine {
             args.push(lv.clone());
             let jk = call(args)?;
             self.work.applications += 1;
-            let matched = self.matched(up, index, &jk)?;
-            let row = joined(lv, matched);
+            let answer = self.answer(up, index, &jk, matching)?;
+            let row = joined(lv, answer);
             arr.entries.insert(c.key.clone(), row.clone());
             positions.insert(c.key.clone(), Arc::from(vec![jk.clone()]));
             back.entry(jk).or_default().insert(c.key.clone());
@@ -1015,13 +1025,20 @@ impl Engine {
             });
         }
 
-        for c in right_changes {
-            // The index's key is the join key: that is what makes it an index rather than an
-            // arrangement that happens to be beside this operator.
-            let Some(jk) = c.key.first() else { continue };
-            let Some(waiting) = back.get(jk) else {
+        // The index's key is the join key: that is what makes it an index rather than an
+        // arrangement that happens to be beside this operator. Several changes may share one — a
+        // group's are all under it — so the keys that moved are collected before anything is
+        // answered, and each is answered once however many of its rows moved.
+        let moved: BTreeSet<Value> = right_changes
+            .iter()
+            .filter_map(|c| c.key.first().cloned())
+            .collect();
+        for jk in moved {
+            if !back.contains_key(&jk) {
                 continue;
-            };
+            }
+            let answer = self.answer(up, index, &jk, matching)?;
+            let waiting = back.get(&jk).expect("checked just above");
             for lk in waiting.iter() {
                 if touched.contains(lk) {
                     continue;
@@ -1032,7 +1049,7 @@ impl Engine {
                 let Some(lv) = old.field(crate::relate::LEFT).cloned() else {
                     continue;
                 };
-                let row = joined(lv, c.new.clone());
+                let row = joined(lv, answer.clone());
                 let old = arr.entries.insert(lk.clone(), row.clone());
                 changes.push(Change {
                     key: lk.clone(),
@@ -1048,18 +1065,46 @@ impl Engine {
         Ok(())
     }
 
-    /// What the index holds under a join key, whichever shape the index arrived in.
-    fn matched(
-        &self,
+    /// What one probe of the index returns, as the value the joined row's right half holds.
+    ///
+    /// The two [`Matching`]s read the same arrangement differently and that is the whole
+    /// difference between them: a unique index is a point lookup and a group index is the range
+    /// under one key. A range works because the `arrange_by` key's first component *is* the join
+    /// key and a `BTreeMap`'s order is `Value`'s — which is also what `==` compares, so the range
+    /// holds exactly the rows the predicate would have kept, in the order the collection held them.
+    fn answer(
+        &mut self,
         up: Option<Upstream<'_>>,
         index: OpId,
         jk: &Value,
-    ) -> Result<Option<Value>, ExecError> {
-        Ok(match self.out_of(up, index)? {
-            Out::Arr(a) => a.entries.get(&key_of(jk)).cloned(),
-            Out::Val(Value::Map(m)) => m.get(jk).cloned(),
-            Out::Val(_) => None,
-        })
+        matching: Matching,
+    ) -> Result<Value, ExecError> {
+        if matching == Matching::Unique {
+            let found = match self.out_of(up, index)? {
+                Out::Arr(a) => a.entries.get(&key_of(jk)).cloned(),
+                Out::Val(Value::Map(m)) => m.get(jk).cloned(),
+                Out::Val(_) => None,
+            };
+            return Ok(found.map(Value::some).unwrap_or_else(Value::none));
+        }
+        let mut rows = Vec::new();
+        // Only an arrangement can be probed by a range. The decomposition builds an `arrange_by`
+        // here and that is one, so this is the correct-for-a-plan-nobody-writes path rather than
+        // one the corpus takes — the same case the `indexed` test above covers.
+        if let Out::Arr(a) = self.out_of(up, index)? {
+            for (k, v) in a.entries.range(key_of(jk)..) {
+                if k.first() != Some(jk) {
+                    break;
+                }
+                rows.push(v.clone());
+            }
+        }
+        // A group is entries copied out of an arrangement to hand a consumer a `Value::List`,
+        // which is what `Work::materialised` counts — so it is counted there, and the scaling
+        // gates that exclude `materialised` keep excluding assembly rather than starting to
+        // include it.
+        self.work.materialised += rows.len() as u64;
+        Ok(Value::List(Arc::new(rows)))
     }
 
     /// `list_len` and `list_is_empty`: read the arrangement's size.
@@ -1941,27 +1986,24 @@ fn inner_key(outer: &Key, i: usize) -> Key {
     Arc::from(k)
 }
 
-/// A join key, as the index's key: one component, because the index is keyed by exactly it.
+/// A join key, as a key of the index.
+///
+/// One component, which is the whole of a unique index's key and the **prefix** of a grouped one's
+/// — so the same value is a point lookup in the first and the start of a range in the second.
 fn key_of(jk: &Value) -> Key {
     Arc::from(vec![jk.clone()])
 }
 
 /// One joined row: the left value, and what it matched.
 ///
-/// The right half is an `Option` rather than the value or nothing, because the expression this
-/// operator replaced was a `map_get` and its callers `match` on one. A join that dropped unmatched
-/// rows would be a different operator and a different page.
-fn joined(left: Value, right: Option<Value>) -> Value {
+/// The right half is whatever the expression this operator replaced evaluated to — an `Option` for
+/// a `map_get`, a `list` for a `filter_list` — which [`Engine::answer`] has already built. A join
+/// that dropped unmatched rows would be a different operator and a different page.
+fn joined(left: Value, right: Value) -> Value {
     Value::record(
         crate::relate::ROW,
         None,
-        [
-            (crate::relate::LEFT, left),
-            (
-                crate::relate::RIGHT,
-                right.map(Value::some).unwrap_or_else(Value::none),
-            ),
-        ],
+        [(crate::relate::LEFT, left), (crate::relate::RIGHT, right)],
     )
 }
 
