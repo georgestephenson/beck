@@ -941,7 +941,9 @@ against, and dropped only when the pair they name actually fuses.
   was kept *for it*; §23.11's frontier-zero case; and both sides of the release policy, so neither is
   folklore.
 - **`fusion.rs`** — the fused plan against the unfused plan over the same generated log, warm, two
-  subscribers, every event: **more than 2,000 pages across 34 programs**, so a failure names the
+  subscribers, every event: **more than 2,000 pages**, over every program in `corpus/` plus the
+  todo sketch, the board and the fixtures written for the rules and operators the corpus does not
+  reach, so a failure names the
   rewrite rather than the engine. Plus set equality on the rule list and the operator list, and both
   refusal conditions asserted on programs built to make each bite — they are *pessimisations* when
   dropped rather than errors, so nothing else would see them. The differential runs **recompute as a

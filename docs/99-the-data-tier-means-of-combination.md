@@ -341,9 +341,12 @@ and that order is the one the arrangement is a `BTreeMap` in. So the range under
 the rows the predicate would have kept, in exactly the order the collection held them — which is what
 `filter_list` returned, values and order both.
 
-**What it does not do is make the loop `O(δ)`, and the honest ceiling is measured rather than
-argued.** The group is a `list`, because the expression replaced was one and its consumer loops over
-it, so a card added to a column rebuilds *that column's* list and no other. Spread across the three
+**What it does not do is make the loop `O(δ)` when the body wants the group's rows, and the honest
+ceiling is measured rather than argued.** The group is a `list`, because the expression replaced was
+one and its consumer loops over it, so a card added to a column rebuilds *that column's* list and no
+other. A body that wants a *question about* the group rather than its rows pays none of that: §99.9
+item 6's `count` is the first, and it is read from the same `filter_list` with a `list_len` around
+it. Spread across the three
 columns that is **4.5–4.9× less work per event at 200 cards and at 1,600**; with every card in the
 one column the event touches it is **1.1×**, because then the group is the collection and there is
 nothing left to exclude. Both rows are printed by
@@ -381,7 +384,7 @@ One build item discharges five things already written down:
 | [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, aggregates — **nothing**" | the operators — the join and both of its indexes are built, grouping and the aggregates are not |
 | [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, `group by`, aggregates other than `count(*)`" | the read-model SQL compiling **to the plan** rather than growing a second interpreter |
 | [`12`](12-standards-and-conformance.md) §12.5 `psql`'s `\d` unsupported because `pg_catalog` needs joins | the same |
-| [`23`](23-incremental-views-report.md) §23.19 "`count(*)` without scanning" | grouping, which is where a maintained count *per group* lives — **the ungrouped one needed none of it** and is built: `select count(*) from t` reads the arrangement's size, which `Op::Count` has read since the engine existed. This row over-attributed: not every aggregate question is a grouping question |
+| [`23`](23-incremental-views-report.md) §23.19 "`count(*)` without scanning" | grouping, which is where a maintained count *per group* lives — **and both halves are now built**: the ungrouped one reads the arrangement's size, which `Op::Count` has read since the engine existed, and the grouped one is a tally the join keeps (§99.9 item 6). This row over-attributed even so: not every aggregate question is a grouping question, and the ungrouped one never needed grouping to answer it |
 | [`08`](08-roadmap.md) §8.4's Phase 5 **TPC-H/ClickBench** row, "once §5.3's engine exists" | the engine that row is conditioned on and no phase builds |
 
 That last one is the reason this is a roadmap defect and not only a design gap: a Phase 5
@@ -582,14 +585,50 @@ than a refusal: the first version refused it, which left `33-awareness` paying t
 refusal that keeps a program at `O(n)` per event is not a conservative choice — it is the defect with
 a sentence attached.
 
-**6. `group by` and aggregates** — `count`, `sum`, `min`, `max` per group. `min`/`max` are the hard
-ones and should be said so in advance: deleting the current minimum of a group needs either a rescan
-of that group or a tree per group, which is a genuine design choice and not an implementation
-detail. **It now has a predecessor's leftovers waiting for it as well as its own subject**: item 3
-builds the index a group is read from and hands the group back as a `list`, so the group's own size
-is paid on every event that touches it. A group that is a maintained collection rather than a rebuilt
-list is what closes that, and it is the same operator either way — which is why item 6 follows item 3
-rather than standing beside it.
+**6. `group by` and aggregates** — `count`, `sum`, `min`, `max` per group. **`count` is done; the
+other three are not**, and what separates them is not effort but whether the language has a spelling
+for the question.
+
+`count` is done because it does: `list_len` over the same `filter_list` item 5 recognises is a
+question about the group that the group does not have to exist to answer. The join keeps a tally per
+key beside its reverse index and moves it by ±1 as the index moves, so the answer is `O(1)` and **no
+group is built** — which is exactly the leftover item 3 handed over. `corpus/35-workload.beck` is the
+program: every person, and how many issues name them, with the set of people coming from the data
+rather than written out. Its page copies **one** entry out of an arrangement at 200 issues and at
+1,600, against 202 and 1,602 for the same page whose count is written so the recogniser reads it as
+a group (§99.9's gate, and the same one is 2.8× then 4.9× on a clock).
+
+**Where the tally lives is the finding, and it is not where it looks like it should go.** The
+obvious home is the index: `arrange_by` knows its own keys. It cannot go there, because an operator
+reads its inputs' *values and changes* and never their private state — an index in the shared
+dataflow is not the reading engine's cell at all. So the count is the **join's**, rebuilt from the
+change stream, where `+1` for an entry that arrived and `-1` for one that left is the same arithmetic
+whatever operator produced the change. That constraint is [`23`](23-incremental-views-report.md)'s
+sharing showing up as a design rule rather than as a cost.
+
+**`min` and `max` were called the hard ones here and are now the cheap ones, for a reason worth
+keeping.** This paragraph used to say that deleting the current minimum needs either a rescan of the
+group or a tree per group. The tree per group is `arrange_by` with the aggregate's key appended —
+index by `(g(y), v(y))` instead of by `g(y)` — and then the minimum of a group is the **first entry
+of its range** and the maximum the last, both `O(log n)`, both maintained by the arrangement itself.
+What stops them being built today is not that design: it is that neither has a spelling the
+recogniser can read. `lib/collections.beck`'s `min_of` is `list_get(sorted(xs), 0)`, and recognising
+*that* is recognising a sort and an index rather than an aggregate.
+
+**`sum` has no spelling at all** — there is no `sum` primitive, and `corpus/28-catalogue.beck` writes
+one as a recursion. Giving it one is a decision rather than an implementation, and the decision has
+two edges, both of which the differential would find rather than tolerate:
+
+- A **float** sum cannot be maintained by adding what arrived and subtracting what left, because
+  floating-point addition is not associative and the maintained answer is held to the recomputed one
+  byte for byte. Over `Float` a `sum` has to be a recompute, and say so.
+- An **integer** sum can be, arithmetically — but Beck's `+` is `checked_add` and *raises* on
+  overflow, so a running total that is maintained passes through different intermediate values from
+  one that is recomputed from zero, and the two can disagree about whether the program failed. Exact
+  is not the same as total.
+
+So the surface owes an answer for each of `Int` and `Float` before an operator is written, which is
+why this is the last of the four rather than the easiest.
 
 **7. `distinct` and difference**, per decision 2 — after the above, and only with the multiplicity
 question answered on its own terms.
@@ -651,7 +690,10 @@ reaches no plan decision.
   assumed and is now tested.
 - **`arrange_by` removes the scan and not the group.** One left row's answer is the whole group as a
   `list`, so an event that touches a group rebuilds it. §99.6 measures both ends of what that is
-  worth and item 6 is what closes the rest.
+  worth, and item 6 closes it only for the questions that have a spelling.
+- **One aggregate is built and it is `count`.** `sum`, `min` and `max` per group are not, and §99.9
+  item 6 says what each is waiting on — a surface, in every case, rather than a delta rule. The
+  design for `min`/`max` is written there and no code implements it.
 - **It does not fix the instrument the refused path is measured with.** `Work` counts one application
   for a per-element function whatever that function does, so the switched-off board reports the same
   four numbers at every size; the clock is what says otherwise, and

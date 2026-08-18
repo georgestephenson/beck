@@ -394,6 +394,99 @@ fn a_count_over_a_maintained_collection_does_not_visit_the_collection() {
     );
 }
 
+/// A group's **count** is maintained, and the events that take one *down* are covered on purpose
+/// rather than by the generator's luck.
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6:
+/// `corpus/35-workload.beck` asks each person how many issues name them, and the join answers from a
+/// count it keeps rather than by building the group. A tally maintained by `+1` on an entry that
+/// arrived and `-1` on one that left is checked by
+/// `the_maintained_view_is_the_recomputed_view_for_every_corpus_program` too — deleting the
+/// decrement turns that harness red as well, which was measured rather than assumed. But it turns
+/// red **by luck**: that harness folds an arbitrary log, and whether a `Closed(id)` names an issue
+/// some earlier `Filed(id)` created is a property of the generator's seed rather than of the test.
+/// A seed that never collided would leave a count that only goes up passing.
+///
+/// So this log is written rather than generated, and every event in it lands: two people, four
+/// issues between them, two closed, one refiled, one reassigned by being filed again under the same
+/// id — which moves a tally down and another up in one event. The oracle is the same one every
+/// other test here uses, the recomputed page byte for byte, and the closing assertion is on the
+/// **end state**: both piles empty, which is what a tally that never decremented cannot produce.
+#[test]
+fn a_maintained_count_per_group_survives_the_events_that_take_it_down() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/35-workload.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let mut subject = Subject::new("corpus/35-workload.beck", compile("35-workload.beck", &src));
+
+    let event = |variant: &str, fields: Vec<(&str, &str)>| {
+        Value::data(
+            Arc::from("Event"),
+            Some(Arc::from(variant)),
+            beck_core::core::Fields::from_iter(
+                fields
+                    .into_iter()
+                    .map(|(k, v)| (Arc::from(k), Value::str_(v))),
+            ),
+        )
+    };
+    let log = vec![
+        event("Hired", vec![("id", "p1"), ("name", "Ada")]),
+        event("Hired", vec![("id", "p2"), ("name", "Bo")]),
+        event(
+            "Filed",
+            vec![("id", "i1"), ("title", "one"), ("assignee", "p1")],
+        ),
+        event(
+            "Filed",
+            vec![("id", "i2"), ("title", "two"), ("assignee", "p1")],
+        ),
+        event(
+            "Filed",
+            vec![("id", "i3"), ("title", "three"), ("assignee", "p2")],
+        ),
+        event(
+            "Filed",
+            vec![("id", "i4"), ("title", "four"), ("assignee", "p1")],
+        ),
+        // Down: two of Ada's three go, which is the half a generated log never reaches.
+        event("Closed", vec![("id", "i1")]),
+        event("Closed", vec![("id", "i2")]),
+        // Back up, and then across: filing `i4` again under `p2` moves one entry from one group to
+        // the other, so one tally goes down and another up in the same event.
+        event(
+            "Filed",
+            vec![("id", "i5"), ("title", "five"), ("assignee", "p1")],
+        ),
+        event(
+            "Filed",
+            vec![("id", "i4"), ("title", "four"), ("assignee", "p2")],
+        ),
+        // And empty: everything Bo has, then everything Ada has.
+        event("Closed", vec![("id", "i3")]),
+        event("Closed", vec![("id", "i4")]),
+        event("Closed", vec![("id", "i5")]),
+    ];
+
+    let mut compared = subject.agrees("the empty log");
+    for (i, e) in log.into_iter().enumerate() {
+        subject.fold(e);
+        compared += subject.agrees(&format!("event {}", i + 1));
+    }
+    assert!(compared >= 28, "only {compared} pages were compared");
+
+    // Both piles empty, so a green run above is not a run over a log that never went down.
+    let page = subject
+        .runtime
+        .view(&subject.state, ACTORS[0])
+        .expect("recompute")
+        .render();
+    assert!(
+        page.contains("Ada — 0 open") && page.contains("Bo — 0 open"),
+        "the log this test is written around no longer empties both piles:\n{page}"
+    );
+}
+
 /// Fold one `Added` event into the sketch's accumulator.
 fn fold_added(runtime: &Runtime, state: &Value, n: u64, actor: &str) -> Value {
     let id = Value::data(

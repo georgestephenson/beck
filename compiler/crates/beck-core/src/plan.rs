@@ -226,6 +226,15 @@ pub enum Matching {
     /// An [`Op::ArrangeBy`] index, whose keys are not. The whole group, in the indexed
     /// collection's own order, as a `list` — which is what the `filter_list` returned.
     Group,
+    /// The same index, asked **how many** rather than which — `list_len` over the same
+    /// `filter_list`, whose answer is an `Int`.
+    ///
+    /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's
+    /// first aggregate, and the one the language already had a spelling for. The join keeps a count
+    /// per key beside its reverse index and moves it by ±1 as the index moves, so the answer costs
+    /// nothing and **no group is built**. That is the whole difference from [`Matching::Group`],
+    /// which pays the group's size on every event that touches it.
+    Count,
 }
 
 /// Every operator the engine implements, by name.
@@ -768,6 +777,12 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
             ..
         } => "δ keys applied on the left, and on the right one group rebuilt per key that \
               moved  —  the group, never the collection"
+            .to_string(),
+        Op::Join {
+            matched: Matching::Count,
+            ..
+        } => "δ keys applied on the left, and on the right ±1 per moved index entry  —  the \
+              group is counted, never built"
             .to_string(),
         Op::ArrangeBy { .. } => "δ applications, at most 2δ touched — a move is a remove and an \
                                  insert. The probe is the join's cost, not this one's"
@@ -1632,7 +1647,7 @@ impl Builder<'_> {
                     ),
                     Matching::Unique,
                 ),
-                crate::relate::Index::Grouped { by, param } => {
+                crate::relate::Index::Grouped { by, param, answers } => {
                     let name = format!("arrange_by/{over}/{}", crate::relate::fingerprint(&by));
                     let key = Fun {
                         code: lam(vec![param], by),
@@ -1640,7 +1655,10 @@ impl Builder<'_> {
                     };
                     (
                         self.shared(name, Op::ArrangeBy { key }, vec![over], None),
-                        Matching::Group,
+                        match answers {
+                            crate::relate::Answers::Rows => Matching::Group,
+                            crate::relate::Answers::Count => Matching::Count,
+                        },
                     )
                 }
             };

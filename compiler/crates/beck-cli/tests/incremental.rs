@@ -246,47 +246,62 @@ fn a_loop_that_is_not_read_as_a_join_says_why_after_fusion() {
     );
 }
 
-/// A loop whose body **filters** another collection is a join when the predicate is an equality,
-/// and says which half was missing when it is not.
+/// A loop whose body **filters** another collection is a join when the predicate is an equality, it
+/// answers with whatever the body asked the group for, and it says which half was missing when the
+/// predicate is not one.
 ///
-/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.6's second shape.
-/// `filter_list(xs, lambda y: g(y) == k(x))` is a many-to-one equi-join over an `arrange_by`; a
-/// predicate that is not an equality between one function of the row and one of the element is not
-/// an index probe at all, and the honest outcome is the slow compilation with the reason attached.
-/// Both halves are asserted, because a rule that refused *everything* would pass the second on its
-/// own.
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.6's second shape and
+/// §99.9 item 6's first aggregate, which are the same recognition reading two questions.
+/// `filter_list(xs, lambda y: g(y) == k(x))` is a many-to-one equi-join over an `arrange_by`; the
+/// same expression under a `list_len` is that join asked **how many**, and the difference is whether
+/// a group is built at all. A predicate that is not an equality between one function of the row and
+/// one of the element is not an index probe either way, and the honest outcome is the slow
+/// compilation with the reason attached. All three are asserted, because a rule that refused
+/// *everything* would pass the last on its own, and one that counted everything would pass the
+/// first.
 #[test]
-fn a_loop_that_filters_by_an_equality_is_a_join_and_one_that_does_not_says_so() {
+fn a_loop_that_filters_by_an_equality_is_a_join_answering_what_its_body_asked() {
     use beck_core::plan::{Matching, Op, Plan};
 
-    let indexed = ok(
-        "grouped.beck",
-        &capturing(
+    let answers = |name: &str, body: &str| -> (bool, Option<Matching>) {
+        let plan = Plan::compile(&ok(name, &capturing(body)));
+        (
+            plan.nodes
+                .iter()
+                .any(|n| matches!(n.op, Op::ArrangeBy { .. })),
+            plan.nodes.iter().find_map(|n| match n.op {
+                Op::Join { matched, .. } => Some(matched),
+                _ => None,
+            }),
+        )
+    };
+
+    // The rows: what the filter evaluated to, so the group is built.
+    assert_eq!(
+        answers(
+            "grouped.beck",
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return map_list(map_keys(s.items), \
+                                 lambda k: str(unwrap_or(list_get(filter_list(map_values(s.items), \
+                                                                              lambda v: str(v) == \
+                                                                              k), 0), 0)))\n",
+        ),
+        (true, Some(Matching::Group)),
+        "a loop that filters another collection by an equality is a join over an index it needs \
+         built, answering with the group its body reads"
+    );
+
+    // The count: the same filter, measured rather than read, so no group is built (§99.9 item 6).
+    assert_eq!(
+        answers(
+            "counted.beck",
             "def rows(s: State, session: Session) -> list[Str]:\n    \
                  return map_list(map_keys(s.items), \
                                  lambda k: str(list_len(filter_list(map_values(s.items), \
                                                                     lambda v: str(v) == k))))\n",
         ),
-    );
-    let plan = Plan::compile(&indexed);
-    assert!(
-        plan.nodes
-            .iter()
-            .any(|n| matches!(n.op, Op::ArrangeBy { .. })),
-        "a loop that filters another collection by an equality is a join over an index it needs \
-         built: {:?}",
-        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
-    );
-    assert!(
-        plan.nodes.iter().any(|n| matches!(
-            n.op,
-            Op::Join {
-                matched: Matching::Group,
-                ..
-            }
-        )),
-        "the join answers with the group, because a `filter_list` returned a list: {:?}",
-        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+        (true, Some(Matching::Count)),
+        "the same shape under a `list_len` is the group's size, which the join answers from a tally"
     );
 
     // The same loop with `<` where the `==` was. There is no key to arrange by, so there is no

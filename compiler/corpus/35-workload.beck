@@ -1,0 +1,117 @@
+# The program that asks a question *about* a group rather than for its members (docs/99 §99.9
+# item 6).
+#
+# `34-assignments.beck` relates two collections and shows the relation: every issue, with the name
+# of whoever it is assigned to. This one reads the same domain the other way round — every person,
+# with how much they are carrying — and the difference is the whole point. The page never lists an
+# issue. It asks each person's pile *how big it is*, which is an aggregate, and an aggregate that
+# builds the pile in order to measure it has done the work the question was avoiding.
+#
+# The groups come from the data. `board.beck` has three columns and writes them out, so a compiler
+# could in principle unroll it; here the set of people is whatever has been hired, so what the page
+# loops over is a collection and what it groups by is a field. That is the shape a `group by` is,
+# and nothing in this file says the word.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model State:
+    issues: Map[Str, Issue]
+    people: Map[Str, Person]
+
+model Issue:
+    id: Str
+    title: Str
+    assignee: Str
+
+model Person:
+    id: Str
+    name: Str
+
+union Command:
+    Hire(id: Str, name: Str)
+    File(id: Str, title: Str, assignee: Str)
+    Close(id: Str)
+
+union Event:
+    Hired(id: Str, name: Str)
+    Filed(id: Str, title: Str, assignee: Str)
+    Closed(id: Str)
+
+union Rejection:
+    Blank
+    NoSuchPerson
+    NoSuchIssue
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Hired(id, name):
+            return s.with(people=map_insert(s.people, id, Person(id=id, name=name)))
+        case Filed(id, title, assignee):
+            return s.with(issues=map_insert(s.issues, id,
+                                            Issue(id=id, title=title, assignee=assignee)))
+        case Closed(id):
+            return s.with(issues=map_remove(s.issues, id))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Hire(id, name):
+            if str_is_empty(str_trim(name)):
+                return Err(error=Blank)
+            return Ok(value=[Hired(id=id, name=name)])
+        case File(id, title, assignee):
+            if str_is_empty(str_trim(title)):
+                return Err(error=Blank)
+            if not map_contains(s.people, assignee):
+                return Err(error=NoSuchPerson)
+            return Ok(value=[Filed(id=id, title=title, assignee=assignee)])
+        case Close(id):
+            if not map_contains(s.issues, id):
+                return Err(error=NoSuchIssue)
+            return Ok(value=[Closed(id=id)])
+
+# The question. Written the way anybody would write it — the issues that name this person, counted —
+# which is what makes recognising it worth doing rather than asking for a `group by` keyword.
+def carrying(s: State, who: Str) -> Int:
+    return list_len(filter_list(map_values(s.issues), lambda i: i.assignee == who))
+
+def roster(s: State) -> list[Person]:
+    return sort_by(map_values(s.people), lambda p: p.name)
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "workload"
+            ul:
+                for p in roster(s):
+                    li(key=p.id): (p.name + " — " + str(carrying(s, p.id)) + " open")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, board, validate)
+board: Signal[State] = durable(fold(apply_event, State(issues={}, people={}), events))
+page: Signal[Html] = per_session(board, view)
+
+test "somebody with nothing filed against them is carrying none":
+    given [Hired(id="p1", name="Ada")]
+    expect page contains "Ada — 0 open"
+
+test "an issue counts against the person it names and nobody else":
+    given [Hired(id="p1", name="Ada"), Hired(id="p2", name="Bo"),
+           Filed(id="i1", title="the bug", assignee="p1")]
+    expect page contains "Ada — 1 open"
+    expect page contains "Bo — 0 open"
+
+test "closing an issue takes it off the pile":
+    given [Hired(id="p1", name="Ada"),
+           Filed(id="i1", title="the bug", assignee="p1"),
+           Filed(id="i2", title="the other bug", assignee="p1")]
+    when Close(id="i1")
+    expect page contains "Ada — 1 open"
+
+test "an issue naming nobody who was hired never reaches the log":
+    given []
+    when File(id="i1", title="the bug", assignee="ghost")
+    expect Err(error=NoSuchPerson)
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "workload"

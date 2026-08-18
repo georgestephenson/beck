@@ -151,6 +151,14 @@ struct Cell {
     /// it a right row that moved would have to ask every left row whether it cared, which is the
     /// nested loop this operator exists to remove — arrived at from the other side.
     back: BTreeMap<Value, BTreeSet<Key>>,
+    /// `join`, for [`Matching::Count`]: how many index entries each join key currently holds.
+    ///
+    /// Kept by the join rather than by the index because an operator reads its inputs' *values* and
+    /// their changes, never their private state — an index in the shared dataflow is not this
+    /// engine's cell at all ([`SharedDataflow`]). The change stream carries everything a count
+    /// needs: an entry that arrived is `+1` and one that left is `-1`, and the two are the same
+    /// arithmetic whatever operator produced them.
+    tally: BTreeMap<Value, u64>,
 }
 
 /// What one [`Engine::render`] cost, in units that do not depend on the machine.
@@ -989,6 +997,40 @@ impl Engine {
             self.cells[id].positions.clear();
             self.cells[id].back.clear();
         }
+        // The count per key, brought up to date **before** either pass, because the index has
+        // already advanced and both passes are about to ask it questions. A rebuild counts the
+        // index once, which is what a rebuild is; otherwise it is ±1 per entry that moved.
+        let mut tally = std::mem::take(&mut self.cells[id].tally);
+        if matching == Matching::Count {
+            if rebuild {
+                tally.clear();
+                if let Out::Arr(a) = self.out_of(up, index)? {
+                    for k in a.entries.keys() {
+                        if let Some(jk) = k.first() {
+                            *tally.entry(jk.clone()).or_default() += 1;
+                        }
+                    }
+                }
+            } else {
+                for c in &right_changes {
+                    let Some(jk) = c.key.first() else { continue };
+                    match (c.old.is_some(), c.new.is_some()) {
+                        (false, true) => *tally.entry(jk.clone()).or_default() += 1,
+                        // Saturating, and the saturation is unreachable rather than defensive: an
+                        // entry cannot leave an index it never entered. It is written this way
+                        // because the alternative is a panic in a render.
+                        (true, false) => {
+                            let left = tally.entry(jk.clone()).or_default();
+                            *left = left.saturating_sub(1);
+                            if *left == 0 {
+                                tally.remove(jk);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
         // `positions` holds the join key each left row currently waits on — the same role it plays
         // for `sort_by`, which is where a row currently sits.
         let mut positions = std::mem::take(&mut self.cells[id].positions);
@@ -1012,7 +1054,7 @@ impl Engine {
             args.push(lv.clone());
             let jk = call(args)?;
             self.work.applications += 1;
-            let answer = self.answer(up, index, &jk, matching)?;
+            let answer = self.answer(up, index, &jk, matching, &tally)?;
             let row = joined(lv, answer);
             arr.entries.insert(c.key.clone(), row.clone());
             positions.insert(c.key.clone(), Arc::from(vec![jk.clone()]));
@@ -1037,7 +1079,7 @@ impl Engine {
             if !back.contains_key(&jk) {
                 continue;
             }
-            let answer = self.answer(up, index, &jk, matching)?;
+            let answer = self.answer(up, index, &jk, matching, &tally)?;
             let waiting = back.get(&jk).expect("checked just above");
             for lk in waiting.iter() {
                 if touched.contains(lk) {
@@ -1061,6 +1103,7 @@ impl Engine {
 
         self.cells[id].positions = positions;
         self.cells[id].back = back;
+        self.cells[id].tally = tally;
         self.publish(id, arr, changes, rebuild);
         Ok(())
     }
@@ -1078,7 +1121,13 @@ impl Engine {
         index: OpId,
         jk: &Value,
         matching: Matching,
+        tally: &BTreeMap<Value, u64>,
     ) -> Result<Value, ExecError> {
+        // The whole of §99.9 item 6's first aggregate: a question about a group that the group does
+        // not have to exist to answer.
+        if matching == Matching::Count {
+            return Ok(Value::Int(tally.get(jk).copied().unwrap_or(0) as i64));
+        }
         if matching == Matching::Unique {
             let found = match self.out_of(up, index)? {
                 Out::Arr(a) => a.entries.get(&key_of(jk)).cloned(),

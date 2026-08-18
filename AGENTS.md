@@ -23,7 +23,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`DEFECTS.md`](DEFECTS.md) | **What is wrong right now.** Something that behaves wrongly — silent, misleading, or contrary to what a document says. An entry is deleted by the change that fixes it, so the file is always the current list; something merely *absent* is a line in [`docs/08`](docs/08-roadmap.md) §8.5 instead |
 | [`compiler/`](compiler/) | The compiler, the runtime, and the standard library. Where new work goes |
 | [`compiler/lib/`](compiler/lib/README.md) | The standard library's Beck half |
-| [`compiler/corpus/`](compiler/corpus/) | 34 programs carrying **no placement annotations** — Phase 2's exit measurement |
+| [`compiler/corpus/`](compiler/corpus/) | 35 programs carrying **no placement annotations** — Phase 2's exit measurement |
 | [`compiler/sicp/`](compiler/sicp/) | The expressiveness benchmark ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5) |
 | [`compiler/awfy/`](compiler/awfy/README.md), [`compiler/clbg/`](compiler/clbg/README.md) | The performance benchmarks — somebody else's programs, verified against somebody else's constants |
 | [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-the-native-backends-report.md) §93.5) |

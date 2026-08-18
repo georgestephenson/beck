@@ -776,3 +776,114 @@ fn what_a_grouped_join_is_worth() {
          \x20           (DEFECTS.md::work-cannot-see-inside-an-application)."
     );
 }
+
+/// What answering a group's size from a count rather than from the group saves, in a clock.
+///
+/// `docs/99` §99.9 item 6. `scaling.rs::counting_a_group_does_not_build_it` holds the shape — one
+/// entry copied at any pile size against a number that grows — and this is the rate, which is
+/// printed rather than thresholded (§13.7).
+///
+/// The contrast is the same one that gate uses, and it is the honest one available: the same
+/// program with the count written `list_len(sort_by(filter_list(…), …))`, which prints the same page
+/// and is no longer an aggregate the recogniser can see. Comparing against `Relate::Refuse` would
+/// compare against a plan whose work `Work` cannot see and whose clock includes the scan item 3
+/// already removed, so it would credit this change with item 3's win as well.
+#[test]
+fn what_counting_a_group_saves() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/35-workload.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let compiled = |name: &str, text: &str| {
+        let (placed, diags, map) = beck_core::compile_str(name, text);
+        assert!(!diags.has_errors(), "{}", diags.render(&map));
+        placed.expect("it compiles")
+    };
+    let counted = compiled("35-workload.beck", &src);
+    let grouped = compiled(
+        "35-workload-built.beck",
+        &src.replace(
+            "return list_len(filter_list(map_values(s.issues), lambda i: i.assignee == who))",
+            "return list_len(sort_by(filter_list(map_values(s.issues), lambda i: i.assignee == \
+             who), lambda i: i.title))",
+        ),
+    );
+
+    let event = |variant: &str, fields: &[(&str, &str)]| {
+        let mut f = beck_core::core::Fields::new();
+        for (k, v) in fields {
+            f.insert(Arc::from(*k), Value::str_(*v));
+        }
+        Value::data(Arc::from("Event"), Some(Arc::from(variant)), f)
+    };
+
+    let once = |subject: &beck_core::Placed, n: usize| -> u128 {
+        let backend = beck_eval::backend(subject);
+        let prepared = Arc::new(
+            Prepared::new(Arc::new(Plan::compile(subject)), backend.as_ref()).expect("prepares"),
+        );
+        let runtime = Runtime::new(subject.clone(), backend).expect("prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let mut seq = 0u64;
+        let mut state = runtime.initial_state().expect("initial");
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: At(seq as i64),
+                actor: "ana".to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("fold")
+        };
+        seq += 1;
+        state = fold(
+            &state,
+            event("Hired", &[("id", "p1"), ("name", "Ada")]),
+            seq,
+        );
+        for i in 0..n {
+            seq += 1;
+            let id = format!("i{i:06}");
+            state = fold(
+                &state,
+                event("Filed", &[("id", &id), ("title", &id), ("assignee", "p1")]),
+                seq,
+            );
+        }
+        engine.render(&state, &session, &here).expect("warm");
+        seq += 1;
+        let id = format!("i{n:06}");
+        let next = fold(
+            &state,
+            event("Filed", &[("id", &id), ("title", &id), ("assignee", "p1")]),
+            seq,
+        );
+        let t = Instant::now();
+        engine.render(&next, &session, &here).expect("step");
+        t.elapsed().as_micros()
+    };
+
+    // The first thing measured in a process pays for warm-up (CHANGELOG 2026-08-17).
+    let _ = once(&counted, 200);
+
+    println!(
+        "\n{:>8}  {:>12} {:>12} {:>7}",
+        "issues", "counted µs", "grouped µs", "ratio"
+    );
+    for n in [200usize, 1_600] {
+        let with = (0..3).map(|_| once(&counted, n)).min().expect("three runs");
+        let without = (0..3).map(|_| once(&grouped, n)).min().expect("three runs");
+        println!(
+            "{n:>8}  {with:>12} {without:>12} {:>6.1}×",
+            without as f64 / with.max(1) as f64
+        );
+    }
+    println!(
+        "\n  Both render the same page. `counted` answers each person's pile from a tally the\n\
+         \x20 join keeps; `grouped` builds the pile and measures it, which is what item 3 left\n\
+         \x20 behind and what this closes. The ratio grows with the pile because one side is\n\
+         \x20 constant in it and the other is linear."
+    );
+}

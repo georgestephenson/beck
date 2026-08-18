@@ -52,6 +52,14 @@
 //! added to a group rebuilds *that group's* list and no other — the scan over the whole collection
 //! is gone and the capture with it, but the group's own size is still paid. Removing that is
 //! `group by` (§99.9 item 6), which is why item 6 follows this one rather than standing beside it.
+//!
+//! # The third shape, which is the second one asked a different question
+//!
+//! `list_len(filter_list(xs, lambda y: g(y) == k(x)))` is the same equi-join again, and what differs
+//! is only what a probe returns: a number rather than the rows. Nothing about the index changes, so
+//! this is a field of the grouped shape ([`Answers`]) rather than a shape of its own — and it is the
+//! first of §99.9 item 6's aggregates, the one the language already had a spelling for. A group that
+//! is only ever counted is never built, which is what [`crate::plan::Matching::Count`] is for.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -97,13 +105,29 @@ pub enum Index {
     Unique,
     /// `filter_list(xs, lambda y: by(y) == k(x))`: nothing keys `xs` by `by`, so the index is an
     /// [`crate::plan::Op::ArrangeBy`] built for the purpose. Several rows share a key and the group
-    /// answers.
+    /// answers — either its rows or a question about them.
     Grouped {
         /// What the collection is arranged by, as a function of one of its own elements.
         by: Core,
         /// The parameter `by` is written over — the filtered element, not the loop's.
         param: VarId,
+        /// What the body asked the group for.
+        answers: Answers,
     },
+}
+
+/// What a body wanted from a group, which decides whether the group has to be built at all.
+///
+/// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6: an
+/// aggregate that builds the collection in order to measure it has done the work the question was
+/// avoiding. The two are recognised from the same `filter_list` — one wrapped in `list_len` and one
+/// not — which is why they are a field of one variant rather than two shapes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answers {
+    /// The rows. `filter_list(…)` on its own, whose value is a `list`.
+    Rows,
+    /// How many rows. `list_len(filter_list(…))`, whose value is an `Int` — and no list is built.
+    Count,
 }
 
 /// A loop whose body looked things up, taken apart.
@@ -298,6 +322,18 @@ fn qualify(
     captured: &BTreeSet<VarId>,
 ) -> Result<(Core, Core, Index), Refusal> {
     let at = follow(body, site);
+    // A `list_len` site is the `filter_list` under it, asked a different question. Everything below
+    // reads the filter, and only the answer differs.
+    let (at, answers) = match counts_a_filter(at) {
+        true => (
+            match &at.kind {
+                CoreKind::Prim { args, .. } => &args[0],
+                _ => unreachable!("`counts_a_filter` matched a `Prim`"),
+            },
+            Answers::Count,
+        ),
+        false => (at, Answers::Rows),
+    };
     let CoreKind::Prim { op, args } = &at.kind else {
         unreachable!("a site is where a `map_get` or a `filter_list` is")
     };
@@ -357,7 +393,15 @@ fn qualify(
     } else {
         return Err(Refusal::PredicateIsNotAnEquality);
     };
-    Ok((over, key, Index::Grouped { by, param: y }))
+    Ok((
+        over,
+        key,
+        Index::Grouped {
+            by,
+            param: y,
+            answers,
+        },
+    ))
 }
 
 /// An expression with its leading `let`s taken off and remembered.
@@ -397,6 +441,14 @@ fn lambda(f: &Core, defs: &BTreeMap<Arc<str>, Def>) -> Option<(VarId, Core)> {
 ///
 /// A site inside a nested `lambda` is not found, because [`children`] does not enter one: a lookup
 /// there is a lookup per *call* of that function rather than per element.
+///
+/// A `list_len` counts as a site only when its argument is *syntactically* the `filter_list` it
+/// would otherwise be measuring. That is not a shortcut, it is what keeps the aggregate from
+/// swallowing the group: a site inside another one is skipped, so admitting every `list_len` would
+/// hide the `filter_list` under it behind an outer site that could not qualify. Written this way,
+/// the outer site exists exactly when the inner one would have qualified too. What it costs is a
+/// count written through a `let` — `g = filter_list(…)` then `list_len(g)` — which is recognised as
+/// the group rather than as the count, and is slower rather than wrong.
 fn lookups(c: &Core, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
     if matches!(
         &c.kind,
@@ -404,7 +456,8 @@ fn lookups(c: &Core, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
             op: Prim::MapGet | Prim::FilterList,
             args
         } if args.len() == 2
-    ) {
+    ) || counts_a_filter(c)
+    {
         out.push(path.clone());
     }
     for (i, child) in children(c).into_iter().enumerate() {
@@ -412,6 +465,22 @@ fn lookups(c: &Core, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
         lookups(child, path, out);
         path.pop();
     }
+}
+
+/// Whether this node is `list_len(filter_list(xs, p))` — the count of a group, written out.
+fn counts_a_filter(c: &Core) -> bool {
+    let CoreKind::Prim {
+        op: Prim::ListLen,
+        args,
+    } = &c.kind
+    else {
+        return false;
+    };
+    args.len() == 1
+        && matches!(
+            &args[0].kind,
+            CoreKind::Prim { op: Prim::FilterList, args } if args.len() == 2
+        )
 }
 
 /// The `let` bindings that are in scope at a path, so an expression under it can be resolved.

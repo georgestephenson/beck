@@ -913,3 +913,185 @@ fn a_group_a_loop_filters_for_costs_the_group_and_not_the_collection() {
          the flat row above says nothing"
     );
 }
+
+/// **Asking a group how big it is does not build the group.**
+///
+/// [`docs/99-the-data-tier-means-of-combination.md`](../../../../docs/99-the-data-tier-means-of-combination.md)
+/// §99.9 item 6's first aggregate, and the leftover item 3 handed it. `corpus/35-workload.beck`
+/// shows every person and how many issues name them. Item 3 turned the scan into an index probe and
+/// then **materialised the group in order to count it**, so an event still cost the size of the pile
+/// it landed on. The join now keeps a count per key and moves it by ±1 as the index moves.
+///
+/// The instrument is [`beck_core::engine::Work::materialised`], as in the gate above and for the
+/// same reason: a group is entries copied out of an arrangement, so a group that is never built is a
+/// counter that does not move. Here the assertion is stronger than "flat" — it is **zero**, because
+/// this page asks for no group's rows at all. What is left is not zero and saying what it *is*
+/// matters: one entry, which is the page's own single `<li>` being assembled — §23.8's remaining
+/// constant factor, not the group. So the assertion is the exact number rather than a bound, and
+/// what that number is worth is measured in the same run by a **variant of the same program that
+/// renders the same page**.
+///
+/// The variant is one wrapper: `list_len(sort_by(filter_list(…), …))`. It counts the same rows and
+/// prints the same characters, and the count is no longer syntactically over the filter, so the
+/// recogniser reads the group instead of the aggregate — which is the documented limit of how the
+/// site is found ([`beck_core::relate`]). That makes it the exact contrast this gate needs: same
+/// answer, same page, one plan that builds the pile to measure it and one that does not.
+///
+/// It is not compared against [`Relate::Refuse`], and the reason is worth recording where somebody
+/// would otherwise add it: with the recognition off the whole loop is one per-element function, the
+/// group is built *inside* it, and `Work` counts that as one application
+/// ([`DEFECTS.md`](../../../../DEFECTS.md) `work-cannot-see-inside-an-application`). The refused
+/// path reports the same 1 at every size. The off switch is still asserted here — on the plan,
+/// which is what it changes.
+#[test]
+fn counting_a_group_does_not_build_it() {
+    use beck_core::core::Fields;
+    use beck_core::engine::{Engine, Prepared};
+    use beck_core::plan::{Matching, Op, Plan, Relate};
+    use beck_core::Value;
+    use beck_rt::{Envelope, Instant, Runtime};
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/35-workload.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let (placed, diags, map) = beck_core::compile_str("35-workload.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("the corpus program compiles");
+
+    let counts = |relate: Relate| {
+        Plan::compile_with(&placed, relate).nodes.iter().any(|n| {
+            matches!(
+                n.op,
+                Op::Join {
+                    matched: Matching::Count,
+                    ..
+                }
+            )
+        })
+    };
+    assert!(
+        counts(Relate::Recognise),
+        "corpus/35-workload.beck no longer compiles to a join that answers with a count, so this \
+         gate measures something else"
+    );
+    assert!(
+        !counts(Relate::Refuse),
+        "`Relate::Refuse` left the aggregate in the plan, so the off switch is not one"
+    );
+
+    let event = |variant: &str, fields: &[(&str, &str)]| {
+        let mut f = Fields::new();
+        for (k, v) in fields {
+            f.insert(Arc::from(*k), Value::str_(*v));
+        }
+        Value::data(Arc::from("Event"), Some(Arc::from(variant)), f)
+    };
+
+    // What one more issue costs, once `n` are already filed against the same person. The pile the
+    // event lands on is the whole collection, which is the worst case for an aggregate that builds
+    // its group and no case at all for one that counts.
+    let cost_at = |subject: &beck_core::Placed, what: &str, n: usize| -> u64 {
+        let backend = beck_eval::backend(subject);
+        let plan = Arc::new(Plan::compile(subject));
+        let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("the plan prepares"));
+        let runtime = Runtime::new(subject.clone(), backend).expect("the program prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let mut seq = 0u64;
+        let mut state = runtime.initial_state().expect("an initial accumulator");
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: Instant(seq as i64),
+                actor: "ana".to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("folds")
+        };
+        seq += 1;
+        state = fold(
+            &state,
+            event("Hired", &[("id", "p1"), ("name", "Ada")]),
+            seq,
+        );
+        for i in 0..n {
+            seq += 1;
+            let id = format!("i{i:06}");
+            state = fold(
+                &state,
+                event("Filed", &[("id", &id), ("title", &id), ("assignee", "p1")]),
+                seq,
+            );
+        }
+        // The cold render builds every arrangement — `O(n)`, once, and not what is measured.
+        engine.render(&state, &session, &here).expect("renders");
+        seq += 1;
+        let id = format!("i{n:06}");
+        state = fold(
+            &state,
+            event("Filed", &[("id", &id), ("title", &id), ("assignee", "p1")]),
+            seq,
+        );
+        engine.render(&state, &session, &here).expect("renders");
+
+        let work = engine.work();
+        println!(
+            "{what:<8} at {n:>5} issues: {:>5} materialised ({} applications, {} touched, {} \
+             recomputed)",
+            work.materialised, work.applications, work.touched, work.recomputed
+        );
+        work.materialised
+    };
+
+    let (small, large) = (
+        cost_at(&placed, "counted", 200),
+        cost_at(&placed, "counted", 1_600),
+    );
+    // One, at both sizes: the roster holds one person, so the page has one child to assemble and
+    // the group behind that child's count is never built. Two would mean the group was.
+    assert_eq!(
+        (small, large),
+        (1, 1),
+        "the page asks for no group's rows and has one row of its own, so one entry is copied out \
+         of an arrangement whatever the pile holds — docs/99 §99.9 item 6"
+    );
+
+    // The same page, counted a way the recogniser cannot read as an aggregate. Same counter, same
+    // render, same characters on the page — and it grows with the pile, because the group is built
+    // in order to be measured.
+    let wrapped = src.replace(
+        "return list_len(filter_list(map_values(s.issues), lambda i: i.assignee == who))",
+        "return list_len(sort_by(filter_list(map_values(s.issues), lambda i: i.assignee == who), \
+         lambda i: i.title))",
+    );
+    assert_ne!(
+        wrapped, src,
+        "the definition this gate's contrast is built from has been reworded in \
+         corpus/35-workload.beck"
+    );
+    let (built, diags, map) = beck_core::compile_str("35-workload-built.beck", &wrapped);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let built = built.expect("the variant compiles");
+    assert!(
+        Plan::compile(&built).nodes.iter().any(|n| matches!(
+            n.op,
+            Op::Join {
+                matched: Matching::Group,
+                ..
+            }
+        )),
+        "the variant no longer reads as a group, so it is not the contrast this gate needs"
+    );
+    let (group_small, group_large) = (
+        cost_at(&built, "grouped", 200),
+        cost_at(&built, "grouped", 1_600),
+    );
+    assert!(
+        group_large > group_small * 3,
+        "asking for the group and measuring it copied {group_large} entries at eight times the \
+         issues against {group_small} — which is not the group-building this gate exists to say \
+         the count removes, so the flat row above says nothing"
+    );
+}
