@@ -655,11 +655,11 @@ fn what_the_arrangement_lifecycle_gives_back() {
 /// What the index under a filtered loop is worth, in a clock the counters cannot supply.
 ///
 /// `docs/99` §99.9 item 3. `scaling.rs::a_group_a_loop_filters_for_costs_the_group_and_not_the_collection`
-/// holds the *shape* — the group is paid for and the collection is not — and it can say nothing
-/// about the switched-off path, because a refused board rebuilds the whole page inside one
-/// per-element function and [`beck_core::engine::Work`] counts that as one application
-/// (`DEFECTS.md::work-cannot-see-inside-an-application`). This is the table that says what the
-/// difference costs, which is a rate and therefore printed rather than thresholded (§13.7).
+/// holds the *shape*, in `Work::steps` — the group is paid for and the collection is not, against a
+/// refused plan whose cost grows with the collection. This is the table that says what the
+/// difference costs in **time**, which is a rate and therefore printed rather than thresholded
+/// (§13.7); the counters are printed beside it because a table about what an operator saved should
+/// show that its two instruments agree.
 ///
 /// Two workloads, because they are the two ends of what the operator can be worth: `spread` puts
 /// the cards across the columns, which is what a board looks like, and `one column` puts every card
@@ -685,9 +685,9 @@ fn what_a_grouped_join_is_worth() {
         Value::data(Arc::from("Event"), Some(Arc::from(variant)), fields)
     };
 
-    // The clock, and the counters beside it, because the second half of what this table shows is
-    // that the counters cannot see the difference the clock reports
-    // (`DEFECTS.md::work-cannot-see-inside-an-application`).
+    // The clock, and the counters beside it. `Work::steps` is what the backend executed, so the
+    // two now tell the same story in different units — which is the check worth having in a table
+    // whose whole subject is what an operator saved.
     let once = |relate: Relate, n: usize, spread: bool| -> (u128, beck_core::engine::Work) {
         let backend = beck_eval::backend(&placed);
         let plan = Arc::new(Plan::compile_with(&placed, relate));
@@ -740,8 +740,8 @@ fn what_a_grouped_join_is_worth() {
     );
     let counted = |w: beck_core::engine::Work| {
         format!(
-            "{}/{}/{}/{}",
-            w.applications, w.touched, w.materialised, w.recomputed
+            "{}/{}/{}/{} +{}",
+            w.applications, w.touched, w.materialised, w.recomputed, w.steps
         )
     };
     for spread in [true, false] {
@@ -770,10 +770,11 @@ fn what_a_grouped_join_is_worth() {
          \x20           the honest ceiling on this operator: it removes the scan, not the group\n\
          \x20           (docs/99 §99.9 item 6 is what removes the group).\n\
          \x20 a/t/m/r — applications, entries touched, entries materialised, operators\n\
-         \x20           recomputed. The refused column is the same four numbers at both sizes\n\
-         \x20           while its clock moves tenfold, because it rebuilds the page inside one\n\
-         \x20           per-element function and `Work` counts that as one application\n\
-         \x20           (DEFECTS.md::work-cannot-see-inside-an-application)."
+         \x20           recomputed, and `steps` is what the backend executed inside all of\n\
+         \x20           them. The refused column's first four are the same at both sizes,\n\
+         \x20           because it rebuilds the page inside one per-element function and one\n\
+         \x20           application is one application; its `steps` and its clock both move\n\
+         \x20           with the collection, which is the work those four cannot see."
     );
 }
 
@@ -783,11 +784,12 @@ fn what_a_grouped_join_is_worth() {
 /// entry copied at any pile size against a number that grows — and this is the rate, which is
 /// printed rather than thresholded (§13.7).
 ///
-/// The contrast is the same one that gate uses, and it is the honest one available: the same
-/// program with the count written `list_len(sort_by(filter_list(…), …))`, which prints the same page
-/// and is no longer an aggregate the recogniser can see. Comparing against `Relate::Refuse` would
-/// compare against a plan whose work `Work` cannot see and whose clock includes the scan item 3
-/// already removed, so it would credit this change with item 3's win as well.
+/// The contrast here is **not** `Relate::Refuse`, and that is a scoping choice rather than a
+/// limitation: the refused plan has item 3's scan in it too, so comparing against it would credit
+/// this change with the previous one's win. The variant instead writes the same count as
+/// `list_len(sort_by(filter_list(…), …))`, which prints the same page and is no longer an aggregate
+/// the recogniser can see — item 3's index, item 6's aggregate withheld. `scaling.rs` is where the
+/// off switch itself is measured.
 #[test]
 fn what_counting_a_group_saves() {
     let path =

@@ -34,7 +34,7 @@ pub mod interp;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use beck_core::backend::{Backend, Callable, ExecError, Interceptor};
+use beck_core::backend::{Backend, Callable, ExecError, Interceptor, Steps};
 use beck_core::{Core, Env, Program, Value};
 
 pub use interp::{EvalError, Host, Interp, DEFAULT_FUEL, DEFAULT_MAX_DEPTH};
@@ -111,6 +111,37 @@ pub struct Evaluator {
     /// Per *call*, not per process: each `constant` and each `function` invocation gets a fresh
     /// budget, because the thing being bounded is one evaluation rather than a session.
     fuel: u64,
+    /// What every call through this backend has spent of its budget, added up.
+    ///
+    /// The budget is per call and this is per backend, which is the whole point: a caller that
+    /// wants to know what a *render* cost reads this before and after and subtracts. Shared with
+    /// every [`Callable`] this backend hands out, and with the intercepting copy of it, because a
+    /// stubbed call is still a call that ran.
+    taken: Arc<Taken>,
+}
+
+/// [`Evaluator`]'s [`Steps`], as the counter every call it hands out adds to.
+#[derive(Default)]
+struct Taken(std::sync::atomic::AtomicU64);
+
+impl Steps for Taken {
+    fn taken(&self) -> u64 {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl Taken {
+    /// What one evaluation spent, given the budget it began with and the interpreter it ran on.
+    ///
+    /// Saturating rather than plain because `Interp::reset_fuel` exists: a call that reset its own
+    /// budget can end with more left than it started with, and a wrapping subtraction there would
+    /// report a step count near `u64::MAX` for an evaluation that did almost nothing.
+    fn add(&self, from: u64, left: u64) {
+        self.0.fetch_add(
+            from.saturating_sub(left),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
 }
 
 /// Where a `Global` resolves to a body.
@@ -152,6 +183,7 @@ impl Evaluator {
             atoms: Arc::new(beck_core::host::ProcessAtoms),
             interceptor: None,
             fuel: interp::DEFAULT_FUEL,
+            taken: Arc::new(Taken::default()),
         }
     }
 
@@ -246,9 +278,12 @@ impl Backend for Evaluator {
             atoms: self.atoms.clone(),
             interceptor: self.interceptor.clone(),
         };
-        Interp::with_fuel(&host, self.fuel)
-            .eval(code, &mut Env::new())
-            .map_err(into_exec)
+        let interp = Interp::with_fuel(&host, self.fuel);
+        let out = interp.eval(code, &mut Env::new()).map_err(into_exec);
+        // Counted whether or not it answered: an evaluation that ran out of fuel is the one whose
+        // cost a reader most wants to see.
+        self.taken.add(self.fuel, interp.fuel_left());
+        out
     }
 
     fn intercepting(&self, by: Arc<dyn Interceptor>) -> Option<Arc<dyn Backend>> {
@@ -258,7 +293,12 @@ impl Backend for Evaluator {
             atoms: self.atoms.clone(),
             interceptor: Some(by),
             fuel: self.fuel,
+            taken: self.taken.clone(),
         }))
+    }
+
+    fn steps(&self) -> Option<Arc<dyn Steps>> {
+        Some(self.taken.clone())
     }
 
     fn function(&self, code: &Core) -> Result<Callable, ExecError> {
@@ -271,6 +311,7 @@ impl Backend for Evaluator {
         let atoms = self.atoms.clone();
         let interceptor = self.interceptor.clone();
         let fuel = self.fuel;
+        let taken = self.taken.clone();
         Ok(Arc::new(move |args: Vec<Value>| {
             let host = Globals {
                 defs: defs.clone(),
@@ -278,9 +319,12 @@ impl Backend for Evaluator {
                 atoms: atoms.clone(),
                 interceptor: interceptor.clone(),
             };
-            Interp::with_fuel(&host, fuel)
+            let interp = Interp::with_fuel(&host, fuel);
+            let out = interp
                 .apply(&closure, args, beck_diag::Span::NONE)
-                .map_err(into_exec)
+                .map_err(into_exec);
+            taken.add(fuel, interp.fuel_left());
+            out
         }))
     }
 }

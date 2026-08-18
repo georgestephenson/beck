@@ -175,6 +175,19 @@ pub struct Work {
     pub materialised: u64,
     /// Pointwise operators re-evaluated.
     pub recomputed: u64,
+    /// What the **backend** executed inside all of those, if it counts
+    /// ([`crate::backend::Steps`]); `0` when it does not, which is not the same as no work.
+    ///
+    /// The other four are what the engine did *to* its arrangements, and they stop at the boundary
+    /// of a call: one application is one application whether the function it ran read a field or
+    /// rebuilt a page. This is the inside of those calls, and it is what makes a plan that hides its
+    /// work in one opaque operator visible beside one that decomposed.
+    ///
+    /// **Not in [`Work::total`]**, deliberately. The other four are commensurable — entries and
+    /// applications, all `O(1)` each — and this is a different unit by two or three orders of
+    /// magnitude, so adding it would drown every gate that reads the total. A gate that wants it
+    /// asks for it by name.
+    pub steps: u64,
 }
 
 impl Work {
@@ -198,6 +211,12 @@ pub struct Prepared {
     funs: Vec<Option<Callable>>,
     /// Constants, evaluated once here and never recomputed.
     consts: Vec<Option<Value>>,
+    /// The backend's step counter, taken once at prepare time — see [`crate::backend::Steps`].
+    ///
+    /// Held here rather than passed to [`Engine::render`] because it is a property of the executor
+    /// the plan was prepared against, and an engine that was handed a different one would report
+    /// somebody else's arithmetic.
+    steps: Option<Arc<dyn crate::backend::Steps>>,
 }
 
 impl Prepared {
@@ -224,6 +243,7 @@ impl Prepared {
             code,
             funs,
             consts,
+            steps: backend.steps(),
         })
     }
 
@@ -422,10 +442,14 @@ impl Engine {
         aware: &Value,
     ) -> Result<Value, ExecError> {
         self.work = Work::default();
-        match self
+        let before = self.steps_now();
+        let out = self
             .tick(up, state, session, presence, aware)
-            .and_then(|()| self.materialise(up, self.prepared.plan.root))
-        {
+            .and_then(|()| self.materialise(up, self.prepared.plan.root));
+        // Charged even when the render failed, and before `reset` throws the arrangements away: a
+        // render that ran out of fuel is the one whose cost a reader most wants to see.
+        self.work.steps = self.steps_now().saturating_sub(before);
+        match out {
             Ok(v) => {
                 self.warm = true;
                 Ok(v)
@@ -439,15 +463,23 @@ impl Engine {
         }
     }
 
+    /// What the backend has executed so far, or zero when it does not count.
+    fn steps_now(&self) -> u64 {
+        self.prepared.steps.as_ref().map_or(0, |s| s.taken())
+    }
+
     /// Advance the operators this engine owns, without assembling a page from them.
     ///
     /// This is the shared half of [`SharedDataflow`]: the root of the plan is per-session and this
     /// engine does not own it, so there is nothing at the top to materialise.
     fn advance(&mut self, state: &Value) -> Result<(), ExecError> {
         self.work = Work::default();
+        let before = self.steps_now();
         // The shared half owns no `Op::Presence` and no `Op::Awareness` — everything downstream of
         // one is per-subscriber — so the values it would be given are never read.
-        match self.tick(None, state, &Value::Unit, &Value::Unit, &Value::Unit) {
+        let out = self.tick(None, state, &Value::Unit, &Value::Unit, &Value::Unit);
+        self.work.steps = self.steps_now().saturating_sub(before);
+        match out {
             Ok(()) => {
                 self.warm = true;
                 Ok(())

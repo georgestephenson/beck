@@ -703,6 +703,16 @@ impl<'h> Interp<'h> {
         self.fuel.set(DEFAULT_FUEL);
     }
 
+    /// What is left of this interpreter's budget.
+    ///
+    /// The budget is spent per node and, for a primitive whose work is proportional to a length the
+    /// caller chose, per element — so what a caller subtracts from the
+    /// budget it started with is the honest measure of what an evaluation *did*, which is what
+    /// [`beck_core::backend::Steps`] publishes.
+    pub fn fuel_left(&self) -> u64 {
+        self.fuel.get()
+    }
+
     /// This interpreter's cancellation, as a question a host can ask while it is blocked.
     ///
     /// [`beck_core::net::Stop::never`] when there is no enclosing scope, which is the ordinary

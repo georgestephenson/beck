@@ -739,6 +739,92 @@ page: Signal[Html] = per_session(ranking, render)
     );
 }
 
+/// The board example, compiled once for the three gates below.
+fn board_program() -> beck_core::Placed {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/board.beck");
+    let src = std::fs::read_to_string(&path).expect("the board example is readable");
+    let (placed, diags, map) = beck_core::compile_str("board.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    placed.expect("the board example compiles")
+}
+
+/// What one more card costs the board, once `n` are already on it.
+///
+/// `elsewhere` sends every earlier card to a column the last event does not touch, which holds the
+/// probed group's size fixed while the collection grows; without it every card lands in the column
+/// the last one does, and the group *is* the collection.
+fn board_event_cost(
+    placed: &beck_core::Placed,
+    relate: beck_core::plan::Relate,
+    n: usize,
+    elsewhere: bool,
+) -> beck_core::engine::Work {
+    use beck_core::core::Fields;
+    use beck_core::engine::{Engine, Prepared};
+    use beck_core::plan::Plan;
+    use beck_core::Value;
+    use beck_rt::{Envelope, Instant, Runtime};
+
+    let added = |i: usize| {
+        let mut fields = Fields::new();
+        fields.insert(Arc::from("id"), Value::str_(format!("c{i:06}")));
+        fields.insert(Arc::from("text"), Value::str_(format!("card {i}")));
+        Value::data(Arc::from("Event"), Some(Arc::from("Added")), fields)
+    };
+    let moved = |i: usize, column: i64| {
+        let mut fields = Fields::new();
+        fields.insert(Arc::from("id"), Value::str_(format!("c{i:06}")));
+        fields.insert(Arc::from("column"), Value::Int(column));
+        Value::data(Arc::from("Event"), Some(Arc::from("Moved")), fields)
+    };
+
+    let backend = beck_eval::backend(placed);
+    let plan = Arc::new(Plan::compile_with(placed, relate));
+    let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("the plan prepares"));
+    let runtime = Runtime::new(placed.clone(), backend).expect("the program prepares");
+    let session = runtime.session("ana");
+    let here = beck_core::edge::presence_of("ana");
+    let mut engine = Engine::new(prepared);
+
+    let mut seq = 0u64;
+    let mut state = runtime.initial_state().expect("an initial accumulator");
+    let fold = |state: &Value, body: Value, seq: u64| {
+        let env = Envelope {
+            seq,
+            at: Instant(seq as i64),
+            actor: "ana".to_string(),
+            body: body.clone(),
+        };
+        runtime.fold(state, &env, body).expect("folds")
+    };
+    for i in 0..n {
+        seq += 1;
+        state = fold(&state, added(i), seq);
+        if elsewhere {
+            seq += 1;
+            state = fold(&state, moved(i, 1 + (i as i64 % 2)), seq);
+        }
+    }
+    // The cold render builds every arrangement — `O(n)`, once, and not what is measured.
+    engine.render(&state, &session, &here).expect("renders");
+    seq += 1;
+    state = fold(&state, added(n + 1), seq);
+    engine.render(&state, &session, &here).expect("renders");
+
+    let work = engine.work();
+    println!(
+        "{relate:?} at {n:>5} cards, group held {}: {:>7} steps, {:>5} materialised ({} \
+         applications, {} touched, {} recomputed)",
+        if elsewhere { "fixed  " } else { "growing" },
+        work.steps,
+        work.materialised,
+        work.applications,
+        work.touched,
+        work.recomputed
+    );
+    work
+}
+
 /// **A loop that filters another collection by an equality pays for the group, not the collection.**
 ///
 /// [`docs/99-the-data-tier-means-of-combination.md`](../../../../docs/99-the-data-tier-means-of-combination.md)
@@ -748,43 +834,27 @@ page: Signal[Html] = per_session(ranking, render)
 /// the loop's per-element function captured the accumulator and every event re-scanned every card
 /// once per column. `arrange_by` builds the index and the join probes the range under one key.
 ///
-/// # What this gate measures, and why it is `materialised` rather than the other three
+/// # Both settings, which is what stops the paragraph above being a claim
 ///
-/// A group is entries copied out of an arrangement to hand a consumer a `Value::List`, which is
-/// exactly what [`beck_core::engine::Work::materialised`] counts — so the join's probe is counted
-/// there, and this is the one gate in this file that reads that counter rather than excluding it.
-/// The property is a **shape**: hold the probed group's size fixed and grow the collection around
-/// it, and the number must not move.
+/// [`Relate::Refuse`] is the off switch [`docs/08`](../../../../docs/08-roadmap.md) §8.3 item 8
+/// requires of a choice the compiler makes unbidden, and the gate measures it: with the probed
+/// group's size held fixed, the recognised plan's per-event work does not move between 200 cards
+/// and 1,600, and the refused plan's grows with the collection. The instrument is
+/// [`beck_core::engine::Work::steps`] — what the backend executed — because the refused plan does
+/// all of its work *inside* one per-element function, where the arrangement counters cannot see it
+/// and where this gate used to have to look away.
 ///
-/// The gate carries its own evidence that it can fail, in the same run: put every card in the one
-/// column the last event touches and the same counter grows with the collection, because then the
-/// group *is* the collection. A fix that indexed nothing would report the second number in the
-/// first row.
+/// # And what the operator does **not** remove, in the same run
 ///
-/// # Why the switched-off path is asserted structurally here and measured with a clock elsewhere
-///
-/// [`Relate::Refuse`] is the off switch, and running it is what stops the paragraph above being a
-/// claim ([`docs/08`](../../../../docs/08-roadmap.md) §8.3 item 8). But `Work` **cannot see** what
-/// the refused plan costs: the whole page is rebuilt inside one per-element function, and the
-/// engine counts one application for it however much that function does. The refused board reports
-/// three applications at every size — which is not "cheap", it is the instrument looking away
-/// ([`DEFECTS.md`](../../../../DEFECTS.md) `work-cannot-see-inside-an-application`). So the
-/// off switch is held here to what it *changes* — the operators, and the capture the cost report
-/// names — and the rate it costs is measured with a clock in
-/// `measure_incremental::what_a_grouped_join_is_worth`, which is where a rate belongs.
+/// `materialised` counts entries copied out of an arrangement to hand a consumer a `Value::List`,
+/// which is what a group is. Held with the group fixed it does not move; with every card in the one
+/// column the event touches it grows with the collection, because then the group *is* the
+/// collection. That row is this operator's honest ceiling and §99.9 item 6 is what takes it.
 #[test]
 fn a_group_a_loop_filters_for_costs_the_group_and_not_the_collection() {
-    use beck_core::core::Fields;
-    use beck_core::engine::{Engine, Prepared};
     use beck_core::plan::{Matching, Op, Plan, Relate};
-    use beck_core::Value;
-    use beck_rt::{Envelope, Instant, Runtime};
 
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/board.beck");
-    let src = std::fs::read_to_string(&path).expect("the board example is readable");
-    let (placed, diags, map) = beck_core::compile_str("board.beck", &src);
-    assert!(!diags.has_errors(), "{}", diags.render(&map));
-    let placed = placed.expect("the board example compiles");
+    let placed = board_program();
 
     let ops = |relate: Relate| -> (bool, bool) {
         let plan = Plan::compile_with(&placed, relate);
@@ -815,102 +885,46 @@ fn a_group_a_loop_filters_for_costs_the_group_and_not_the_collection() {
         "`Relate::Refuse` left the index in the plan, so the off switch is not one"
     );
 
-    // The other half of what the switch changes, and the half a reader of `beck explain cost`
-    // actually sees: refused, the loop's function captures the accumulator and the report says so;
-    // recognised, there is nothing left to say. This is the one thing `Work` and the clock agree
-    // about on this program, because it is read off the plan rather than counted.
-    let report =
-        |relate: Relate| beck_core::plan::cost_report(&Plan::compile_with(&placed, relate));
+    let recognised = |n| board_event_cost(&placed, Relate::Recognise, n, true);
+    let refused = |n| board_event_cost(&placed, Relate::Refuse, n, true);
+    let (small, large) = (recognised(200), recognised(1_600));
+    let (refused_small, refused_large) = (refused(200), refused(1_600));
+
     assert!(
-        report(Relate::Refuse).contains("downstream of the state"),
-        "with the join refused the loop still captures the accumulator, and the cost report has \
-         stopped saying so:\n{}",
-        report(Relate::Refuse)
+        large.steps <= small.steps,
+        "eight times the cards cost {} backend steps against {}, with the group the last event \
+         touches the same size in both. A loop that filters another collection by an equality is a \
+         many-to-one equi-join; without the index it re-scans the collection once per element of \
+         the loop — docs/99 §99.9 item 3",
+        large.steps,
+        small.steps
     );
     assert!(
-        !report(Relate::Recognise).contains("downstream of the state"),
-        "a capture that moves per event survived the rewrite:\n{}",
-        report(Relate::Recognise)
+        refused_large.steps > refused_small.steps * 3,
+        "with the join refused, eight times the cards cost {} steps against {} — which is not the \
+         re-scan this gate exists to say the operator removes. Either the loop stopped being one, \
+         or something else made the refused path cheap; either way the flat row above no longer \
+         means what it says",
+        refused_large.steps,
+        refused_small.steps
     );
 
-    let added = |i: usize| {
-        let mut fields = Fields::new();
-        fields.insert(Arc::from("id"), Value::str_(format!("c{i:06}")));
-        fields.insert(Arc::from("text"), Value::str_(format!("card {i}")));
-        Value::data(Arc::from("Event"), Some(Arc::from("Added")), fields)
-    };
-    let moved = |i: usize, column: i64| {
-        let mut fields = Fields::new();
-        fields.insert(Arc::from("id"), Value::str_(format!("c{i:06}")));
-        fields.insert(Arc::from("column"), Value::Int(column));
-        Value::data(Arc::from("Event"), Some(Arc::from("Moved")), fields)
-    };
-
-    // What one more card costs, once `n` are already on the board. `elsewhere` sends every earlier
-    // card to a column the last event does not touch, which is what holds the probed group's size
-    // fixed while the collection grows; without it every card lands in the column the last one does.
-    let cost_at = |n: usize, elsewhere: bool| -> u64 {
-        let backend = beck_eval::backend(&placed);
-        let plan = Arc::new(Plan::compile_with(&placed, Relate::Recognise));
-        let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("the plan prepares"));
-        let runtime = Runtime::new(placed.clone(), backend).expect("the program prepares");
-        let session = runtime.session("ana");
-        let here = beck_core::edge::presence_of("ana");
-        let mut engine = Engine::new(prepared);
-
-        let mut seq = 0u64;
-        let mut state = runtime.initial_state().expect("an initial accumulator");
-        let fold = |state: &Value, body: Value, seq: u64| {
-            let env = Envelope {
-                seq,
-                at: Instant(seq as i64),
-                actor: "ana".to_string(),
-                body: body.clone(),
-            };
-            runtime.fold(state, &env, body).expect("folds")
-        };
-        for i in 0..n {
-            seq += 1;
-            state = fold(&state, added(i), seq);
-            if elsewhere {
-                seq += 1;
-                state = fold(&state, moved(i, 1 + (i as i64 % 2)), seq);
-            }
-        }
-        // The cold render builds every arrangement — `O(n)`, once, and not what is measured.
-        engine.render(&state, &session, &here).expect("renders");
-        seq += 1;
-        state = fold(&state, added(n + 1), seq);
-        engine.render(&state, &session, &here).expect("renders");
-
-        let work = engine.work();
-        println!(
-            "{n:>5} cards, group held {}: {:>5} materialised ({} applications, {} touched, {} \
-             recomputed)",
-            if elsewhere { "fixed  " } else { "growing" },
-            work.materialised,
-            work.applications,
-            work.touched,
-            work.recomputed
-        );
-        work.materialised
-    };
-
-    let (fixed_small, fixed_large) = (cost_at(200, true), cost_at(1_600, true));
-    let (growing_small, growing_large) = (cost_at(200, false), cost_at(1_600, false));
-
+    // The ceiling, in the counter that sees a group being built rather than a collection scanned.
+    let growing = |n| board_event_cost(&placed, Relate::Recognise, n, false);
+    let (growing_small, growing_large) = (growing(200), growing(1_600));
     assert!(
-        fixed_large <= fixed_small,
-        "eight times the cards copied {fixed_large} entries against {fixed_small}, with the group \
-         the last event touches the same size in both. A loop that filters another collection by an \
-         equality is a many-to-one equi-join; without the index it re-scans the collection once per \
-         element of the loop — docs/99 §99.9 item 3"
+        growing_large.materialised > growing_small.materialised * 3,
+        "with every card in one column, eight times the cards copied {} entries against {} — so \
+         the counter that reads a group did not follow the group, and this gate's claim about what \
+         `arrange_by` leaves behind says nothing",
+        growing_large.materialised,
+        growing_small.materialised
     );
-    assert!(
-        growing_large > growing_small * 3,
-        "with every card in one column, eight times the cards copied {growing_large} entries \
-         against {growing_small} — so the counter this gate reads did not follow the group, and \
-         the flat row above says nothing"
+    assert_eq!(
+        (small.materialised, large.materialised),
+        (4, 4),
+        "with the group held fixed the page copies its three sections and the one card in the \
+         group the event touched, whatever the collection holds"
     );
 }
 
@@ -922,31 +936,20 @@ fn a_group_a_loop_filters_for_costs_the_group_and_not_the_collection() {
 /// then **materialised the group in order to count it**, so an event still cost the size of the pile
 /// it landed on. The join now keeps a count per key and moves it by ±1 as the index moves.
 ///
-/// The instrument is [`beck_core::engine::Work::materialised`], as in the gate above and for the
-/// same reason: a group is entries copied out of an arrangement, so a group that is never built is a
-/// counter that does not move. Here the assertion is stronger than "flat" — it is **zero**, because
-/// this page asks for no group's rows at all. What is left is not zero and saying what it *is*
-/// matters: one entry, which is the page's own single `<li>` being assembled — §23.8's remaining
-/// constant factor, not the group. So the assertion is the exact number rather than a bound, and
-/// what that number is worth is measured in the same run by a **variant of the same program that
-/// renders the same page**.
+/// Two instruments, and each answers a different half:
 ///
-/// The variant is one wrapper: `list_len(sort_by(filter_list(…), …))`. It counts the same rows and
-/// prints the same characters, and the count is no longer syntactically over the filter, so the
-/// recogniser reads the group instead of the aggregate — which is the documented limit of how the
-/// site is found ([`beck_core::relate`]). That makes it the exact contrast this gate needs: same
-/// answer, same page, one plan that builds the pile to measure it and one that does not.
-///
-/// It is not compared against [`Relate::Refuse`], and the reason is worth recording where somebody
-/// would otherwise add it: with the recognition off the whole loop is one per-element function, the
-/// group is built *inside* it, and `Work` counts that as one application
-/// ([`DEFECTS.md`](../../../../DEFECTS.md) `work-cannot-see-inside-an-application`). The refused
-/// path reports the same 1 at every size. The off switch is still asserted here — on the plan,
-/// which is what it changes.
+/// * [`beck_core::engine::Work::steps`] against [`Relate::Refuse`] — what the whole plan cost,
+///   including the per-element function the refused plan does everything inside. Constant against
+///   linear is the property, and the off switch is what makes it a measurement rather than a claim
+///   ([`docs/08`](../../../../docs/08-roadmap.md) §8.3 item 8).
+/// * `materialised` — entries copied out of an arrangement, which is what a group *is*. Held to the
+///   exact number rather than to a bound: **one**, which is this page's own single `<li>` being
+///   assembled (§23.8's remaining constant factor) and not a group. Two would mean the group was
+///   built.
 #[test]
 fn counting_a_group_does_not_build_it() {
     use beck_core::core::Fields;
-    use beck_core::engine::{Engine, Prepared};
+    use beck_core::engine::{Engine, Prepared, Work};
     use beck_core::plan::{Matching, Op, Plan, Relate};
     use beck_core::Value;
     use beck_rt::{Envelope, Instant, Runtime};
@@ -990,11 +993,11 @@ fn counting_a_group_does_not_build_it() {
     // What one more issue costs, once `n` are already filed against the same person. The pile the
     // event lands on is the whole collection, which is the worst case for an aggregate that builds
     // its group and no case at all for one that counts.
-    let cost_at = |subject: &beck_core::Placed, what: &str, n: usize| -> u64 {
-        let backend = beck_eval::backend(subject);
-        let plan = Arc::new(Plan::compile(subject));
+    let cost_at = |relate: Relate, n: usize| -> Work {
+        let backend = beck_eval::backend(&placed);
+        let plan = Arc::new(Plan::compile_with(&placed, relate));
         let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("the plan prepares"));
-        let runtime = Runtime::new(subject.clone(), backend).expect("the program prepares");
+        let runtime = Runtime::new(placed.clone(), backend).expect("the program prepares");
         let session = runtime.session("ana");
         let here = beck_core::edge::presence_of("ana");
         let mut engine = Engine::new(prepared);
@@ -1038,60 +1041,97 @@ fn counting_a_group_does_not_build_it() {
 
         let work = engine.work();
         println!(
-            "{what:<8} at {n:>5} issues: {:>5} materialised ({} applications, {} touched, {} \
-             recomputed)",
-            work.materialised, work.applications, work.touched, work.recomputed
+            "{relate:?} at {n:>5} issues: {:>6} steps, {:>5} materialised ({} applications, {} \
+             touched, {} recomputed)",
+            work.steps, work.materialised, work.applications, work.touched, work.recomputed
         );
-        work.materialised
+        work
     };
 
     let (small, large) = (
-        cost_at(&placed, "counted", 200),
-        cost_at(&placed, "counted", 1_600),
+        cost_at(Relate::Recognise, 200),
+        cost_at(Relate::Recognise, 1_600),
     );
-    // One, at both sizes: the roster holds one person, so the page has one child to assemble and
-    // the group behind that child's count is never built. Two would mean the group was.
+    let (refused_small, refused_large) =
+        (cost_at(Relate::Refuse, 200), cost_at(Relate::Refuse, 1_600));
+
+    assert!(
+        large.steps <= small.steps,
+        "eight times the issues cost {} backend steps against {}. Asking a group how big it is is \
+         a question the group does not have to exist to answer — docs/99 §99.9 item 6",
+        large.steps,
+        small.steps
+    );
+    assert!(
+        refused_large.steps > refused_small.steps * 3,
+        "with the aggregate refused, eight times the issues cost {} steps against {} — which is \
+         not the pile-building this gate exists to say the count removes, so the flat row above \
+         says nothing",
+        refused_large.steps,
+        refused_small.steps
+    );
     assert_eq!(
-        (small, large),
+        (small.materialised, large.materialised),
         (1, 1),
         "the page asks for no group's rows and has one row of its own, so one entry is copied out \
          of an arrangement whatever the pile holds — docs/99 §99.9 item 6"
     );
+}
 
-    // The same page, counted a way the recogniser cannot read as an aggregate. Same counter, same
-    // render, same characters on the page — and it grows with the pile, because the group is built
-    // in order to be measured.
-    let wrapped = src.replace(
-        "return list_len(filter_list(map_values(s.issues), lambda i: i.assignee == who))",
-        "return list_len(sort_by(filter_list(map_values(s.issues), lambda i: i.assignee == who), \
-         lambda i: i.title))",
+/// **What a render reports includes what happened inside its per-element functions.**
+///
+/// The counters [`beck_core::engine::Work`] keeps are what the engine did *to* its arrangements,
+/// and they stop at the boundary of a call: one application is one application whether the function
+/// it ran read a field or rebuilt a page. So a plan that hides its work in one opaque operator
+/// reported the *same four numbers* however much work it did, and every shape gate in this file was
+/// blind to exactly the pessimisation an opaque operator can hide — the silent kind, in the
+/// direction that flatters.
+///
+/// This is that case, asserted from both ends. `examples/board.beck` with the join refused rebuilds
+/// all three columns inside one per-element function on every event, so:
+///
+/// * the four counters are **identical** at 200 cards and at 1,600 — the blindness, still true and
+///   still fine, because those counters are answering a different question; and
+/// * `steps` — what the backend executed, [`beck_core::backend::Steps`] — **grows with the
+///   collection**, which is the answer the clock has always given and no counter could.
+///
+/// Both halves are asserted, because a `steps` that grew while the four moved too would mean the
+/// engine had started counting the same work twice, and a `steps` of zero would pass a
+/// grows-with-`n` test written only as "not constant".
+#[test]
+fn the_work_a_render_reports_includes_what_happened_inside_it() {
+    use beck_core::plan::Relate;
+
+    let board = board_program();
+    let (small, large) = (
+        board_event_cost(&board, Relate::Refuse, 200, true),
+        board_event_cost(&board, Relate::Refuse, 1_600, true),
     );
-    assert_ne!(
-        wrapped, src,
-        "the definition this gate's contrast is built from has been reworded in \
-         corpus/35-workload.beck"
+
+    assert_eq!(
+        (
+            small.applications,
+            small.touched,
+            small.materialised,
+            small.recomputed
+        ),
+        (
+            large.applications,
+            large.touched,
+            large.materialised,
+            large.recomputed
+        ),
+        "the four arrangement counters are supposed to be identical here — one opaque operator, \
+         applied the same number of times at either size. If they have started to differ, this \
+         gate is no longer about the thing it was written for"
     );
-    let (built, diags, map) = beck_core::compile_str("35-workload-built.beck", &wrapped);
-    assert!(!diags.has_errors(), "{}", diags.render(&map));
-    let built = built.expect("the variant compiles");
     assert!(
-        Plan::compile(&built).nodes.iter().any(|n| matches!(
-            n.op,
-            Op::Join {
-                matched: Matching::Group,
-                ..
-            }
-        )),
-        "the variant no longer reads as a group, so it is not the contrast this gate needs"
-    );
-    let (group_small, group_large) = (
-        cost_at(&built, "grouped", 200),
-        cost_at(&built, "grouped", 1_600),
-    );
-    assert!(
-        group_large > group_small * 3,
-        "asking for the group and measuring it copied {group_large} entries at eight times the \
-         issues against {group_small} — which is not the group-building this gate exists to say \
-         the count removes, so the flat row above says nothing"
+        large.steps > small.steps * 3,
+        "eight times the cards cost {} backend steps against {}, from a plan that rebuilds the \
+         whole page inside one per-element function. `Work` is reporting the shape of the plan \
+         rather than the shape of the work — which is what it did before it counted what a call \
+         did, and what made every gate in this file blind to an opaque operator",
+        large.steps,
+        small.steps
     );
 }

@@ -119,50 +119,6 @@ present, so the gate goes red today and green on a fix.
 
 ---
 
-## `work-cannot-see-inside-an-application` — the engine's counters report a whole page as one unit
-
-**What is wrong.** `beck_core::engine::Work` counts what the *engine* does — per-element functions
-applied, arrangement entries touched, pointwise operators re-evaluated, entries materialised — and
-counts one application for a call whatever that call goes on to do. When a plan's per-element
-function is a whole page, the counter reports a number that has nothing to do with the work.
-
-`examples/board.beck` with the join refused is the case that found it. Its loop over the three
-columns filters every card three times and rebuilds all three `<ul>`s, on every event, at every
-collection size — and `Work` reports **3 applications, 3 touched, 3 materialised and 3 recomputed at
-200 cards and the identical four numbers at 1,600**, while the clock over the same two renders goes
-from 2.3 ms to 21 ms. Both halves are printed side by side by
-`cargo test --release --test measure_incremental what_a_grouped_join_is_worth -- --nocapture`.
-
-**Why it is misleading rather than merely incomplete.** `beck explain cost` ends with "`Work` is
-what `Engine::render` counts, so `measure_incremental` checks this arithmetic against the count
-rather than against a clock", and `scaling.rs`'s header calls `Work` "the deterministic instrument".
-Both are true of a plan whose operators are the work and false of one whose work is inside an
-operator — and the failure is silent and in the flattering direction: the plan that hides the most
-reports the smallest number. Every shape gate in `scaling.rs` that reads `Work` is therefore blind
-to exactly the pessimisation an opaque operator can hide, which is the class
-[`docs/82`](docs/82-the-edge-report.md) §82.10 is about.
-
-**What is *not* wrong.** The plan's own report is right: `beck explain cost` says of the refused
-board that a per-element function captured the state "so the whole collection is reconsidered on
-every event", and names the operator. The arithmetic and the count disagree, and it is the count
-that is wrong.
-
-**The gate a fix owes.** Not "the number is bigger" — a partial fix that counted only the arms
-somebody remembered would move the number and keep the blindness. It is that
-**two plans that do the same work report the same `Work`**: render one program's view through a plan
-whose collection operators the decomposition entered, and through a plan where the same expression
-was forced into a single `Op::Pointwise` (`beck explain incremental` already names which construct
-does that), over the same log, and assert the two totals agree within a stated factor. That is red
-today by roughly the collection's size, and no arm-by-arm patch makes it green.
-
-**What a fix costs, since it is why this is recorded rather than done.** The count has to come from
-whatever executed the code, so `Backend` — the seam `beck-rt` reaches execution through — is where
-it would go, and there are three implementations of it in the workspace plus the two the
-backend-seam harness supplies ([`docs/19`](docs/19-phase-1-report.md) §19.9). That is a cross-cutting
-instrument change with a lane of its own, not a line in the operator that found it.
-
----
-
 ## `corpus-wide-counts-drift` — adding a program silently falsifies six documents
 
 **What is wrong.** Several documents quote a number derived from *the whole corpus*: how many

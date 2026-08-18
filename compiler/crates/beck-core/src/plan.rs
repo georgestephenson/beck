@@ -1023,7 +1023,9 @@ pub fn cost_report(plan: &Plan) -> String {
         out,
         "\n  These are the plan's arithmetic rather than a measurement: `Work` is what\n\
          \x20 `Engine::render` counts, so `measure_incremental` checks this arithmetic against the\n\
-         \x20 count rather than against a clock."
+         \x20 count rather than against a clock. What an operator does *inside* a per-element\n\
+         \x20 function is not in these lines and is in `Work::steps`, which is what the backend\n\
+         \x20 executed — the number that tells an opaque operator's cost from its arity."
     );
     out
 }

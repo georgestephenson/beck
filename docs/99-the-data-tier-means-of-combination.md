@@ -463,8 +463,12 @@ can answer what an alternative plan *would have* cost, precisely, offline, with 
 because [`03`](03-type-and-effect-system.md) §3.7 makes the whole history an ordered replayable
 stream and the backend a deterministic function of it. Two candidate plans run over the same log
 produce two exact work counts. And the unit is already there and is already not a clock —
-`Work { applications, touched, materialised, recomputed }`, counted by `Engine::render` — so the
-comparison is an integer difference reproducible on any machine, not a benchmark with noise in it.
+`Work { applications, touched, materialised, recomputed, steps }`, counted by `Engine::render` — so
+the comparison is an integer difference reproducible on any machine, not a benchmark with noise in
+it. **The fifth field is what makes the comparison sound for this rung specifically**: the first four
+stop at the boundary of a call, so two plans that differ in how much they hide inside one per-element
+function used to report the same numbers, which is exactly the pair a plan search would be asked to
+choose between. `steps` is what the backend executed inside those calls.
 The consequence worth stating on its own: **an estimate is needed only once per plan.** After a
 single replay, every intermediate cardinality in that plan is a measured fact. Systems without a
 complete deterministic history re-estimate forever, because they have nothing to check against.
@@ -559,12 +563,15 @@ has to be an equality (§99.6). Three things it cost or taught are worth naming:
   with the cards spread over the columns, 1.1× with all of them in the one column the event touches.
   §99.6 has the command.
 
-**And it exposed the instrument.** The refused board rebuilds the whole page inside one per-element
-function, and `Work` counts that as one application — so it reports the *same four numbers* at 200
-cards and at 1,600 while the clock moves tenfold. That is
-[`DEFECTS.md`](../DEFECTS.md)'s `work-cannot-see-inside-an-application`, it is why this item's shape
-gate reads `materialised` rather than the three counters the item-1 gate reads, and it is a blindness
-every `scaling.rs` gate over an opaque operator shares.
+**And it exposed the instrument, which has since been fixed.** The refused board rebuilds the whole
+page inside one per-element function, and `Work` counted that as one application — so it reported the
+*same four numbers* at 200 cards and at 1,600 while the clock moved tenfold, and this item's gate had
+to be written against a variant program because the off switch was invisible. `Work` now carries
+`steps`, what the **backend** executed inside those calls, taken through the seam
+([`backend.rs`](../compiler/crates/beck-core/src/backend.rs)'s `Steps`), and the gate says the thing
+it always meant: **98 steps at 200 cards and at 1,600 with the operator on, against 12,830 and
+101,030 with it off**. The blindness was general — every `scaling.rs` gate over an opaque operator
+shared it — which is why fixing it was worth a change of its own rather than a workaround here.
 
 **4. `join`. Done.** An outer equi-join against an index, with §99.5's bilinear delta rule: a left
 row that moved is looked up once, and a right row that moved reaches exactly the left rows waiting on
@@ -694,10 +701,11 @@ reaches no plan decision.
 - **One aggregate is built and it is `count`.** `sum`, `min` and `max` per group are not, and §99.9
   item 6 says what each is waiting on — a surface, in every case, rather than a delta rule. The
   design for `min`/`max` is written there and no code implements it.
-- **It does not fix the instrument the refused path is measured with.** `Work` counts one application
-  for a per-element function whatever that function does, so the switched-off board reports the same
-  four numbers at every size; the clock is what says otherwise, and
-  [`DEFECTS.md`](../DEFECTS.md)'s `work-cannot-see-inside-an-application` is the entry.
+- **What the instrument can and cannot compare.** `Work::steps` is what the *backend* executed, so it
+  sees inside a per-element function and does not see the engine's own bookkeeping — the `BTreeMap`
+  work and the value copies a group probe does are the clock's business, not its. Two runs of one
+  backend are comparable in it; two backends are not, and it is a count rather than a duration for
+  [`13`](13-testing.md) §13.7's reason.
 - **`min`/`max` over a group and `distinct` over values are named as hard**, not designed. Item 6 and
   item 7 each need their own decision before they are written.
 
