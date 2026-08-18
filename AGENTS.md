@@ -188,7 +188,7 @@ different claims.**
 the differential, replay-determinism, backend-seam, scaling, frames, security, pending-security,
 corpus, placement-property, patterns, general-slicer, incremental-analysis, incremental-engine,
 fusion,
-shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
+shared-arrangement, subscription, view-metrics, read-model, style, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
 mode-B, browser, client, playground, identity, OIDC, presence, cranelift, wasm-backend, release and

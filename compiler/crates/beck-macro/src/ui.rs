@@ -339,8 +339,33 @@ fn attr_expr(kw: &Node, tag: &str, diags: &mut Diagnostics) -> Node {
         }
         diags.push(d);
     }
+    // A list where HTML wants a space-separated value, joined here rather than at the seam.
+    //
+    // `class=["btn", "primary" if hot else "plain"]` is the shape [`docs/104`] §104.4 asks programs
+    // to write, and the reason is not taste: the alternative is `"btn " + …`, and a concatenation
+    // is as invisible to a compiler that wants to enumerate the classes a page can carry as it is
+    // to Tailwind's scanner. A list of alternatives can be enumerated; a string built at run time
+    // cannot, and [`beck_core::style`] is what says which of the two a program wrote.
+    //
+    // It is done in the **lowering** rather than in `html_attr`, so every backend agrees by
+    // construction: what reaches the checker is one `str_join` and there is nothing for an emitter
+    // to know about ([`docs/19`] §19.9's seam, honoured by not touching it).
+    let value = match value.head_name() {
+        Some(head) if head == sym::LIST && SPACE_SEPARATED.contains(&attr_name.as_str()) => {
+            Node::form("str_join", vec![value, str_lit(" ", span)], span)
+        }
+        _ => value,
+    };
     Node::form("html_attr", vec![str_lit(attr_name, span), value], span)
 }
+
+/// The attributes whose value HTML defines as a space-separated list of tokens.
+///
+/// Not "every attribute", because most take one value and joining a list into one of those would
+/// turn a mistake into a plausible string. These are the ones where a list is what the attribute
+/// *means*: `class` and `rel` by the HTML specification, and the two ARIA relationships whose value
+/// is a list of ids.
+const SPACE_SEPARATED: &[&str] = &["class", "rel", "aria-labelledby", "aria-describedby"];
 
 /// The children of an element: a `list[Html]` built from the block's statements.
 ///

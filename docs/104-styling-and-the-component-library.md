@@ -717,7 +717,15 @@ schedule:
   and on their first run they refused every example program in this tree with a text input, each of
   which had labelled it with a placeholder and nothing else.
 - **`class=` as a list is the `F`.** Everything in the styling half is behind it, and so is the
-  editor affordance that costs nothing once it exists.
+  editor affordance that costs nothing once it exists. **The surface and the analysis are built**:
+  a list where HTML defines a space-separated value is joined in the `ui:` lowering, so every
+  backend agrees by construction and nothing at the seam had to learn about it, and
+  [`style.rs`](../compiler/crates/beck-core/src/style.rs) enumerates every class that can reach a
+  `class=` — through a call and through both arms of an `if`, which is the shape every dynamic class
+  in this tree is already written in. `beck explain style` prints the set and, beside it, the sites
+  where a class is *built* rather than named, with the reason. What is still owed is the type:
+  a `Class` has nothing to be checked against until the utility table exists, so it lands with item
+  4 rather than in front of it.
 - **The last three are behind a decision, not behind effort.** Where interface state lives (Wall 1)
   determines what a combobox, a menu and a custom date picker even look like, so building the kit
   before that decision would be building the part of it that does not depend on the answer and
@@ -736,8 +744,9 @@ written when a program wants a keyframe rather than because it is now affordable
 
 ## 104.12 What this does not establish
 
-- **Nothing is built.** Every measurement is of the tree as it stands or of third-party tools run
-  against it. No compiler change, no client change, no library, no gate.
+- **This document established nothing built**, and four of its eight items have since been. Every
+  measurement in it is of the tree as it stands or of third-party tools run against it; §104.11
+  records which items have landed and [`08`](08-roadmap.md) §8.5.4 holds the order.
 - **The Tailwind numbers are one page and 71 files at one version** (4.3.3). The false-positive
   count is a property of that corpus and that extractor and will differ for another; what the
   measurement establishes is the *shape* — a scanner reads bytes and a compiler reads a program —

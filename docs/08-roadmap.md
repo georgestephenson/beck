@@ -97,7 +97,7 @@ ask in order:
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for that group's size, and you write all three as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that only asks `list_len` of that filter is answered from a maintained count with no group built. All are maintained from both sides and `beck explain query` shows them. `sum`, `min` and `max` per group and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
-| "How do I make it look like anything?" | **Badly, and this is the newest row.** The stylesheet a running application serves is eight rules hard-coded in `beck-rt/src/css.rs`; `css:` appears in the tour and has no parser. Tailwind styles a Beck page with no configuration today, and its scanner cannot survive a package manager ([`104`](104-styling-and-the-component-library.md) §104.3), so the answer until §8.5.4's styling cluster lands is "bring npm" — which for a project whose product is one static binary is the wrong answer, not a smaller one |
+| "How do I make it look like anything?" | **Badly, and this is the newest row.** The stylesheet a running application serves is eight rules hard-coded in `beck-rt/src/css.rs`; `css:` appears in the tour and has no parser. `class=` takes a list now and `beck explain style` will tell you every class your pages can carry — but nothing emits a stylesheet from that set yet, so the answer to the question as asked is unchanged. Tailwind styles a Beck page with no configuration today, and its scanner cannot survive a package manager ([`104`](104-styling-and-the-component-library.md) §104.3), so the answer until §8.5.4's styling cluster lands is "bring npm" — which for a project whose product is one static binary is the wrong answer, not a smaller one |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
 | "How do I get the compiler?" | One command ([`92`](92-supply-chain-and-release-report.md)) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 says in that order |
 
@@ -604,7 +604,15 @@ rows.
      user-written `ui:` has to be held to the same names. Lane C, with a `beck-macro` half.
   3. **`class=` takes a list, and `Class` is a type** (F): the prerequisite for everything else in
      the styling half, and what makes the editor's existing completion, hover and rename answer for
-     utilities without an extension ([`65`](65-the-editor-report.md)). Lane A.
+     utilities without an extension ([`65`](65-the-editor-report.md)). **The list and the analysis
+     are done; the type is not.** A list where HTML defines a space-separated value is joined in the
+     `ui:` lowering, so every backend agrees by construction and the seam learned nothing, and
+     `beck_core::style` enumerates every class that can reach a `class=` — through a call and through
+     both arms of an `if`, which is how every dynamic class in this tree is already written.
+     `beck explain style` prints the set and, beside it, every site where a class is *built* rather
+     than named, with which of three reasons it was. A `Class` **type** has nothing to be checked
+     against until item 4's table exists, so it moved behind it rather than in front: a type whose
+     checking is empty is a scaffold. Lanes A and C.
   4. **The utility table and the sheet emitter** (S): exact extraction over the typed tree,
      `beck build` writing the stylesheet, `styles = none` turning all of it off, and the
      differential gate that holds the accepted table against Tailwind's own compiler

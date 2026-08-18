@@ -150,7 +150,11 @@ attribute is spelled `class`, not `cls`, and `ui:` used to check neither attribu
 so `cls=` reached the browser as an attribute nothing reads. It has a vocabulary now (§104.8):
 `B0218` refuses `cls=` with `class` as the suggestion, `B0217` refuses an event the client does not
 listen for, and `B0219`–`B0221` refuse an image with no alt text, a button with no accessible name
-and a control with no label ([`12`](12-standards-and-conformance.md) §12.4). This sentence claimed
+and a control with no label ([`12`](12-standards-and-conformance.md) §12.4). **And `class=` takes a
+list**, so a conditional class is `class=["btn", "primary" if hot else "plain"]` rather than a string
+built with `+` — which is the difference between a page whose classes the compiler can enumerate and
+one whose classes exist only while it is rendering (`beck explain style` prints which of the two you
+wrote). This sentence claimed
 the opposite for as long as the vocabulary has existed, and nothing caught it, because **no gate
 compiles the Beck in this document** — [`08`](08-roadmap.md) §8.5.6 is where that is recorded and
 [`86`](86-getting-started.md) is the one document whose programs a test does compile and run.
