@@ -1,6 +1,12 @@
 # 99 — The data tier's means of combination
 
-> **Design, not a report. Nothing here is built.** [`25`](25-benchmarks-and-expressiveness.md) asked
+> **The join is built; the rest of the algebra is not.** §99.9 items 1, 4 and 5 have landed — the
+> shape gate, the `Join` operator with §99.5's bilinear delta rule, and the recognition that emits it
+> for the loop a program already wrote. `group by`, the aggregates, `distinct` and difference are
+> still missing, and §99.9 is where each of them sits. Everything below is the design; what is built
+> says so where it is built.
+>
+> [`25`](25-benchmarks-and-expressiveness.md) asked
 > whether Beck has "Scheme's full means of combination and means of abstraction" and answered it for
 > the *language*, with SICP as the measurement. Nobody has ever asked it of the **data tier**, and
 > the answer is worse: the view algebra has primitives and it has means of abstraction, and its means
@@ -15,7 +21,10 @@
 >
 > This document says what is missing, states it as an algebra rather than as a feature list, makes
 > the four decisions that have to be made before any operator is written, and puts the work in
-> dependency order. §99.9 is the first item, and it is a gate rather than an operator.
+> dependency order. §99.9's first item is a gate rather than an operator, and it was written to go
+> red on `27-review.beck`: **415 units of maintenance at 200 notes and 3,215 at 1,600**, which is the
+> nested loop stated as a number. With the operator it is **19 at both sizes**, and the gate measures
+> both settings so that number is a difference rather than an assertion.
 
 ## 99.1 The question this answers, and the one it does not
 
@@ -58,7 +67,7 @@ will recur:
    to compile. The wall that [`23`](23-incremental-views-report.md) §23.2 describes — "a refusal that is
    never exercised on the shape it exists to refuse is a claim, not a check" — is worse here: there
    is no refusal at all, only an asymptotic cliff with nothing standing at the edge.
-3. **The corpus never grew a relationship big enough to hurt.** Thirty-two programs, all small.
+3. **The corpus never grew a relationship big enough to hurt.** Thirty-three programs, all small.
    §99.3 is the sweep.
 
 So: an oversight, and specifically an oversight of **cost**, not of expressiveness. Everything a
@@ -122,20 +131,31 @@ node. **Fixed**: every operator now carries the cadence of what it captured, com
 inputs back to a source in one pass over the plan's dependency order, and the three cases print
 three different sentences —
 `incremental.rs::a_capture_says_how_often_what_it_captured_moves` builds one program per cadence and
-asserts they differ from each other as well as from what each should say. Sweeping `beck explain cost` for `whenever #k moves` across the corpus and the examples and
-resolving each `#k` in `beck explain query` gives **18 capture sites in 10 programs**:
+asserts they differ from each other as well as from what each should say. Sweeping `beck explain cost` for the capture line across the corpus and the examples and resolving
+each `#k` in `beck explain query` gave **18 capture sites in 10 programs**, of which three moved per
+event: `27-review` (`#0`), `board` (`#0`) and `32-here` (`#4 ← #3 ← #0`). The third — `32-here`'s
+`#4` — is why item 2 of §99.9 was not cosmetic: it is a `recompute` node, so classifying it takes
+**tracing its inputs transitively back to the accumulator**, which the printed line did not do and a
+reader has no reason to do by hand.
+
+**Re-run after the join (2026-08-17), the same sweep gives 16 sites in 8 programs and one that moves
+per event:**
 
 | what the captured node is | sites | programs | when it moves |
 |---|---|---|---|
 | a `const` | 9 | `04-kanban` (6), `05-poll` (3) | never |
 | a definition used as a value, no inputs | 2 | `28-catalogue` | never |
 | the `session`, or derived from it | 4 | `02-chat`, `31-tenants`, `todo`, `routed` | per route change — benign, as the comment says |
-| the **state**, or derived from it | **3** | `27-review` (`#0`), `board` (`#0`), `32-here` (`#4 ← #3 ← #0`) | **every event** |
+| the **state**, or derived from it | **1** | `board` (`#0`) | **every event** |
 
-Fifteen of the eighteen are harmless. Three are the join. And the third one — `32-here`'s `#4` — is
-why item 2 of §99.9 is not cosmetic: it is a `recompute` node, so classifying it takes **tracing
-its inputs transitively back to the accumulator**, which the printed line does not do and a reader
-has no reason to do by hand.
+Two numbers in that comparison are worth separating, because only one of them is the operator's
+doing. `27-review` and `32-here` had the shape §99.6 recognises and lost their captures to it, which
+is the point. **`33-awareness` is the other number**: it had the shape too, it was never in the
+eighteen, and it was not missed — it did not exist, arriving with `awareness(f)` one change after
+this document was written, and nothing re-ran the sweep. That is [`08`](08-roadmap.md) §8.5.6's third
+decay direction, a *quoted figure going stale because the tree grew under it*, demonstrated one
+commit after the paragraph describing it. So three of four are closed rather than two of three, and
+`board` is the one left — which is a **grouping** rather than a lookup and waits on §99.9 item 3.
 
 **And the analysis disagrees with the plan.** `beck explain incremental corpus/27-review.beck`
 reports `flat_map ×1 maintained`. It is maintained in the sense the analysis means — the operator has
@@ -157,7 +177,7 @@ Everything the engine implements ([`plan.rs`](../compiler/crates/beck-core/src/p
 | ordering | `sort_by` | ✓ and better than the basis asks: the order **is** the arrangement's key |
 | nesting / unnesting | `flatten`, `flat_map` | ✓ |
 | cardinality | `list_len`, `list_is_empty` | ✓ over a whole collection, `±1` per delta |
-| **join (⋈)** | — | **missing** |
+| **join (⋈)** | `Join`, recognised | **built** — an outer equi-join against an index whose key is unique, which is what an arrangement is (§99.5 decision 2). No syntax: §99.6 |
 | **grouping and aggregation (Γ)** | — | **missing**; there is no `sum`, `min`, `max`, or per-group anything |
 | **difference (−)** | — | missing |
 | **distinct (δ)** | — | missing |
@@ -199,6 +219,14 @@ the existing keys already follow, it needs no new machinery, and it gives left-o
 iteration, which is what a `for` loop over the left side already means. Write it down before it is
 discovered, because the alternative — sort at the end — silently changes the replay digest.
 
+**Taken, and the built operator's key is the left key alone** — which is the same rule rather than a
+departure from it. The right side is an *index*, so its key is the join key and a left row matches
+at most one right row; appending a component that the left key already determines would buy nothing
+and would make an **unmatched** row's key shorter than a matched one's, which is an ordering that
+depends on whether a lookup succeeded. Iteration is left-order-major either way, and that is the
+half the page and the digest can see. The rule as written comes back the moment a right side is
+`arrange_by`'d rather than indexed, because then one left row can match several.
+
 ### 2. Whether multiplicities are needed, and the answer is "for two of the four"
 
 Difference and `distinct` are the operations that classically force signed multiplicities. Beck's
@@ -207,8 +235,8 @@ difference *by key* and union *by key* have delta rules with no representational
 `distinct` on **values** does not — it needs a count per distinct value, which is a new kind of
 arrangement.
 
-**Recommendation**: build join and grouping on the existing keyed representation, and treat
-`distinct`-on-values as a separate, later question. Do **not** adopt Z-sets wholesale to get two
+**Recommendation, and taken**: build join and grouping on the existing keyed representation, and
+treat `distinct`-on-values as a separate, later question. Do **not** adopt Z-sets wholesale to get two
 operators; the ordered-key property in decision 1 is worth more than basis minimality.
 
 ### 3. One clock, and where that stops being true
@@ -219,9 +247,20 @@ which moves atomically at one `seq`. **A join in Beck needs no timestamp lattice
 now is what stops a port of the literature from importing machinery this design does not need.
 
 The exception is already documented and should be named here rather than rediscovered:
-`presence()` moves when `seq` does not ([`48`](48-identity-report.md) §48.13). A join against
-presence is therefore the one case that needs the second clock §48.13 lists as unbuilt — so it is out
-of scope, deliberately, and that should be a refusal with a diagnostic rather than a surprise.
+`presence()` moves when `seq` does not ([`48`](48-identity-report.md) §48.13).
+
+**That exception was expected to force a refusal, and it does not — this paragraph used to say a
+join against a roster was out of scope and should be refused with a diagnostic.** It is not out of
+scope, and building it is what showed why: `corpus/33-awareness.beck` looks up in the awareness
+roster *and* in the accumulator, and both are joins. The second clock is a problem for **sharing**,
+not for **joining**. Everything downstream of `Op::Awareness` is already per-subscriber, so a join
+that reads one is per-subscriber too, and inside a single subscriber's engine the index and the left
+side advance in the same tick whatever provoked the render — which is all a delta rule needs. The
+second clock stays unbuilt and stays owed for the reason §48.13 gives, which is that the *roster*
+cannot be held once between subscribers; nothing about it stops the roster being joined against.
+`incremental.rs::a_loop_that_looks_up_twice_becomes_two_joins_and_captures_nothing` is the gate, and
+the differential drives the shared dataflow as well as a standalone engine, which is where a wrong
+answer about this would show.
 
 ### 4. Indexes are a second arrangement, and the sharing already exists
 
@@ -234,6 +273,12 @@ on the same key share one index by the mechanism that already exists.
 The cost is memory, per index, and [`23`](23-incremental-views-report.md) §23.14 already exports
 per-subscriber memory — so the metric to hold this honest exists too.
 
+**And the built join needed no new operator for it.** The shape that actually occurs indexes a `Map`
+field of the accumulator, and `map_values`'s arrangement is *already* keyed by the map's key, which
+is the join key — so the index is an operator that existed, and hash-consing shares it with any
+other reader of the same collection without anything being added for the purpose. `arrange_by` is
+still owed and §99.9 says which program is waiting for it.
+
 ## 99.6 The surface: infer the join, do not add syntax
 
 Beck's personality is that the compiler works out what a program means and shows its working —
@@ -242,10 +287,30 @@ placement is inferred, the session cut is inferred, fusion is automatic. A join 
 `for x in xs:` whose body contains `map_get(ys, k(x))` **is** an equi-join, and the decomposition in
 [`plan.rs`](../compiler/crates/beck-core/src/plan.rs) has everything it needs to see one: it already
 computes the per-element function's free variables and knows which of them are plan nodes.
-Recognising the shape and emitting a `Join` instead of a captured `FlatMap` would make
-`27-review.beck` and `examples/board.beck` faster **with no edit to either program**, and
-`beck explain query` would print what it found and why — which is the same sentence the README makes
-about placement.
+
+**Built** ([`relate.rs`](../compiler/crates/beck-core/src/relate.rs)). `27-review.beck`, `32-here.beck`
+and `33-awareness.beck` compile to joins with no edit to any of them, `beck explain query` prints
+them and what orders them, and `beck explain cost` reports a per-event capture for none of them.
+**Several lookups in one body are several joins, chained** — a row that shows two related things is
+an ordinary page, and refusing it would leave the capture in place and buy nothing. Each join takes
+the previous one's rows on its left, so the row a body finally reads is nested and the cost of the
+chain is memory rather than time (§99.5 decision 4). The condition is stated as what an
+expression *reads* rather than as a shape — `m` reads only what the loop captured, `k` reads only the
+element — and the recognition fires only when the rewrite removes a capture, so an index is never
+built for nothing.
+
+**`examples/board.beck` is not made faster by it, and that is a correction to this paragraph rather
+than a shortfall.** Its loop is `for c in columns():` over the constant `[0, 1, 2]`, and its body
+calls `cards_in(b, n)`, which is `filter_list(map_values(b.cards), lambda c: c.column == n)`. That is
+a relationship — the cards *grouped by* column — but it is not a `map_get`, and the operator it wants
+is a many-to-one join over an `arrange_by(cards, column)` rather than a lookup in an index that is
+already keyed. So `board` is the program §99.9 item 3 is waiting for, which is a more useful thing to
+know about it than that it is slow. It was listed here as a second beneficiary because §99.3 counted
+it among the three programs that capture the state, and the two are not the same question.
+
+Where inference fires it says so, and where it declines to it says which condition failed
+(`Refusal`), printed under the capture line that costs the money — which is the same sentence the
+README makes about placement.
 
 The alternative — a comprehension surface with an explicit join, per
 [`02`](02-syntax.md) §2.5's `sql"..."` and [`04`](04-compiler-architecture.md) §4.2's symbolic
@@ -253,10 +318,17 @@ The alternative — a comprehension surface with an explicit join, per
 is a cost with no benefit here, and the inferred version is strictly better for the programs that
 already exist.
 
-**Where inference cannot see it** — a lookup behind a function the decomposition will not enter, or
-a non-equi predicate — the honest outcome is the one Beck uses everywhere else: compile it the slow
-way and *say so*, in `beck explain cost`, with the reason. §99.9 item 1 is what makes that sentence
-exist.
+**Where inference cannot see it** — a non-equi predicate, a collection derived per element, a key
+that reads more than the element — the honest outcome is the one Beck uses everywhere else: compile it the slow
+way and *say so*, in `beck explain cost`, with the reason. That is built and each refusal names its
+own condition.
+
+"A lookup behind a function the decomposition will not enter" was forecast here as the case that
+would defeat it, and it does not: `27-review`'s lookup is inside `verdict_for`, inside a `match`, and
+is found because the body is **inlined before it is searched** — α-renamed, with an argument
+substituted only when copying it is free and `let`-bound otherwise, so no call is evaluated twice or
+dropped. The limit moved rather than vanished: what is not entered is a *nested lambda*, because a
+lookup inside one is a lookup per call of that function rather than per element.
 
 ## 99.7 What this unblocks, which is more than it looks
 
@@ -264,10 +336,10 @@ One build item discharges five things already written down:
 
 | already written | closed by |
 |---|---|
-| [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, aggregates — **nothing**" | the operators |
+| [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, aggregates — **nothing**" | the operators — the join is built, grouping and the aggregates are not |
 | [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, `group by`, aggregates other than `count(*)`" | the read-model SQL compiling **to the plan** rather than growing a second interpreter |
 | [`12`](12-standards-and-conformance.md) §12.5 `psql`'s `\d` unsupported because `pg_catalog` needs joins | the same |
-| [`23`](23-incremental-views-report.md) §23.19 "`count(*)` without scanning" | grouping, which is where a maintained count per group lives |
+| [`23`](23-incremental-views-report.md) §23.19 "`count(*)` without scanning" | grouping, which is where a maintained count *per group* lives — **the ungrouped one needed none of it** and is built: `select count(*) from t` reads the arrangement's size, which `Op::Count` has read since the engine existed. This row over-attributed: not every aggregate question is a grouping question |
 | [`08`](08-roadmap.md) §8.4's Phase 5 **TPC-H/ClickBench** row, "once §5.3's engine exists" | the engine that row is conditioned on and no phase builds |
 
 That last one is the reason this is a roadmap defect and not only a design gap: a Phase 5
@@ -399,15 +471,23 @@ which is why this rung is feedback rather than inference.
 
 ## 99.9 The order of work
 
-**1. The gate, first, before any operator.** A shape gate in
-[`scaling.rs`](../compiler/crates/beck-cli/tests/scaling.rs): maintenance work per event for a view
-whose loop reads the state, at two collection sizes, asserting it does not grow with the collection.
-**It goes red today**, on `27-review.beck`. This is [`82`](82-the-edge-report.md)
-§82.10's discipline — write the gate that fails on the shape of the gap — and it is first because
-every item below needs it as the oracle. Note what today's suite does *not* cover:
-`a_view_over_a_large_state_is_still_one_pass` measures the **cold recompute** path and asserts
-nothing about maintenance, and [`23`](23-incremental-views-report.md)'s "same work at 200 rows
-and at 1,600" was measured on programs whose loops capture nothing.
+**1. The gate, first, before any operator. Done.**
+`scaling.rs::maintaining_a_view_whose_loop_looks_something_up_costs_the_same_at_any_size`: the
+maintenance one event costs `27-review.beck`, at two collection sizes, asserted not to grow with the
+collection. It was written to go red and it did — **415 units at 200 notes against 3,215 at 1,600**,
+7.7× over 8× the rows, which is the nested loop with nothing left to interpret. This is
+[`82`](82-the-edge-report.md) §82.10's discipline — write the gate that fails on the shape of the gap
+— and it was first because every item below needed it as the oracle. Note what the suite did *not*
+cover before it: `a_view_over_a_large_state_is_still_one_pass` measures the **cold recompute** path
+and asserts nothing about maintenance, and [`23`](23-incremental-views-report.md)'s "same work at 200
+rows and at 1,600" was measured on programs whose loops capture nothing.
+
+**It now measures both settings, and that is the part worth copying.** `Relate::Refuse` is the off
+switch [`08`](08-roadmap.md) §8.3 item 8 requires of a choice the compiler makes unbidden, and
+running the refused path inside the gate does two jobs with one measurement: it proves the switch
+works, and it leaves the gate carrying its own evidence that it can fail. A gate whose green run
+reports 19 against 19 says nothing about what the operator is worth; one that reports 19 against 19
+*and* 415 against 3,215 says both.
 
 **2. Make the report count what it prints.** **Done.** The tally is derived from the same
 per-operator record the body is printed from, so the count and the lines cannot disagree; and every
@@ -417,14 +497,34 @@ computed by tracing inputs back to a source, which is what tells a captured `con
 **2 of 29** where it reported 1. §99.3 has the transcript and the two gates.
 
 **3. `arrange_by`** — a second index over an existing collection, shared by the mechanism
-[`23`](23-incremental-views-report.md) already has.
+[`23`](23-incremental-views-report.md) already has. **Still owed, and it moved behind item 4 rather
+than in front of it.** The reason is not a change of mind about the ordering: the right side of the
+join that exists in the tree is a `Map` field of the accumulator, and `map_values`'s arrangement is
+already keyed by the map's key, so there was nothing to build. Building `arrange_by` first would have
+put an operator with a delta rule and **no program** into the engine, which is the hole `OPERATORS`
+and `fusion.rs` exist to refuse. Its program is now named: `examples/board.beck` groups cards by
+column (§99.6), and that is a many-to-one join over an index keyed by something other than the
+collection's order — which is what `arrange_by` is for and what makes the general output key of
+decision 1 start to matter.
 
-**4. `join`**, equi-join on a key, with the bilinear delta rule and decision 1's output key. A corpus
-program that is *about* a relationship, since none of the 32 is. The differential harness
-(maintained vs recomputed, every event, byte for byte) is the correctness argument, unchanged.
+**4. `join`. Done.** An outer equi-join against an index, with §99.5's bilinear delta rule: a left
+row that moved is looked up once, and a right row that moved reaches exactly the left rows waiting on
+its key, through a reverse index the operator keeps. Neither side costs the collection. Unmatched
+left rows survive as rows, because the expression it replaced was a `map_get` and its callers `match`
+on an `Option`. `corpus/34-assignments.beck` is the program that is *about* a relationship, and its
+subject is the half `27-review` cannot reach: **many** issues waiting on one person, so renaming that
+person is one entry moving on the right and several rows moving on the left. The differential harness
+(maintained vs recomputed, every event, byte for byte) is the correctness argument, unchanged, and it
+is what holds "several rows moved" — `contains` asks about a string somebody thought to name.
 
-**5. Recognise the loop-plus-lookup shape** and emit the join (§99.6), so the two existing programs
-get faster without an edit — and so the feature is reachable without new syntax.
+**5. Recognise the loop-plus-lookup shape. Done** (§99.6): `27-review.beck`, `32-here.beck` and
+`33-awareness.beck` get the operator with no edit, and the feature has no syntax. Two things it cost
+are worth naming in advance for item 6. The recogniser had to **inline** to find a lookup written
+behind a call, so the plan now carries a small β-reducer, and the honest bound on it is a nested
+lambda rather than a call depth. And a body with *several* lookups had to become several joins rather
+than a refusal: the first version refused it, which left `33-awareness` paying the whole cost, and a
+refusal that keeps a program at `O(n)` per event is not a conservative choice — it is the defect with
+a sentence attached.
 
 **6. `group by` and aggregates** — `count`, `sum`, `min`, `max` per group. `min`/`max` are the hard
 ones and should be said so in advance: deleting the current minimum of a group needs either a rescan
@@ -443,37 +543,45 @@ and nowhere earlier.
 **9. The read-model SQL grows joins and `group by` by compiling into the plan**, not by growing its
 own interpreter — which closes §23.19 and §12.5 together and keeps one code path.
 
-Items 1–2 are days. Items 3–5 are the phase. Items 6–9 each stand alone and can be scheduled
-independently once 3–5 land.
+Items 1–2 were days and items 4–5 were the phase; item 3 is still open and is now behind them rather
+than in front. Items 6–9 each stand alone and can be scheduled independently.
 
 **The convergence rungs interleave rather than follow.** §99.8's ladder is not a second project to
 start afterwards, and treating it as one is how a guessed constant becomes permanent:
 
 | with | do |
 |---|---|
-| item 4 (`join`) | **rung 0** — the constant exists, and every decision resting on it is labelled as such in `beck explain query`. A derivation that prints numbers derived from a guess without saying so is worse than printing no numbers |
-| item 4, same change | **rung 1** — read base cardinalities off the arrangements instead. This is available immediately, costs `entries.len()`, and means `ASSUMED_CARDINALITY` never reaches a join-order decision at all |
+| item 4 (`join`) | **rungs 0 and 1 did not come due, and saying why is the point.** Both are about a solver *choosing* between plans, and the join that landed has nothing to choose: its right side is an index and its left is the loop the program wrote, so there is one plan. No cardinality, assumed or measured, reaches any decision, because no decision is taken. The rungs come due with `arrange_by` (item 3), which is the first time a join has two sides that could be swapped |
 | item 5 (recognition) | **rung 2** — the two programs that already contain a join, replayed under both plans, are the first real measurement, and `Work` is the unit |
+| item 3 (`arrange_by`) | **rungs 0 and 1**, which is where they land now that the join has shipped without them — the first time a join has two sides that could be swapped is the first time anything is chosen |
 | items 6–8 | **rung 4** — search, once replay is the oracle rather than the model |
 | Phase 4's `beck tune` | **rung 3** — the rate, fed back from a deployment, because it exists nowhere else |
 
-Rung 1 belongs *inside* item 4 rather than after it, and that is the sequencing decision worth
-arguing over: shipping a join that reads `ASSUMED_CARDINALITY` would make the constant load-bearing
-for a decision it was never honest for (§99.8), and a constant that has shipped is a constant that
-gets tuned instead of removed.
+Rung 1 belongs *inside* the first item that makes a choice, rather than after it, and that is the
+sequencing decision worth arguing over: shipping a join that reads `ASSUMED_CARDINALITY` would make
+the constant load-bearing for a decision it was never honest for (§99.8), and a constant that has
+shipped is a constant that gets tuned instead of removed. The join that landed keeps that rule by
+making no choice at all — which is the cheapest way to honour it and was not the way this table
+expected it to be honoured.
 
 ## 99.10 What this document does not claim
 
-- **Nothing is built.** Not a gate, not an operator, not a diagnostic. The measurements in §99.3 are
-  of the compiler as it stands, and every command is quoted in full so they can be re-run.
+- **What is built is the join and nothing else in the algebra.** `group by`, the aggregates,
+  `distinct` and difference are unbuilt, and so is `arrange_by`. The measurements in §99.3 are of the
+  compiler *before* the operator, and every command is quoted in full so they can be re-run — with
+  `--no-join`, which is how that transcript is reproduced today.
 - **It does not reopen D26.** Nothing here puts a relation in the store or writes anything on the
   append path. Every operator proposed is a read-side maintained arrangement whose oracle is the
   recomputed answer.
-- **It does not price the operators.** §99.8 says what the cost model must grow to hold them; it
-  does not say what a join costs, because no one has measured one.
-- **It does not settle the surface.** §99.6 recommends inference and says what would go wrong with a
-  second query surface, but a recognition rule that cannot see a lookup behind a call is a real
-  limit and item 5 is where it gets tested rather than assumed.
+- **It does not price the operators.** §99.8 says what the cost model must grow to hold them. What
+  is now measured is one program's *maintenance* at two sizes (§99.9 item 1), which says the join
+  does not cost the collection; it does not say what a join costs against a recompute, or what the
+  index costs in memory, and [`23`](23-incremental-views-report.md) §23.14's per-subscriber metric is
+  where the second of those would be answered.
+- **It does not settle the surface** beyond the one shape. §99.6's inference is built and reaches a
+  lookup behind a call; it does not reach one inside a nested lambda, one whose key reads anything
+  but the element, or a body with two lookups in it. Each refuses with its own reason rather than
+  silently compiling slowly, which is the part that was assumed and is now tested.
 - **`min`/`max` over a group and `distinct` over values are named as hard**, not designed. Item 6 and
   item 7 each need their own decision before they are written.
 

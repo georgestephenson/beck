@@ -1002,3 +1002,146 @@ fn an_adr_is_numbered_for_the_file_it_is_in_and_is_listed() {
         bad.join("\n  ")
     );
 }
+
+/// **A document that shows a spelling the compiler refuses says that it does.**
+///
+/// [`docs/11-language-tour.md`](../../../../docs/11-language-tour.md) §11.6 said "`ui:` checks
+/// neither attribute nor event names, so `cls=` compiles and reaches the browser as an attribute
+/// nothing reads" for as long as the vocabulary that refuses it has existed, and
+/// [`docs/README.md`](../../../../docs/README.md)'s index said the same in a summary. Both were
+/// false, both were about a compiler behaviour that had *changed under them*, and nothing noticed —
+/// because no gate compiles or reads the Beck in `docs/`, and `docs/86-getting-started.md` is the
+/// one document whose programs a test does run.
+///
+/// This is the narrow version of the gate that would have caught it, and it is narrow on purpose:
+/// most Beck in `docs/` is a fragment or a sketch, and demanding that all of it compile would demand
+/// rewriting [`docs/01`](../../../../docs/01-vision-and-premise.md)'s faithful translation of the
+/// original sketch into a language that did not exist when the sketch was written. What *can* be
+/// checked mechanically is narrower and is exactly the failure that happened: a document showing a
+/// spelling the compiler has a diagnostic for must name the diagnostic.
+///
+/// The list of spellings is [`beck_macro::vocabulary`]'s own alias tables rather than a copy, so a
+/// new alias is covered the day it is added — which is the difference between this and a blocklist
+/// somebody has to remember to extend.
+#[test]
+fn a_document_showing_a_refused_spelling_names_the_diagnostic_that_refuses_it() {
+    // `00-original-idea.md` is a preserved transcript and is the source every other document defers
+    // to (`AGENTS.md`). It predates every diagnostic in this compiler and is not editable to satisfy
+    // one, so it is exempt by name rather than by an accident of not currently tripping.
+    const VERBATIM: &[&str] = &["00-original-idea.md"];
+
+    let refused: Vec<(String, &str)> = beck_macro::vocabulary::ALIASES
+        .iter()
+        .map(|(wrong, _)| (format!("{wrong}="), "B0218"))
+        .chain(
+            beck_macro::vocabulary::EVENT_ALIASES
+                .iter()
+                .map(|(wrong, _)| (format!("on_{wrong}="), "B0217")),
+        )
+        .collect();
+
+    let mut bad = Vec::new();
+    let dir = repo_root().join("docs");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("docs/ is checked in")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "md"))
+        .collect();
+    files.sort();
+
+    for path in &files {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if VERBATIM.contains(&name) {
+            continue;
+        }
+        let text = std::fs::read_to_string(path).expect("a document is readable");
+        for (spelling, code) in &refused {
+            if text.contains(spelling.as_str()) && !text.contains(code) {
+                bad.push(format!(
+                    "{name} shows `{spelling}`, which `{code}` refuses, and never mentions {code}"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "{} document(s) show a spelling the compiler refuses without saying so — a reader who \
+         copies one gets a compile error the page told them was fine:\n  {}",
+        bad.len(),
+        bad.join("\n  ")
+    );
+}
+
+/// **Every test the vulnerability matrix names exists.**
+///
+/// [`docs/43`](../../../../docs/43-threat-model.md) §43.8 restates §43.2's guarantees in CWE's
+/// vocabulary, and every row that claims something is *unrepresentable by construction* names the
+/// negative test that proves it. That naming is the artefact: a matrix whose citations have rotted
+/// is worse than no matrix, because it reads as evidence and is not — and rotting is the normal
+/// case, since a test may be renamed by somebody who has never read this document.
+///
+/// So the citations are checked mechanically. The form is `suite.rs::test_name`, and both halves
+/// have to be right: the file has to exist under `beck-cli/tests/`, and it has to define a function
+/// with that name.
+///
+/// It earned itself before it was written. The first draft of §43.8 cited
+/// `macro_bomb.rs::a_macro_that_expands_forever_is_refused_rather_than_hanging`, which is a
+/// plausible name for a test that does not exist; the real one is `a_doubling_macro_is_refused`.
+#[test]
+fn every_test_the_vulnerability_matrix_names_exists() {
+    let doc = repo_root().join("docs/43-threat-model.md");
+    let text = std::fs::read_to_string(&doc).expect("the threat model is checked in");
+    let tests = compiler_root().join("crates/beck-cli/tests");
+
+    // `suite.rs::name`, as the document writes it inside backticks.
+    let mut cited: Vec<(String, String)> = Vec::new();
+    for piece in text.split('`') {
+        let Some((file, name)) = piece.split_once(".rs::") else {
+            continue;
+        };
+        if file.is_empty()
+            || !file
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            || name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            continue;
+        }
+        cited.push((format!("{file}.rs"), name.to_string()));
+    }
+
+    assert!(
+        cited.len() >= 12,
+        "only {} citations were read out of §43.8 — the parser is wrong, not the document",
+        cited.len()
+    );
+
+    let mut bad = Vec::new();
+    for (file, name) in &cited {
+        let path = tests.join(file);
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            bad.push(format!(
+                "{file} does not exist, and §43.8 cites {name} in it"
+            ));
+            continue;
+        };
+        if !src.contains(&format!("fn {name}(")) {
+            bad.push(format!("{file} exists and defines no `{name}`"));
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "{} citation(s) in the vulnerability matrix name a test that is not there, so the matrix \
+         claims evidence it does not have:\n  {}",
+        bad.len(),
+        bad.join("\n  ")
+    );
+}

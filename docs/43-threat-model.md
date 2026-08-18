@@ -245,3 +245,40 @@ and a claim enters the project as an executable artefact rather than as a paragr
 penetration test, no cryptographic review and no assessment of the dependency graph's own `unsafe`.
 And it says nothing about *residual risk* in the quantitative sense, because a project that has not
 deployed anything has no incident history to compute one from.
+
+## 43.8 The vulnerability matrix: the same guarantees in the auditor's vocabulary
+
+§43.2 states what is defended in *this project's* terms. A reviewer from outside does not have those
+terms, and the point of a matrix is that they should not have to learn them before they can check
+anything. [`12`](12-standards-and-conformance.md) §12.7 chartered one artefact for that and
+[`35`](35-standards-landscape.md) §35.2 gave its shape: each entry marked **unrepresentable by
+construction** — naming the negative test that proves it — **possible**, with the guidance a
+language owes, or **not applicable**, with the reason.
+
+**Every test named below is asserted to exist** by
+`docs.rs::every_test_the_vulnerability_matrix_names_exists`. That gate is the whole difference
+between a matrix and a table of intentions: a row citing a test that was renamed or deleted is a
+claim with nothing behind it, and a reader has no way to tell one from the other.
+
+### The CWE half
+
+The seven [`12`](12-standards-and-conformance.md) §12.7 names, in CWE's numbering.
+
+| CWE | Verdict | Evidence, and what the verdict rests on |
+|---|---|---|
+| **CWE-79** cross-site scripting | **Unrepresentable by construction** | A page is a typed tree, not text, so there is no interpolation site to get wrong: text is escaped by type in both text and attribute context, and a handler is a *declarative attribute* carrying a serialised command rather than generated script. `security.rs::a_todo_whose_text_is_a_script_tag_renders_as_text` and `security.rs::a_handler_is_a_declarative_attribute_rather_than_generated_javascript` |
+| **CWE-89** SQL injection | **Unrepresentable by construction**, and for a reason worth stating precisely | Not "we bind parameters" — a Beck program does not *write* SQL. The read model is a projection the runtime serves; the client protocol carries a command from a closed union and has no message that carries a query at all, which is what `security.rs::the_protocol_has_no_message_that_writes_anything_but_a_command` refuses with a `sql`-shaped frame. §43.3's exclusion still applies: `beck run --pgwire` is a SQL *server*, and what it answers is bounded by the grant in `security.rs::the_database_grant_is_what_the_program_actually_does` rather than by parsing |
+| **CWE-915** mass assignment | **Unrepresentable by construction** | A client proposes a *command* from a closed union, never a record patch, and only the validator's output reaches the log. `security.rs::a_command_that_is_not_in_the_union_is_refused_at_the_boundary` and `security.rs::events_that_do_not_come_from_the_validator_are_refused` |
+| **CWE-200** exposure of sensitive information | **Unrepresentable by construction, for what is typed `secret[T]`** | The placement solver refuses the flow rather than the value, so burying it does not help, and the client artefact carries no rule from the program. `security.rs::a_secret_in_a_command_is_a_compile_error_naming_the_flow`, `security.rs::a_secret_buried_under_three_records_is_found_just_the_same`, `security.rs::placing_a_secret_handling_function_on_the_client_is_refused`, `security.rs::the_client_artefact_contains_no_rule_from_the_program`. **The verdict is about the type, not about the data**: information nobody marked is information the compiler cannot know is sensitive, which is guidance rather than a guarantee |
+| **CWE-352** cross-site request forgery | **Structural, and tested** | There is no ambient-credential form post to forge: the merge point is a websocket whose handshake is checked against the server's own origin. `runtime_edge.rs::a_socket_opens_for_the_servers_own_page_and_not_for_another_hosts` |
+| **CWE-674** uncontrolled recursion | **Possible, and bounded** — the honest verdict | A recursive program is a recursive program; what is guaranteed is that neither the compiler nor a macro dies of one. The front end counts its own depth ([`adr/0012`](adr/0012-the-front-end-counts-its-own-recursion.md)) and expansion has fuel: `front_end_bound.rs::the_file_that_aborted_the_compiler_is_now_refused_with_a_span`, `front_end_bound.rs::a_flat_block_is_bounded_by_a_counted_ceiling_rather_than_by_the_stack`, `macro_bomb.rs::a_doubling_macro_is_refused` |
+| **CWE-639** authorization bypass through a user-controlled key | **Possible — and this is the row an auditor should read first** | Ownership is checked in `validate`, at the one chokepoint, against an actor the runtime decides; with a verifying identity provider that actor is not forgeable ([`48`](48-identity-report.md)). **The default provider believes the client**, which makes every ownership check in a default deployment an honour system, and the project asserts that absence rather than implying it away: `pending_security.rs::identity_defaults_to_believing_the_client` goes red when it stops being true. [`14`](14-review-findings.md) records that this undercut our own claim once already |
+
+### The ISO/IEC 24772-1 half, and why it is not here
+
+[`35`](35-standards-landscape.md) §35.2 adopts 24772-1's catalogue as a mapping, and that half is
+**not written**, for a reason rather than a shrug: the catalogue is a paywalled ISO standard, it is
+not in this tree, and a matrix over clause numbers written from memory would be the exact failure
+§12.1 exists to prevent — a claim entering the project as prose rather than as evidence. Writing it
+needs somebody with the document open. Recorded here rather than left as an unexplained gap, and the
+CWE half above is complete on its own terms because CWE is public and its identifiers are checkable.

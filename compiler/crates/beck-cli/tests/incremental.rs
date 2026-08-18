@@ -18,7 +18,11 @@ use beck_core::Placed;
 /// `beck explain cost` over a program, which is `explain incremental`'s sibling about the same
 /// plan: that one says whether a view *can* be maintained, this one says what maintaining it costs.
 fn cost(p: &Placed) -> String {
-    beck_core::plan::cost_report(&beck_core::plan::Plan::compile(p))
+    cost_with(p, beck_core::plan::Relate::Recognise)
+}
+
+fn cost_with(p: &Placed, relate: beck_core::plan::Relate) -> String {
+    beck_core::plan::cost_report(&beck_core::plan::Plan::compile_with(p, relate))
 }
 
 fn ok(name: &str, src: &str) -> Placed {
@@ -95,8 +99,13 @@ page: Signal[Html] = per_session(chosen, show)
 /// is the shape of the defect rather than a check on it.
 #[test]
 fn the_tally_counts_every_line_the_report_prints() {
-    // `27-review.beck` is the program §99.3 quotes: its loop body captured the accumulator.
-    let text = cost(&corpus("27-review.beck"));
+    // `27-review.beck` is the program §99.3 quotes, **with the join switched off**, which is the
+    // plan that finding was made against. Its loop is an equi-join and the compiler now reads it as
+    // one, so with the recognition on there is no captured accumulator left to count — the defect
+    // this test was written for was in the *report*, not in the plan, and it is still the report
+    // that has to be held to what it prints. `Relate::Refuse` is how a program with two reasons for
+    // costing `O(n)` stays reachable now that the corpus has one fewer.
+    let text = cost_with(&corpus("27-review.beck"), beck_core::plan::Relate::Refuse);
     let printed = text
         .lines()
         .filter(|l| l.contains("n entries copied") || l.contains("n applications on every event"))
@@ -190,6 +199,97 @@ fn a_capture_says_how_often_what_it_captured_moves() {
     assert_ne!(never, per_subscription);
     assert_ne!(per_subscription, per_event);
     assert_ne!(never, per_event);
+}
+
+/// A loop that looks something up and is **not** read as a join says which condition failed, and
+/// says it after fusion.
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.6's rule for the shape
+/// inference cannot see — "compile it the slow way and *say so*". The reason is recorded on the
+/// `map_list` the decomposition built; every `ui:` loop then fuses that `map_list` into the
+/// `flatten` above it, and the survivor kept its own empty field. So the explanation existed and the
+/// one shape it exists for was the one shape that never printed it, on both programs in the tree
+/// that have it. The assertion is therefore on the **fused** plan, which is what
+/// `beck explain cost` prints.
+#[test]
+fn a_loop_that_is_not_read_as_a_join_says_why_after_fusion() {
+    // The key reads the session as well as the element, so it is not an equi-join on the left row:
+    // there is one lookup per (element, session) pair and no single index answers it.
+    let text = cost(&ok(
+        "not-a-join.beck",
+        &capturing(
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return map_list(map_keys(s.items), \
+                                 lambda k: k + str(unwrap_or(map_get(s.items, \
+                                                                     k + session.actor), 0)))\n",
+        ),
+    ));
+
+    let line = text
+        .lines()
+        .find(|l| l.contains("not read as a join"))
+        .unwrap_or_else(|| panic!("the loop pays for a lookup and does not say why:\n{text}"));
+    assert!(
+        line.contains("not an equi-join on the left row"),
+        "the reason names the wrong condition: {line:?}"
+    );
+    // Beside the cost it explains, rather than somewhere else in the report: a reason a reader has
+    // to go looking for is a reason they will not find.
+    let (cause, cost_line) = (
+        text.lines().position(|l| l.contains("not read as a join")),
+        text.lines().position(|l| l.contains("on every event")),
+    );
+    assert_eq!(
+        cause,
+        cost_line.map(|n| n + 1),
+        "the reason is not under the line it explains:\n{text}"
+    );
+}
+
+/// **Several lookups in one body are several joins**, chained — not a refusal.
+///
+/// `corpus/33-awareness.beck` renders a person's whereabouts *and* their note, so its loop looks up
+/// in two collections. Refusing that shape would leave the capture in place and the whole collection
+/// reconsidered per event, which is the cost the operator exists to remove — and a row showing two
+/// related things is an ordinary page rather than a corner.
+///
+/// One of the two is a lookup into the **awareness roster**, which
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.5 decision 3 expected
+/// would have to be refused, because a roster moves when `seq` does not. It does not have to be:
+/// the index and the left side advance together inside one subscriber's engine, and everything
+/// downstream of the roster was already per-subscriber. The plan shape is asserted here and the
+/// *answers* are the differential's, which drives the shared dataflow as well as a standalone
+/// engine.
+#[test]
+fn a_loop_that_looks_up_twice_becomes_two_joins_and_captures_nothing() {
+    use beck_core::plan::{Op, Plan, Relate};
+
+    let placed = corpus("33-awareness.beck");
+    let plan = Plan::compile(&placed);
+    let joins = plan
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.op, Op::Join { .. }))
+        .count();
+    assert_eq!(
+        joins,
+        2,
+        "its loop looks up in two collections, so it is two joins: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+
+    // The point of the chain rather than a count of it: nothing is reapplied per event any more.
+    let text = cost(&placed);
+    assert!(
+        !text.contains("downstream of the state"),
+        "a capture that moves per event survived the rewrite:\n{text}"
+    );
+    // And it was there to remove — otherwise this passes on a program that never had the shape.
+    let before = beck_core::plan::cost_report(&Plan::compile_with(&placed, Relate::Refuse));
+    assert!(
+        before.contains("downstream of the state"),
+        "33-awareness.beck no longer has the shape this gate is about:\n{before}"
+    );
 }
 
 /// A program whose page is a list built by `rows`, so that what `rows`'s lambda captures is the

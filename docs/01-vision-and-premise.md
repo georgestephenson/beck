@@ -72,6 +72,16 @@ This is the todo program from [`00`](00-original-idea.md) §Exchange 4, translat
 construct into the surface syntax that [`02-syntax.md`](02-syntax.md) motivates. Nothing is added or
 dropped; only notation changes.
 
+**It does not compile, and that is deliberate rather than rot.** It is a faithful translation of the
+*sketch*, so it keeps the sketch's notation where the language later chose differently: method calls
+(`todos.map(…)`, `.values().sort_by(…)`), `f"…"` interpolation, a handler written as a `lambda`
+rather than a command constructor, `cls=` where the attribute is `class` (now `B0218`), a `css:`
+block that has no parser, a `validate` returning `Option[Event]` where it returns
+`Result[list[Event], Rejection]`, and an `input` with no label (now `B0221`). Rewriting it would
+make this section claim something it does not: that the sketch and the language are the same text.
+**[`examples/todo.beck`](../compiler/examples/todo.beck) is the same program in the language**, it
+compiles, and a test runs it. Read this one for the shape and that one for the syntax.
+
 ```python
 # todo.beck — one file: client, server, database, wire, deploy
 

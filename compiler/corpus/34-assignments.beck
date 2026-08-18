@@ -1,0 +1,148 @@
+# The program that is *about* a relationship (docs/99 §99.9 item 4).
+#
+# Every other program here holds one collection and asks questions of it. This one holds two and the
+# whole page is the sentence relating them: an issue names an assignee, and the row shows who that
+# is. `27-review.beck` contains a join by accident — it was written to embarrass parameterised types
+# — and its key is unique, so one note has one verdict and nothing exercises what happens when
+# **many** rows wait on the same one.
+#
+# That is the case this file exists for, and it is the interesting half of the delta rule
+# (docs/99 §99.5): renaming a person moves **one** entry on the right and must update every issue
+# assigned to them, without visiting the issues that are not. A join maintained only from the left
+# would be correct on the first half and silently stale on the second — the page would keep showing
+# the old name until the next issue moved — and no test over a single-collection program can see it.
+#
+# Three shapes, on purpose:
+#
+#   * **many issues to one person**, so the reverse index holds a set rather than an entry;
+#   * an assignee that **does not exist**, because the lookup is a `map_get` and an unmatched row is
+#     a row with `None` rather than a row that vanishes;
+#   * a person **renamed after** the issues that name them, which is the right-hand delta arriving
+#     on its own.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model State:
+    issues: Map[Str, Issue]
+    people: Map[Str, Person]
+
+model Issue:
+    id: Str
+    title: Str
+    assignee: Str
+
+model Person:
+    id: Str
+    name: Str
+
+union Command:
+    Hire(id: Str, name: Str)
+    Rename(id: Str, name: Str)
+    File(id: Str, title: Str, assignee: Str)
+
+union Event:
+    Hired(id: Str, name: Str)
+    Renamed(id: Str, name: Str)
+    Filed(id: Str, title: Str, assignee: Str)
+
+union Rejection:
+    Blank
+    NoSuchPerson
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Hired(id, name):
+            return s.with(people=map_insert(s.people, id, Person(id=id, name=name)))
+        case Renamed(id, name):
+            return renamed(s, id, name)
+        case Filed(id, title, assignee):
+            return s.with(issues=map_insert(s.issues, id,
+                                            Issue(id=id, title=title, assignee=assignee)))
+
+def renamed(s: State, id: Str, name: Str) -> State:
+    match map_get(s.people, id):
+        case Some(value):
+            return s.with(people=map_insert(s.people, id, value.with(name=name)))
+        case None:
+            return s
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Hire(id, name):
+            if str_is_empty(str_trim(name)):
+                return Err(error=Blank)
+            return Ok(value=[Hired(id=id, name=name)])
+        case Rename(id, name):
+            if not map_contains(s.people, id):
+                return Err(error=NoSuchPerson)
+            return Ok(value=[Renamed(id=id, name=name)])
+        case File(id, title, assignee):
+            if str_is_empty(str_trim(title)):
+                return Err(error=Blank)
+            return Ok(value=[Filed(id=id, title=title, assignee=assignee)])
+
+# The lookup. Written the way anybody would write it — a function of the state and a key — which is
+# what makes recognising it worth doing rather than asking for a `join` keyword.
+def who(s: State, id: Str) -> Str:
+    match map_get(s.people, id):
+        case Some(value):
+            return value.name
+        case None:
+            return "unassigned"
+
+def open_issues(s: State) -> list[Issue]:
+    return sort_by(map_values(s.issues), lambda i: i.title)
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: ("issues for " + session.actor)
+            ul:
+                for i in open_issues(s):
+                    li(key=i.id):
+                        span: i.title
+                        span: (" — " + who(s, i.assignee))
+            p: (str(list_len(map_values(s.people))) + " people")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, board, validate)
+board: Signal[State] = durable(fold(apply_event, State(issues={}, people={}), events))
+page: Signal[Html] = per_session(board, view)
+
+test "an issue shows who it is assigned to":
+    given [Hired(id="p1", name="Ada"), Filed(id="i1", title="the bug", assignee="p1")]
+    expect page contains "the bug"
+    expect page contains "— Ada"
+
+# That *every* row moved rather than one of them is not a claim `contains` can make — it asks about
+# a string somebody thought to name (docs/22 §22.10). The gate for it is the differential:
+# `incremental_engine.rs` folds a generated log one event at a time and compares the maintained page
+# with the recomputed one byte for byte, so a rename that reached the first row and not the second
+# is a failure there and nowhere else.
+test "many issues wait on one person, and renaming them renames the row":
+    given [Hired(id="p1", name="Ada"),
+           Filed(id="i1", title="first", assignee="p1"),
+           Filed(id="i2", title="second", assignee="p1"),
+           Renamed(id="p1", name="Ada L")]
+    expect page contains "first"
+    expect page contains "second"
+    expect page contains "— Ada L"
+
+test "an issue assigned to nobody is still an issue":
+    given [Filed(id="i1", title="orphan", assignee="ghost")]
+    expect page contains "orphan"
+    expect page contains "unassigned"
+
+test "a rename of somebody who was never hired is refused":
+    given []
+    when Rename(id="p9", name="nobody")
+    expect Err(error=NoSuchPerson)
+
+test "a blank title never reaches the log":
+    given []
+    when File(id="i1", title="  ", assignee="p1")
+    expect Err(error=Blank)
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "issues for"

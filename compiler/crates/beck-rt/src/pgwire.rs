@@ -459,6 +459,36 @@ impl read::Rows for Snapshot<'_> {
         };
         Ok(values)
     }
+
+    /// The size of a table without building a row of it — [`read::Rows::count`]'s half of
+    /// [`docs/23`](../../../../../docs/23-incremental-views-report.md) §23.19.
+    ///
+    /// Both sources know their own size and neither was being asked. A maintained arrangement is a
+    /// `BTreeMap`, so `count(*)` over a derived collection is §3.8's "never a recount" reaching
+    /// `psql`; a `Map` or a `list` in the accumulator knows its length too, and the scan path was
+    /// cloning every value out of it before counting them.
+    ///
+    /// The catalogue answers `None` and is scanned: it is a handful of rows built on demand, and a
+    /// second way to count them would be a second thing to keep true.
+    fn count(&self, table: &Table) -> Result<Option<u64>, SqlError> {
+        Ok(match &table.source {
+            read::Source::Catalogue => None,
+            read::Source::State(path) => match read::at_path(self.state, path) {
+                Some(Value::Map(m)) => Some(m.len() as u64),
+                Some(Value::List(xs)) => Some(xs.len() as u64),
+                // A record is one row, and anything else is a shape the scan path decides about.
+                _ => None,
+            },
+            read::Source::View(op) => {
+                self.reader
+                    .len(self.state, self.version, *op)
+                    .map_err(|e| SqlError {
+                        message: format!("the view this table reads could not be maintained: {e}"),
+                        code: "58000",
+                    })?
+            }
+        })
+    }
 }
 
 // -------------------------------------------------------------------------------------------

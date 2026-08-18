@@ -1183,6 +1183,22 @@ def down(n: Int) -> Int:
 ///
 /// The second pair is the control from the other direction — the same loop reading rather than
 /// growing — so a reader can tell a linear append from a fast one.
+///
+/// # What is asserted, and what is only printed
+///
+/// The speedups are the *product* of this suite and they are printed. The **assertion** is on the
+/// native column alone: per-element compiled cost, at two sizes, which is where a copying append
+/// would show up as growth. This used to gate on the ratio-of-speedups instead, and that failed on
+/// CI while passing everywhere else — for a reason worth keeping, because it is the trap
+/// [`docs/13`](../../../../docs/13-testing.md) §13.7 names. A speedup is a *quotient of two*
+/// measurements, so gating on how it moves imports the noise of both, and the denominator here is
+/// the evaluator: on a contended runner its 2,000-element median came out 20.7× slower than on a
+/// developer machine while its 8,000-element median came out only 12.0× slower — the first thing
+/// measured in a process pays for warm-up — so the speedup at the small size inflated, the
+/// ratio-of-ratios collapsed, and the failure said *the append copies* about an append that had not
+/// changed. The native column said the same thing on both machines the whole time: **1.68× per
+/// element on CI and 1.54× locally**, against the 4× a copy would cost. Gate the shape, print the
+/// rate ([`docs/64`](../../../../docs/64-compile-speed-report.md) §64.1).
 #[test]
 fn what_an_appended_accumulator_costs_against_the_tree_walker() {
     const SRC: &str = r#"
@@ -1226,13 +1242,14 @@ def add_from(xs: list[Int], i: Int, acc: Int) -> Int:
     let evaluator = beck_eval::backend_for(program.clone());
     println!("{}\n", artifact.toolchain().version);
     println!(
-        "{:<14} {:>10} {:>14} {:>14} {:>9}",
-        "benchmark", "elements", "evaluator", "native", "ratio"
+        "{:<14} {:>10} {:>14} {:>14} {:>9} {:>9}",
+        "benchmark", "elements", "evaluator", "native", "ratio", "ns/elem"
     );
     let long = |n: usize| Value::List(Arc::new((0..n as i64).map(Value::Int).collect::<Vec<_>>()));
+    // Per-element compiled nanoseconds at each size, which is what is asserted on.
     let mut seen: Vec<(&str, f64, f64)> = Vec::new();
     for name in ["doubled", "summed"] {
-        let mut ratios = [0.0f64; 2];
+        let mut per_element = [0.0f64; 2];
         for (i, size) in [2_000usize, 8_000].iter().enumerate() {
             let args = vec![long(*size)];
             let runs = if i == 0 { 7 } else { 3 };
@@ -1249,23 +1266,28 @@ def add_from(xs: list[Int], i: Int, acc: Int) -> Int:
                     .call(name, &args)
                     .expect("the native backend answers");
             });
-            ratios[i] = walked.as_secs_f64() / compiled.as_secs_f64();
+            per_element[i] = compiled.as_secs_f64() * 1e9 / *size as f64;
             println!(
-                "{:<14} {:>10} {:>14} {:>14} {:>8.2}×",
+                "{:<14} {:>10} {:>14} {:>14} {:>8.2}× {:>9.2}",
                 if i == 0 { name } else { "" },
                 size,
                 format!("{walked:?}"),
                 format!("{compiled:?}"),
-                ratios[i]
+                walked.as_secs_f64() / compiled.as_secs_f64(),
+                per_element[i]
             );
         }
-        seen.push((name, ratios[0], ratios[1]));
+        seen.push((name, per_element[0], per_element[1]));
     }
     for (name, small, large) in &seen {
+        // Four times the elements. A copying append costs about four times as much *per element*;
+        // one that pushes costs about the same. Three is the bound the rest of this project's shape
+        // gates use (`scaling.rs`), and it sits well clear of both.
         assert!(
-            large / small > 0.5,
-            "`{name}` was {small:.2}× at 2,000 elements and {large:.2}× at 8,000 — the ratio \
-             collapsed, which is what an append that copies looks like"
+            large / small < 3.0,
+            "`{name}` cost {small:.2} ns per element at 2,000 and {large:.2} ns at 8,000, which is \
+             {:.2}× — the shape of an append that copies rather than one that pushes (docs/93 §93.7)",
+            large / small
         );
     }
 }

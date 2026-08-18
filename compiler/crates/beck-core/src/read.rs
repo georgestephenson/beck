@@ -783,6 +783,22 @@ impl std::error::Error for SqlError {}
 pub trait Rows {
     /// Every row of one table, in the order the collection holds them.
     fn scan(&self, table: &Table) -> Result<Vec<Value>, SqlError>;
+
+    /// **How many rows there are, if that can be answered without building them.**
+    ///
+    /// [`23`](../../../../../docs/23-incremental-views-report.md) §23.19: "`count(*)` without
+    /// scanning — **not built**. The plan's `list_len` is ±1 per delta; the SQL count is over the
+    /// rows it scanned." This is the seam that closes it. A maintained arrangement and a `Map` in
+    /// the accumulator each know their size, so a query whose whole answer is a number should not
+    /// clone every value and build a `Cell` for every column of every one.
+    ///
+    /// `None` means "not without a scan", and the caller falls back — so an implementation that
+    /// does not override this is correct and merely as slow as it was. That default is the point:
+    /// the seam cannot make a reader wrong, only faster.
+    fn count(&self, table: &Table) -> Result<Option<u64>, SqlError> {
+        let _ = table;
+        Ok(None)
+    }
 }
 
 impl Schema {
@@ -889,6 +905,46 @@ impl Schema {
     fn select(&self, s: &Select, rows_of: &dyn Rows) -> Result<Answer, SqlError> {
         let table = self.resolve_from(s)?;
         let (columns, proj) = self.project_columns(s, table)?;
+
+        // `select count(*) from t`, with nothing to narrow it: the answer is the collection's size,
+        // and the collection already knows it (§23.19). Everything below this would clone every
+        // value, build a `Cell` per column of every row, and then count the rows — `O(n)` cells for
+        // an answer that is one integer.
+        //
+        // The conditions are conservative on purpose. A `where` needs the rows to test; an `order`,
+        // `limit` or `offset` is applied *before* the collapse below, so honouring one of those on
+        // this path would mean reproducing that behaviour rather than skipping work.
+        if let Some(t) = table {
+            let bare = proj.iter().any(|p| matches!(p, Proj::Count))
+                && proj
+                    .iter()
+                    .all(|p| matches!(p, Proj::Count | Proj::Literal(_)))
+                && s.filter.is_empty()
+                && s.order.is_none()
+                && s.limit.is_none()
+                && s.offset == 0;
+            if bare {
+                if let Some(n) = rows_of.count(t)? {
+                    let n = match t.cardinality {
+                        Cardinality::Many => n,
+                        Cardinality::One => n.min(1),
+                    };
+                    let row: Vec<Cell> = proj
+                        .iter()
+                        .map(|p| match p {
+                            Proj::Count => Some(Datum::Bigint(n as i64)),
+                            Proj::Literal(d) => Some(d.clone()),
+                            Proj::Column(_) => None,
+                        })
+                        .collect();
+                    return Ok(Answer {
+                        tag: "SELECT 1".to_string(),
+                        columns,
+                        rows: vec![row],
+                    });
+                }
+            }
+        }
 
         // `select 1` and friends: one row, no table, and the four things a driver asks before it
         // trusts a connection.

@@ -206,6 +206,16 @@ fn round(
             continue;
         }
         (rule.apply)(plan, i, p);
+        // The absorbed operator's *reason* moves with its work. A loop that looks something up and
+        // was not read as a join records why on the `map_list`
+        // ([`crate::plan::Node::relate`]) — and every `ui:` loop then fuses that `map_list` into the
+        // `flatten` above it, which kept its own empty field. So the one shape the explanation
+        // exists for was the one shape that never printed it: `beck explain cost` named the cost and
+        // said nothing about the cause on `board.beck` and `33-awareness.beck`, which are the only
+        // two programs in the tree that have it.
+        if plan.nodes[i].relate.is_none() {
+            plan.nodes[i].relate = plan.nodes[p].relate.take();
+        }
         fired.push((
             i,
             Fusion {
@@ -548,9 +558,7 @@ fn substitute(plan: &mut Plan, from: OpId, to: OpId) {
     };
     for node in &mut plan.nodes {
         node.inputs.iter_mut().for_each(swap);
-        if let Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } =
-            &mut node.op
-        {
+        if let Some(f) = node.op.fun_mut() {
             f.captures.iter_mut().for_each(swap);
         }
     }

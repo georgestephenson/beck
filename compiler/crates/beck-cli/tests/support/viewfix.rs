@@ -162,7 +162,8 @@ def page(todos: list[Todo], left: Int) -> Html:
     return ui:
         main:
             h1: "todos"
-            input(placeholder="what needs doing?", on_enter=Toggle(id="$value"))
+            input(aria_label="what needs doing?", placeholder="what needs doing?",
+                  on_enter=Toggle(id="$value"))
             ul:
                 for t in todos:
                     li(key=t.id, class=done_class(t)):

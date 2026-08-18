@@ -1,0 +1,12 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(&edited(\"h1: \\\"todos\\\"\", \"img(src=\\\"/logo.png\\\")\"))"
+---
+error[B0219]: this image has no alt text
+  --> t.beck:107:13
+    |
+107 |             img(src="/logo.png")
+    |             ^^^^^^^^^^^^^^^^^^^^ a screen reader announces the file name, or nothing
+    |
+  = note: `alt=""` is the right answer for an image that carries no meaning — it is HTML's own way of saying so, and it is accepted here
+  = help: add `alt="…"`, or `a11y_exempt="…"` with a reason

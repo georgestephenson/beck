@@ -119,6 +119,7 @@ Every operator, what it reads, what orders its arrangement and which side of the
 |---|---|---|
 | `<FILE>` | FILE |  |
 | `--unfused` | true \| false | The plan as the decomposition produced it, before any rewrite — one operator per construct the source names, which is what the rules are applied to |
+| `--no-join` | true \| false | Leave a loop that looks something up as the loop it was written as, rather than reading it as an equi-join and indexing what it reads (§99.6).  The off switch for a choice the compiler makes unbidden. Printing the plan both ways is how to see what the operator is worth on your program. |
 
 
 ## `beck explain cost`
@@ -130,6 +131,7 @@ In the engine's own units — applications, entries touched, entries copied, ope
 | Argument | | |
 |---|---|---|
 | `<FILE>` | FILE |  |
+| `--no-join` | true \| false | The same, with the join recognition switched off — what one event costs the program as its loops are written, with nothing indexed |
 
 
 ## `beck explain sql`

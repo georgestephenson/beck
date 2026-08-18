@@ -93,7 +93,13 @@ construction** (with the negative test proving it — the §12.7 discipline), **
 (with the guidance 24772 asks a language to give), or **not applicable** (with the reason). Type
 confusion, unchecked array indexing, dead stores across tiers, injection — a reviewer from any
 safety-critical shop can then read Beck's claims in the only cross-language vulnerability
-vocabulary that exists. Long term, a language-specific "Beck part" written in the series' own
+vocabulary that exists.
+
+**The matrix exists and this half of it does not** ([`43`](43-threat-model.md) §43.8): the seven CWE
+rows are written and gated, and the 24772-1 mapping is blocked on the standard's text, which is
+paywalled and not in this tree. That is a real blocker rather than a scheduling one — it needs
+somebody with the document open — and it is recorded in the matrix itself so a reader does not
+mistake the gap for an oversight. Long term, a language-specific "Beck part" written in the series' own
 format is a document worth publishing ourselves (§35.4); an actual ISO part needs a WG 23 work
 item and is not worth the committee overhead before 1.0.
 

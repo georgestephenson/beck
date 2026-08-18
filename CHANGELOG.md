@@ -17,6 +17,162 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-17 — A red CI gate root-caused to its own denominator.**
+  `measure_native.rs::what_an_appended_accumulator_costs_against_the_tree_walker` failed on CI for
+  three runs and passed everywhere else, reporting "the ratio collapsed, which is what an append
+  that copies looks like" about an append nothing had touched. It gated on how the **speedup**
+  moved between two sizes — a quotient of two measurements — so it imported the noise of both, and
+  the noisy one was the denominator: on a contended runner the evaluator's 2,000-element median came
+  out **20.7×** slower than on a developer machine while its 8,000-element median came out only
+  **12.0×** slower, because the first thing measured in a process pays for warm-up. The small
+  speedup inflated and the ratio-of-ratios fell through the bound. The native column — where the
+  property actually lives — said the same thing on both machines throughout: **1.68× per element on
+  CI, 1.54× locally**, against the 4× a copy would cost. So the assertion moves to per-element
+  compiled cost at two sizes, which is machine-independent and is the instrument the rest of this
+  project's shape gates use (`scaling.rs`, 3× bound); the speedups are still printed, because they
+  are what this suite is *for*. [`docs/13`](docs/13-testing.md) §13.7 names this trap and
+  [`docs/64`](docs/64-compile-speed-report.md) §64.1 names the cure — gate the shape, print the
+  rate — and a gate that divides by something it does not need is a third way to get it wrong.
+
+- **2026-08-17 — `select count(*)` stops building the rows it is not going to return.**
+  [`docs/23`](docs/23-incremental-views-report.md) §23.19's last open row: "the plan's `list_len` is
+  ±1 per delta; the SQL count is over the rows it scanned". So asking `psql` how many todos there
+  are cloned every todo out of the collection and built a `Cell` per column of every one, to answer
+  with a single integer — while `Op::Count` two layers down had read the size in `O(1)` since the
+  engine existed. `read::Rows::count` is the seam, `Reader::len` answers it for a maintained
+  arrangement, and a `Map` or a `list` in the accumulator answers it directly. **The default is
+  "not without a scan"**, so a reader that does not implement it falls back and is exactly as
+  correct and exactly as slow as it was — the seam cannot make a reader wrong, only faster. Gated by
+  `read_models.rs::a_bare_count_is_answered_without_building_a_row`, whose instrument is the
+  assertion rather than a measurement of one: a reader that knows the size and **refuses to produce
+  a row**, so a query that scanned cannot be answered by it at all, with a second case proving the
+  refusing reader really refuses. `a_count_that_narrows_anything_still_scans` fixes where the fast
+  path stops — a `where`, `order`, `limit` or `offset` each still scan, because each is applied
+  before the count collapses. [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.7
+  attributed this row to grouping and is corrected: not every aggregate question is a grouping
+  question, and the ungrouped one needed none of it.
+
+- **2026-08-17 — The vulnerability matrix, CWE half, with the gate that makes it evidence.**
+  [`docs/12`](docs/12-standards-and-conformance.md) §12.7 chartered one artefact restating §3.5's
+  guarantees in the auditor's vocabulary; it lives in [`docs/43`](docs/43-threat-model.md) §43.8
+  because that is where the threat model already is. All seven CWEs §12.7 names have a row —
+  **CWE-639 is the one an auditor should read first**, since ownership rests on an actor the default
+  provider does not verify, and `pending_security.rs` asserts that absence. `CWE-89`'s row states
+  the reason precisely rather than claiming parameter binding: a Beck program does not *write* SQL,
+  and the client protocol has no message that carries a query. The gate is
+  `docs.rs::every_test_the_vulnerability_matrix_names_exists`, which checks both halves of each
+  `suite.rs::name` citation — and it **earned itself before it was written**: the first draft cited
+  `macro_bomb.rs::a_macro_that_expands_forever_is_refused_rather_than_hanging`, a plausible name for
+  a test that does not exist. **The ISO/IEC 24772-1 half is not written, and that is a blocker
+  rather than a schedule**: the catalogue is a paywalled standard that is not in this tree, and
+  clause numbers from memory would be the failure §12.1 exists to prevent. Recorded in the matrix,
+  in §12.7, in [`docs/35`](docs/35-standards-landscape.md) §35.2 and in the ledger.
+
+- **2026-08-17 — Asked what the last three changes mean for Beck code that already exists, and
+  found four false documents and one missing gate.** All 81 `.beck` files in the tree compile; the
+  five that the accessibility checks refused were fixed with them. The exposure is Beck code *in
+  documents*, which no gate reads. [`docs/11`](docs/11-language-tour.md) §11.6 said "`ui:` checks
+  neither attribute nor event names, so `cls=` compiles and reaches the browser as an attribute
+  nothing reads" — false for as long as the vocabulary has existed — and
+  [`docs/README.md`](docs/README.md)'s index row said the same in summary; both corrected.
+  [`docs/105`](docs/105-the-ecosystem-answer.md) still described `27-review`'s nested-loop join as
+  the cost being paid. Three comments in Beck programs forecast work that has since landed
+  (`17-derived`, `22-shared`, `examples/todo`) and now state what is true instead of what was
+  expected. **[`docs/01`](docs/01-vision-and-premise.md)'s canonical example is deliberately not
+  fixed**: it has not compiled since the surface settled, it is a faithful translation of the
+  original sketch, and rewriting it would break the claim the section makes — so it says so, and
+  points at `examples/todo.beck`, which is the same program in the language and is gated. The gate
+  that would have caught the first two is now in `docs.rs`: a document showing a spelling the
+  compiler refuses must name the diagnostic that refuses it, with the list read from
+  `beck_macro::vocabulary`'s own alias tables rather than copied, so a new alias is covered the day
+  it is added. It goes red on both documents as they stood.
+
+- **2026-08-17 — Accessibility becomes a compile error, and the first run refused every example in
+  this tree with a text input.** [`docs/12`](docs/12-standards-and-conformance.md) §12.4's first
+  three checks, which that section had carried as **chartered** for as long as it existed: `B0219`
+  an `img` with no alt text, `B0220` a button with no accessible name, `B0221` a form control with
+  no label. The design claim — a typed `ui:` tree makes WCAG checkable at compile time in a way no
+  template language can — was true and unexercised; these are three of it. What they found is the
+  argument for them: `todo`, `board`, `editor` and `routed` had each labelled their input with a
+  **placeholder and nothing else**, which is WCAG 3.3.2's commonest real failure, and all four are
+  fixed. Which element needs what is `beck_macro::vocabulary::NAMING`, a table beside `ELEMENTS`
+  rather than three tag names in the expander, held there by a gate that goes red on a misspelled
+  tag — a check written against `"imag"` would never fire and no suite of correct programs could
+  notice ([`docs/82`](docs/82-the-edge-report.md) §82.10). Two limits are stated rather than hidden:
+  an `id` is accepted as evidence of a `label(for=…)` in another function, and a user helper sharing
+  an element's name is checked as that element, which is `B0218`'s existing limit. The escape hatch
+  is `a11y_exempt="reason"`, stripped before the page is emitted; §12.4 asked for
+  `@a11y(exempt, reason=…)` and is corrected in place, because an annotation inside a `ui:` block
+  would be new parser syntax for one hatch. Gated by three `tests/ui/` snapshots, the acceptance
+  half (every way of naming a control, and the exemption) in `beck-macro`, and the two vocabulary
+  gates. This closes the ledger item [`docs/08`](docs/08-roadmap.md) §8.5.4 scheduled behind the
+  `ui:` vocabulary's **G**, which is that ordering paying for itself. One more stale figure fell out
+  of it: §12.3 said **137** diagnostic codes and there are **145**, three of them these — the same
+  decay direction as the corpus-wide numbers below, in the document that states the rule about it.
+
+- **2026-08-17 — Several lookups in one loop are several joins, and the refusal that used to
+  replace them was silent.** Two follow-ons to the join below, both found by using it.
+  `beck explain cost` printed the *cost* of a loop it had not read as a join and not the reason:
+  the reason is recorded on the `map_list` the decomposition builds, every `ui:` loop then fuses that
+  `map_list` into the `flatten` above it, and the survivor kept its own empty field — so the one
+  shape the explanation exists for was the one shape that never printed it. Fusion now carries it,
+  gated by `incremental.rs::a_loop_that_is_not_read_as_a_join_says_why_after_fusion`, which asserts
+  the reason appears *under the line it explains*. What that then exposed was a restriction with no
+  design behind it: a body looking up in two collections was refused, which left the capture in place
+  and the whole collection reconsidered per event. Refusing a shape that keeps a program at `O(n)` is
+  not the conservative choice. It is now a **chain** of joins, one per lookup, each taking the
+  previous one's rows on its left — so `corpus/33-awareness.beck`, which renders a person's
+  whereabouts *and* their note, costs its delta. One of its two lookups is against the **awareness
+  roster**, which [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.5 decision 3
+  expected would have to be refused because a roster moves when `seq` does not; it does not have to
+  be, because the second clock is a problem for *sharing* and not for *joining*, and that paragraph
+  is corrected in place. §99.3's sweep is re-run: **16 capture sites in 8 programs and one that moves
+  per event**, down from 18 in 10 with three. The one left is `examples/board.beck`, which groups
+  rather than looks up.
+
+- **2026-08-17 — The view algebra gets its first binary operator: the join a loop already
+  contained.** [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 items 1, 4 and 5.
+  Every operator the engine had took **one** collection, so a program relating two of them left the
+  algebra: the loop body read the accumulator, the per-element function captured the state node, and
+  a node that moves on every event makes that function a *different* function — so the whole
+  collection was reapplied whatever changed. A nested-loop join with no index, per event.
+  `Op::Join` is the operator and `beck_core::relate` is the recognition: `for x in xs:` whose body
+  asks `map_get(m, k(x))` compiles to a join over an index, with **no edit to any program and no new
+  syntax**, and the conditions are stated as what an expression *reads* rather than as a shape, so a
+  lookup written three definitions deep behind a `match` is still found. Maintained from both sides
+  per §99.5's bilinear rule — a left row that moved is looked up once, a right row that moved reaches
+  exactly the left rows waiting on its key through a reverse index — so neither side costs the
+  collection. The index needed no new operator: the right side is a `Map` field of the accumulator
+  and `map_values`'s arrangement is already keyed by the join key, which is why §99.9's `arrange_by`
+  moved *behind* the join rather than in front of it, and `examples/board.beck` is now named as the
+  program waiting for it (it groups by column, which is not a lookup). Held by
+  `scaling.rs::maintaining_a_view_whose_loop_looks_something_up_costs_the_same_at_any_size`, which
+  measures `27-review.beck` at 200 and 1,600 rows **with the operator on and off**: 19 units of
+  maintenance either size against **415 and 3,215** refused, so the gate carries its own evidence
+  that it can fail ([`docs/82`](docs/82-the-edge-report.md) §82.10) and proves the off switch
+  [`docs/08`](docs/08-roadmap.md) §8.3 item 8 requires — `Relate::Refuse`, reachable as
+  `beck explain query --no-join` and `beck explain cost --no-join`. Correctness is the differential
+  as before: `incremental_engine.rs` folds a generated log one event at a time and compares the
+  maintained page with the recomputed one byte for byte. `corpus/34-assignments.beck` is the program
+  §99.9 asked for, one that is *about* a relationship — many issues waiting on one person, so a
+  rename is one entry moving on the right and several rows on the left, which `27-review`'s unique
+  key cannot reach.
+
+- **2026-08-17 — Three corpus-wide figures re-measured, and every one of them had drifted.**
+  [`docs/08`](docs/08-roadmap.md) §8.5.6's first decay direction — a document behind the code — swept
+  while re-running the measurement suites beside the join above. The placement share was written as
+  43% across 176 placements and quoted as 44%; it is **52% across 353**
+  (`measure_phase2`). The native backends' figures were 941 definitions compiled, nine corpus folds
+  and twenty-one of thirty-two views; they are **963, all thirty-four, and twenty-four of
+  thirty-four** (`BECK_REQUIRE_LLVM=1 … --test native`). No solver and no emitter moved: the corpus
+  did, and the programs added to it since — recursive types, traits, error rows, structured
+  concurrency, identity, presence, and now a relationship — are mostly pure definitions, so the
+  numerators grew faster than the totals. Corrected in place in
+  [`docs/20`](docs/20-phase-2-report.md), [`docs/93`](docs/93-the-native-backends-report.md),
+  [`docs/08`](docs/08-roadmap.md), [`docs/86`](docs/86-getting-started.md) and the index, each with
+  the command that reproduces it. **Nothing gates any of them**, which is why all three drifted
+  together; the suites print them and assert shapes.
+
 - **2026-08-17 — `main` merged down, and the union driver's reach written down where it is relied
   on.** This branch reported as conflicting on GitHub while `git merge` on a clone resolved it
   silently: the only conflict was [`CHANGELOG.md`](CHANGELOG.md), the file

@@ -436,3 +436,137 @@ async fn a_query_with_no_table_is_answered() {
         .get(0);
     assert!(version.contains("beck"), "{version}");
 }
+
+// -------------------------------------------------------------------------------------------
+// `count(*)` without scanning — docs/23 §23.19
+// -------------------------------------------------------------------------------------------
+
+/// A reader that knows how many rows there are and **refuses to produce one**.
+///
+/// The instrument, and it is the assertion rather than a way of measuring one: a query that had to
+/// scan cannot be answered by this at all. Timing would say the same thing more slowly and would
+/// flake ([`docs/13`](../../../../docs/13-testing.md) §13.7); counting scans would need somewhere
+/// to put the counter.
+struct Countless(u64);
+
+impl beck_core::read::Rows for Countless {
+    fn scan(
+        &self,
+        _table: &beck_core::read::Table,
+    ) -> Result<Vec<beck_core::Value>, beck_core::read::SqlError> {
+        Err(beck_core::read::SqlError {
+            message: "this query scanned".to_string(),
+            code: "XX000",
+        })
+    }
+
+    fn count(
+        &self,
+        _table: &beck_core::read::Table,
+    ) -> Result<Option<u64>, beck_core::read::SqlError> {
+        Ok(Some(self.0))
+    }
+}
+
+/// A reader that can only scan, which is what every implementation was before the seam existed.
+struct Scanner(Vec<beck_core::Value>);
+
+impl beck_core::read::Rows for Scanner {
+    fn scan(
+        &self,
+        _table: &beck_core::read::Table,
+    ) -> Result<Vec<beck_core::Value>, beck_core::read::SqlError> {
+        Ok(self.0.clone())
+    }
+}
+
+fn counted(answer: &beck_core::read::Answer) -> i64 {
+    match answer.rows.first().and_then(|r| r.first()) {
+        Some(Some(beck_core::read::Datum::Bigint(n))) => *n,
+        other => panic!("that is not a count: {other:?}"),
+    }
+}
+
+/// **`select count(*)` builds no row**, which is
+/// [`docs/23`](../../../../docs/23-incremental-views-report.md) §23.19's last open row.
+///
+/// The plan's `list_len` has been `±1` per delta since the engine existed; the SQL count was over
+/// the rows it had scanned, so asking `psql` how many todos there are cloned every todo and built a
+/// `Cell` per column of every one, to answer with a single integer. A maintained arrangement is a
+/// `BTreeMap` and a `Map` in the accumulator knows its length, and neither was being asked.
+#[test]
+fn a_bare_count_is_answered_without_building_a_row() {
+    let schema = {
+        let placed = todo_program();
+        let plan = beck_core::plan::Plan::compile(&placed);
+        Schema::of(&placed, &plan)
+    };
+
+    // A million rows and a reader that cannot produce one. If this answers, nothing scanned.
+    let answer = schema
+        .run("select count(*) from todos", &Countless(1_000_000))
+        .expect("a count needs no rows");
+    assert_eq!(counted(&answer), 1_000_000);
+
+    // The harness has teeth: the same reader cannot answer anything that needs a row.
+    let scanned = schema.run("select * from todos", &Countless(3));
+    assert!(
+        scanned.is_err(),
+        "the refusing reader answered a query that needs rows, so the test above proves nothing"
+    );
+}
+
+/// Where the fast path stops, asserted rather than left to be discovered.
+///
+/// It is conservative on purpose: a `where` needs the rows to test, and an `order`, `limit` or
+/// `offset` is applied *before* the count collapses, so honouring one here would mean reproducing
+/// that behaviour rather than skipping work. Each of those still scans, and each is still right.
+#[test]
+fn a_count_that_narrows_anything_still_scans() {
+    let schema = {
+        let placed = todo_program();
+        let plan = beck_core::plan::Plan::compile(&placed);
+        Schema::of(&placed, &plan)
+    };
+
+    for sql in [
+        "select count(*) from todos where done = false",
+        "select count(*) from todos limit 1",
+        "select count(*) from todos offset 1",
+        "select count(*) from todos order by id",
+    ] {
+        assert!(
+            schema.run(sql, &Countless(7)).is_err(),
+            "`{sql}` took the fast path, which does not honour what narrows it"
+        );
+    }
+}
+
+/// **A reader that does not implement `count` is still right**, which is what makes the seam safe.
+///
+/// The trait's default answers "not without a scan", so an implementation written before it existed
+/// — or one for a source that genuinely cannot say — falls back and is exactly as correct and
+/// exactly as slow as it was.
+#[test]
+fn a_reader_that_cannot_count_falls_back_to_scanning() {
+    let schema = {
+        let placed = todo_program();
+        let plan = beck_core::plan::Plan::compile(&placed);
+        Schema::of(&placed, &plan)
+    };
+
+    let mut rows = Vec::new();
+    for (id, text) in [("1", "milk"), ("2", "bread")] {
+        let mut fields = beck_core::core::Fields::new();
+        fields.insert(Arc::from("id"), beck_core::Value::str_(id));
+        fields.insert(Arc::from("text"), beck_core::Value::str_(text));
+        fields.insert(Arc::from("done"), beck_core::Value::Bool(false));
+        fields.insert(Arc::from("owner"), beck_core::Value::str_("ana"));
+        rows.push(beck_core::Value::data(Arc::from("Todo"), None, fields));
+    }
+
+    let answer = schema
+        .run("select count(*) from todos", &Scanner(rows))
+        .expect("the fallback answers");
+    assert_eq!(counted(&answer), 2);
+}

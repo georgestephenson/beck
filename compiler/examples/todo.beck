@@ -105,7 +105,7 @@ def render(todos: list[Todo], left: Int) -> Html:
     return ui:
         main:
             h1: "todos"
-            input(placeholder="what needs doing?", autofocus="on",
+            input(aria_label="what needs doing?", placeholder="what needs doing?", autofocus="on",
                   on_enter=Add(id=Id(value="$id"), text="$value"))
             ul:
                 for t in todos:

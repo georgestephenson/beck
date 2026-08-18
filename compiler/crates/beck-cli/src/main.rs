@@ -559,13 +559,26 @@ enum Explain {
         /// construct the source names, which is what the rules are applied to.
         #[arg(long)]
         unfused: bool,
+        /// Leave a loop that looks something up as the loop it was written as, rather than reading
+        /// it as an equi-join and indexing what it reads (§99.6).
+        ///
+        /// The off switch for a choice the compiler makes unbidden. Printing the plan both ways is
+        /// how to see what the operator is worth on your program.
+        #[arg(long)]
+        no_join: bool,
     },
     /// What one event costs this program's view, operator by operator (§4.7).
     ///
     /// In the engine's own units — applications, entries touched, entries copied, operators
     /// recomputed — as a function of the change `δ` and the collection `n`, so the answer is the
     /// same on every machine.
-    Cost { file: PathBuf },
+    Cost {
+        file: PathBuf,
+        /// The same, with the join recognition switched off — what one event costs the program as
+        /// its loops are written, with nothing indexed.
+        #[arg(long)]
+        no_join: bool,
+    },
     /// The read model: what an outside SQL client sees, as `create table` (§5.3).
     ///
     /// Nothing executes this DDL. There is no table to create — a read model is the collection the
@@ -1384,6 +1397,15 @@ fn native(
     }
 }
 
+/// The `--no-join` flag as the plan's own vocabulary.
+fn relate(no_join: bool) -> beck_core::plan::Relate {
+    if no_join {
+        beck_core::plan::Relate::Refuse
+    } else {
+        beck_core::plan::Relate::Recognise
+    }
+}
+
 fn compiled(file: &Path) -> Result<Placed> {
     let (placed, map, diags) = compile(file)?;
     print!("{}", diags.render(&map));
@@ -1646,9 +1668,13 @@ fn explain(what: Explain) -> Result<()> {
             );
             Ok(())
         }
-        Explain::Query { file, unfused } => {
+        Explain::Query {
+            file,
+            unfused,
+            no_join,
+        } => {
             let placed = compiled(&file)?;
-            let plan = beck_core::plan::Plan::unfused(&placed);
+            let plan = beck_core::plan::Plan::unfused_with(&placed, relate(no_join));
             if unfused {
                 print!("{}", beck_core::plan::query_report(&plan));
                 return Ok(());
@@ -1658,9 +1684,9 @@ fn explain(what: Explain) -> Result<()> {
             print!("{}", beck_core::fuse::report(&fusions));
             Ok(())
         }
-        Explain::Cost { file } => {
+        Explain::Cost { file, no_join } => {
             let placed = compiled(&file)?;
-            let plan = beck_core::plan::Plan::compile(&placed);
+            let plan = beck_core::plan::Plan::compile_with(&placed, relate(no_join));
             print!("{}", beck_core::plan::cost_report(&plan));
             Ok(())
         }
