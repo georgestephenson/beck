@@ -55,7 +55,7 @@ in Beck, and what the host keeps is the notation.
 
 ## 46.2 What is built
 
-**The primitives**: thirteen for strings, fifteen for collections, two for JSON, two for time, one
+**The primitives**: thirteen for strings, seventeen for collections, two for JSON, two for time, one
 exchange for HTTP, and nine for digests, encodings and identifiers
 (§46.7). The higher-order ones are row-polymorphic in their
 argument's effects, so a pure caller of `list_fold` stays pure however another caller uses it —
@@ -68,7 +68,7 @@ argument's effects, so a pure caller of `list_fold` stays pure however another c
 | `text.beck` | lines, words, padding, case, truncation, a tolerant pair reader |
 | `money.beck` | an exact amount in one currency as minor units, with a `split` whose parts sum back to what was split |
 | `documents.beck` | a JSON document read as data with `match`, and RFC 3339 instants |
-| `collections.beck` | `Set[T]`, sorting, grouping, deduplication — 26 definitions, no primitives added |
+| `collections.beck` | `Set[T]`, sorting, grouping, deduplication — 26 definitions, and the only two primitives this directory has ever asked for: `list_min` and `list_max` (§46.16) |
 | `dates.beck` | the civil calendar and durations — 49 definitions, no primitives added |
 | `http.beck` | builders, header lookup, status predicates, a JSON body |
 | `crypto.beck` | over the nine primitives (§46.7) |
@@ -842,7 +842,7 @@ good enough.
 | Selective import, a third-party path, an interface cache | **Not built.** There is one implicit source and it is the compiler's own library; every import is checked from source on every build |
 | The LSP resolving imports | **Not built**, unchanged: a file is analysed alone, so a name imported from anywhere is unresolved in the editor. D23 makes that gap easier to hit and does not widen it |
 | `@derive` for JSON | **Not built.** Turning a `model` into a `Json` is a function somebody writes, and reflection is not being added for it |
-| A set's cost | **A map's.** `Set[T]` is `Map[T, Bool]`, so it is an ordered structure with a comparison at every step and a `Bool` per member nobody reads. No hash set, no bitset. `intersection` and `difference` are linear in the left side, via a list — a map-to-map operation would be a primitive, and the division says a primitive has to be a host's table or grammar rather than a faster copy of something expressible |
+| A set's cost | **A map's.** `Set[T]` is `Map[T, Bool]`, so it is an ordered structure with a comparison at every step and a `Bool` per member nobody reads. No hash set, no bitset. `intersection` and `difference` are linear in the left side, via a list — a map-to-map operation would be a primitive, and the division admits one only for a host's table or grammar, or for a combining form the view engine has to recognise ([`lib/README.md`](../compiler/lib/README.md)). A set operation is neither |
 | Time zones and locale | **Not built, deliberately.** A time zone is a database with a release schedule, and a replay must not disagree with the run it is replaying about what a date is |
 | Weeks, ISO week dates, quarters; parsing a duration; a date-only parse in the host | **Not built.** Reading is where a grammar starts, and a grammar is the host's half |
 | Money beyond two minor digits | **Not built.** `lib/money.beck` is fixed at two, which is wrong for JPY and KWD and says so. Rewriting it over `Decimal` is now expressible and is a change to a type other files use, so it is not being done in passing |

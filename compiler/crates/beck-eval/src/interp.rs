@@ -1992,6 +1992,20 @@ impl<'h> Interp<'h> {
                     .map(|xs| Value::Int(xs.len() as i64))
                     .ok_or_else(|| EvalError::new("`list_len` expects a list", span))
             }
+            Prim::ListMin | Prim::ListMax => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let xs = as_list(&v, op.name(), span)?;
+                // One pass and no allocation, which is the point of it being a primitive rather
+                // than `sorted(xs)` and the head: a caller asking for the smallest of a list should
+                // not pay for the other n-1 being put in order.
+                self.burn_work(xs.len(), span)?;
+                let found = match op {
+                    Prim::ListMin => xs.iter().min(),
+                    _ => xs.iter().max(),
+                };
+                Ok(found.cloned().map(Value::some).unwrap_or_else(Value::none))
+            }
             Prim::ListIsEmpty => {
                 want(1)?;
                 let v = args.pop().expect("arity checked");

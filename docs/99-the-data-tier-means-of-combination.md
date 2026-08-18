@@ -613,14 +613,28 @@ change stream, where `+1` for an entry that arrived and `-1` for one that left i
 whatever operator produced the change. That constraint is [`23`](23-incremental-views-report.md)'s
 sharing showing up as a design rule rather than as a cost.
 
-**`min` and `max` were called the hard ones here and are now the cheap ones, for a reason worth
-keeping.** This paragraph used to say that deleting the current minimum needs either a rescan of the
-group or a tree per group. The tree per group is `arrange_by` with the aggregate's key appended —
-index by `(g(y), v(y))` instead of by `g(y)` — and then the minimum of a group is the **first entry
-of its range** and the maximum the last, both `O(log n)`, both maintained by the arrangement itself.
-What stops them being built today is not that design: it is that neither has a spelling the
-recogniser can read. `lib/collections.beck`'s `min_of` is `list_get(sorted(xs), 0)`, and recognising
-*that* is recognising a sort and an index rather than an aggregate.
+**`min` and `max` now have a spelling, and the design they were waiting on turns out to be true of
+one of them.** `list_min` and `list_max` are primitives — the language had no minimum at all, and
+`lib/collections.beck` spelled one as `list_get(sorted(xs), 0)`, which is a sort and a copy of the
+whole list to answer a question about one element of it. So the blocker this paragraph named is gone.
+
+What replaces it is a sharper version of what this section said in the first place. The tree per
+group is `arrange_by` with the aggregate's key appended — index by `(g(y), y)` instead of by `g(y)`
+— and then:
+
+- the **minimum** of a group is the first entry of its range, `O(log n)`, maintained by the
+  arrangement itself. That half of the design holds.
+- the **maximum** is not symmetric, and the reason is a data structure rather than a taste: a
+  `BTreeMap` prefix range can be entered from its start and not from its end, so the last entry under
+  a key needs an upper bound — and there is no successor of an arbitrary `Value` and no maximum one
+  to bound with. Beck has no descending order to key by either, because ordering is the runtime's
+  structural one and a type cannot state its own ([`46`](46-standard-library-report.md) §46.16,
+  [`54`](54-ordering.md)).
+
+So `max` per group is a walk of the group, or a maintained extreme with an `O(g)` repair on the event
+that removes it — which is exactly the choice this section opened by calling a genuine design
+decision, arrived at from the other side and now known to bite one of the two rather than both. It is
+the decision item 6 still owes, and neither is built.
 
 **`sum` has no spelling at all** — there is no `sum` primitive, and `corpus/28-catalogue.beck` writes
 one as a recursion. Giving it one is a decision rather than an implementation, and the decision has

@@ -108,11 +108,21 @@ model Pair[A, B]:
     left: A
     right: B
 
+## The smallest and largest, in one pass.
+##
+## These were `list_get(sorted(xs), 0)` and its mirror, which is `n log n` and a copy of the whole
+## list to answer a question about one element of it. `list_min` and `list_max` are primitives for
+## the reason the rest of the collection algebra is: the incremental view engine maintains what it
+## can see, and an aggregate written as a sort is a sort (`docs/99` §99.9 item 6).
+##
+## Neither takes a comparator, for `sort_by`'s reason one level down: a caller who wants the
+## smallest *by* something has a key, and `sort_by` plus a head is that. What these answer is the
+## smallest, which `Value`'s own total order already decides.
 def min_of[T](xs: list[T]) -> Option[T]:
-    return list_get(sorted(xs), 0)
+    return list_min(xs)
 
 def max_of[T](xs: list[T]) -> Option[T]:
-    return list_get(sorted_desc(xs), 0)
+    return list_max(xs)
 
 # ---------------------------------------------------------------------------------------------
 # Grouping and deduplication

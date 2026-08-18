@@ -85,6 +85,8 @@ pub enum Prim {
     StrIsEmpty,
     ListLen,
     ListIsEmpty,
+    ListMin,
+    ListMax,
     // ---- collections
     ListGet,
     ListSlice,
@@ -308,6 +310,8 @@ impl Prim {
             StrIsEmpty => "str_is_empty",
             ListLen => "list_len",
             ListIsEmpty => "list_is_empty",
+            ListMin => "list_min",
+            ListMax => "list_max",
             MapList => "map_list",
             FilterList => "filter_list",
             ConcatLists => "concat_lists",
