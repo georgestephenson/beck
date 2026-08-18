@@ -1,0 +1,12 @@
+---
+source: crates/beck-cli/tests/ui.rs
+expression: "render(&edited(\"aria_label=\\\"what needs doing?\\\", \", \"\"))"
+---
+error[B0221]: this `input` has no label
+  --> t.beck:108:13
+    |
+108 |             input(placeholder="what needs doing?", autofocus="on",
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a placeholder is not a label — it disappears as soon as somebody types
+    |
+  = note: `id=` is accepted as evidence of a `label(for=…)` elsewhere, because a `ui:` block composes out of functions and this check sees one at a time
+  = help: add `aria_label="…"`, an `id=` with a `label(for=…)`, or `a11y_exempt="…"` with a reason

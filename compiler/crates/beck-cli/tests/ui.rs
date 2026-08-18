@@ -302,8 +302,36 @@ ui!(
 ui!(
     an_attribute_written_the_way_the_language_spells_everything_else,
     &edited(
-        "input(placeholder=\"what needs doing?\", autofocus=\"on\",",
-        "input(placeholder=\"what needs doing?\", autofocus=\"on\", max_length=\"80\","
+        "placeholder=\"what needs doing?\", autofocus=\"on\",",
+        "placeholder=\"what needs doing?\", autofocus=\"on\", max_length=\"80\","
+    )
+);
+
+// ---------------------------------------------------------------------------------------------
+// Accessibility, docs/12 §12.4's first three checks
+// ---------------------------------------------------------------------------------------------
+
+// The commonest real failure of WCAG 3.3.2, and this is the message the four programs in this tree
+// that had it would have got. The label is different from the one an unadorned control gets, on
+// purpose: somebody who wrote a placeholder believes they *have* labelled it, so the sentence has
+// to say why that is not so rather than repeat the rule.
+ui!(
+    a_placeholder_is_not_a_label,
+    &edited("aria_label=\"what needs doing?\", ", "")
+);
+
+ui!(
+    an_image_with_no_alt_text,
+    &edited("h1: \"todos\"", "img(src=\"/logo.png\")")
+);
+
+// A button with no children and no `aria_label` — the icon-button mistake, which is the one shape
+// where a button that looks fine in a browser announces nothing at all.
+ui!(
+    a_button_that_announces_nothing,
+    &edited(
+        "span(on_click=Toggle(id=t.id)): t.text",
+        "button(on_click=Toggle(id=t.id))"
     )
 );
 

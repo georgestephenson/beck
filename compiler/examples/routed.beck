@@ -108,7 +108,8 @@ def render(tasks: list[Task], path: Str) -> Html:
                 link("/active", "active", path)
                 link("/done", "done", path)
             form(on_submit=Add(id=Id(value="$id"), text="$field:text")):
-                input(name="text", placeholder="what needs doing?", autofocus="on")
+                input(name="text", aria_label="what needs doing?",
+                      placeholder="what needs doing?", autofocus="on")
                 button: "add"
             ul:
                 for t in tasks:

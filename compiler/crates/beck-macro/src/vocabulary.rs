@@ -68,6 +68,45 @@ pub fn is_attribute(name: &str) -> bool {
     name.starts_with("data-") || name.starts_with("aria-") || ATTRIBUTES.contains(&name)
 }
 
+/// What an element needs before somebody who cannot see it can use it.
+///
+/// [`docs/12`](../../../../../docs/12-standards-and-conformance.md) §12.4's first three checks, as
+/// a table rather than as three `if`s in the expander — for [`ELEMENTS`]'s own reason. A check that
+/// matched the literal `"imag"` would never fire and no test over correct programs could notice;
+/// as a row it is held to [`ELEMENTS`] by
+/// `every_element_a_check_is_about_is_an_element_this_vocabulary_knows`, which is a gate that goes
+/// red on the typo.
+pub const NAMING: &[(&str, Naming)] = &[
+    ("img", Naming::Alt),
+    ("button", Naming::TextOrLabel),
+    ("input", Naming::Label),
+    ("select", Naming::Label),
+    ("textarea", Naming::Label),
+];
+
+/// How one element is given a name a screen reader can announce.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Naming {
+    /// `alt`, which HTML requires of every image and whose empty value means "decorative".
+    Alt,
+    /// Its own text, or a label attribute when it has none — the icon-button case.
+    TextOrLabel,
+    /// A label attribute, or an `id` a `label(for=…)` elsewhere points at.
+    Label,
+}
+
+/// What this element needs, if it is one of the ones that need anything.
+pub fn naming(tag: &str) -> Option<Naming> {
+    NAMING.iter().find(|(e, _)| *e == tag).map(|(_, n)| *n)
+}
+
+/// The attributes that give an element an accessible name, in the order a fix-it should offer them.
+///
+/// `title` is last and is included rather than recommended: it is a real naming mechanism and it is
+/// also a tooltip, so a program that has one is not refused, and nothing here suggests reaching for
+/// it first.
+pub const LABELLING: &[&str] = &["aria-label", "aria-labelledby", "title"];
+
 /// Whether `name` is an element this vocabulary knows.
 ///
 /// Nothing in the `ui` module refuses on this today — the module documentation says why — but
@@ -525,6 +564,30 @@ pub const ATTRIBUTES: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
+
+    /// Every element a §12.4 check is about is an element this vocabulary knows.
+    ///
+    /// The gate that makes [`NAMING`] a table worth having rather than three tag names moved. A
+    /// check written against `"imag"` would never fire, and nothing that compiles correct programs
+    /// could notice — which is `docs/82` §82.10's pattern exactly: the failure to guard against is
+    /// a check that *cannot* fail.
+    #[test]
+    fn every_element_a_check_is_about_is_an_element_this_vocabulary_knows() {
+        for (element, _) in super::NAMING {
+            assert!(
+                super::is_element(element),
+                "`{element}` is checked for an accessible name and is not an element"
+            );
+        }
+    }
+
+    /// And every attribute those checks accept as a name is one an element may carry.
+    #[test]
+    fn every_labelling_attribute_is_an_attribute() {
+        for name in super::LABELLING {
+            assert!(super::is_attribute(name), "`{name}` is not an attribute");
+        }
+    }
     use super::*;
 
     #[test]

@@ -579,7 +579,7 @@ Three things about the fix are worth more than the table.
 - **It is a table in a crate, not a check in the expander.** `ui:` is a compiler-provided special
   case standing in for a user-written macro, and typed macros retire it
   ([`10`](10-decisions.md) D22); a vocabulary buried in today's expander would be written twice, and
-  the second copy is the one that drifts. §12.4's three accessibility checks read `ELEMENTS` rather
+  the second copy is the one that drifts. §12.4's three accessibility checks — since built — read this module rather
   than a list of their own, which is what makes them a day's work rather than a table's.
 - **The events are asserted to be the client's, not declared to be.** They are written in different
   languages in different crates, so `client.rs::the_event_vocabulary_is_what_the_client_listens_for`
@@ -692,8 +692,10 @@ oracle this repository prefers ([`93`](93-the-native-backends-report.md) §93.12
 or it is not a component.
 
 That also gives [`12`](12-standards-and-conformance.md) §12.4 its missing artefact. The three
-accessibility checks already scheduled there — alt text, accessible name, input label — are the same
-mechanism Wall 2 needs, over the same typed tree, and would be built once.
+accessibility checks scheduled there — alt text, accessible name, input label — are the same
+mechanism Wall 2 needs, over the same typed tree, and **are built** (`B0219`–`B0221`); the kit's
+components inherit them rather than restating them, and what the kit adds is the APG's *keyboard*
+table, which is a runtime property and not a shape.
 
 ## 104.11 What to build, in order
 
@@ -710,9 +712,10 @@ schedule:
   for the ordering rather than a remark about it.
 - **The vocabulary was a `G`** in §8.5.4's classification: §12.4's three accessibility checks are
   scheduled over the same typed tree, and a tree that swallowed `on_keydown` and `cls=` in silence
-  could not honestly carry an accessibility claim. **Done**, and what it leaves behind for those
-  checks is `ELEMENTS` — the table that tells an `img` from a `button` — so they are now a day's
-  work over an existing table rather than a table plus a day.
+  could not honestly carry an accessibility claim. **Done, and so are the three it gated**: they
+  took a `NAMING` table beside `ELEMENTS` and a day, which is the ordering paying for itself twice —
+  and on their first run they refused every example program in this tree with a text input, each of
+  which had labelled it with a placeholder and nothing else.
 - **`class=` as a list is the `F`.** Everything in the styling half is behind it, and so is the
   editor affordance that costs nothing once it exists.
 - **The last three are behind a decision, not behind effort.** Where interface state lives (Wall 1)

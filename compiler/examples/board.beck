@@ -85,7 +85,7 @@ def view(b: Board) -> Html:
     return ui:
         main:
             h1: "board"
-            input(placeholder="a card", autofocus="on",
+            input(aria_label="a card", placeholder="a card", autofocus="on",
                   on_enter=Add(id=Id(value="$id"), text="$value"))
             div(class="columns"):
                 for c in columns():

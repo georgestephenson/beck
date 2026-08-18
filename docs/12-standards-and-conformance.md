@@ -42,7 +42,7 @@ implement this:
    implementation or an outside contributor base, and pretending to run it before then would be
    ceremony.
 3. **Stable diagnostic codes** — **Verified, with a named remainder.** The codes are `B0xxx` (the
-   model is rustc's `E0xxx`; the prefix is ours): 137 codes in `beck-diag/src/index.rs`, an index
+   model is rustc's `E0xxx`; the prefix is ours): 145 codes in `beck-diag/src/index.rs`, an index
    gated complete in both directions against every literal the compiler can emit
    (`beck-cli/tests/docs.rs`), `beck explain error <CODE>` answering for every one, and
    error-message snapshots in `beck-cli/tests/ui.rs`. What remains of the chartered "documented,
@@ -87,27 +87,37 @@ test.
 
 ## 12.4 Web output: accessibility as a compile-time property
 
-**Chartered, the whole section — nothing is built.** This section is kept because the design claim
-is real and rare: the `ui:` macro emits a typed tree, so **WCAG 2.2 AA and ARIA checks are
-*checkable* at compile time** in a way no template language can match. But checkable is not
-checked: there is no accessibility diagnostic among the 137 codes, no contrast check over any style
-value, and no axe-core anywhere in the tree. Until an artefact exists this is a design advantage,
-not a conformance claim. The prerequisite is now met: `ui:` **has** a vocabulary
-([`104`](104-styling-and-the-component-library.md) §104.8), so the tree these checks would run over
-is one whose element and attribute names mean something — `beck_macro::vocabulary::ELEMENTS` is
-what tells an `img` from a `button`, and it is a table these checks read rather than one they
-bring.
+**Partial — the first three checks are built; the rest of the section is chartered.** The design
+claim is real and rare: the `ui:` macro emits a typed tree, so **WCAG 2.2 AA and ARIA checks are
+*checkable* at compile time** in a way no template language can match. That was a claim for as long
+as this section existed, because checkable is not checked. Three of them now are.
 
 The positions ([`08`](08-roadmap.md) §8.5.4's standards ledger, then Phase 4):
 
-- **The first three checks** — an `img` without alt text, a button without an accessible name, a
-  form input without a label — are a small artefact over the existing `ui:` tree, each a compile
-  error with the escape hatch `@a11y(exempt, reason=...)`, lintable and auditable. These need
-  nothing that is not built, and since the vocabulary landed they need no table of their own
-  either: `B0217`/`B0218` are the shape each of them takes.
+- **The first three checks — built.** `B0219` an `img` without alt text, `B0220` a button without an
+  accessible name, `B0221` a form control without a label, each a compile error over the existing
+  `ui:` tree. Which element needs what is `beck_macro::vocabulary::NAMING`, a table beside
+  `ELEMENTS` rather than three tag names in the expander, and
+  `every_element_a_check_is_about_is_an_element_this_vocabulary_knows` holds it there — a check
+  written against a misspelled tag would never fire, and no test over correct programs could notice
+  ([`82`](82-the-edge-report.md) §82.10). The escape hatch is an attribute, `a11y_exempt="reason"`,
+  stripped before the page is emitted; this section asked for `@a11y(exempt, reason=…)` and an
+  annotation inside a `ui:` block would be new parser syntax for one hatch, where the tree already
+  carries keyword arguments.
+
+  **What they found on their first run is the reason they are worth having**: four programs in this
+  tree — `todo`, `board`, `editor` and `routed`, which is every example with a text input — labelled
+  their input with a **placeholder and nothing else**, which is WCAG 3.3.2's commonest real failure.
+  All four are fixed.
+
+  Two limits are stated rather than hidden. A control with an `id` is accepted, because a
+  `label(for=…)` may be in another function and this check sees one element at a time. And a *user's
+  helper that shares an element's name* is checked as that element, which is `B0218`'s existing
+  limit and moves when `ui:` becomes a user-written typed macro (D22).
 - Colour-contrast over statically-known style values, and runtime conformance (focus preservation,
   live-region announcements) tested with axe-core in the e2e suite: **Phase 4**, with the client
-  polish it audits.
+  polish it audits. There is still no contrast check and no axe-core anywhere in the tree, so the
+  section as a whole is not a WCAG conformance claim — three checks are three checks.
 - **Core Web Vitals**: what is gated today is *bytes*, not vitals — the CI `budgets` job holds the
   thin client under 10 KB and Mode B under 150 KB, brotli-compressed. Lighthouse/LCP/INP/CLS gates
   on the example apps are Phase 4, already scheduled in §8.4.

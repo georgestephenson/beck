@@ -69,7 +69,7 @@ def view(d: Doc, saving: Freshness) -> Html:
         main:
             h1: "editor"
             p(class="status"): status(saving)
-            input(placeholder="a line", autofocus="on",
+            input(aria_label="a line", placeholder="a line", autofocus="on",
                   on_enter=Write(id=Id(value="$id"), text="$value"))
             ul:
                 for l in lines(d):

@@ -383,6 +383,35 @@ pub const INDEX: &[CodeEntry] = &[
          attribute of your own is spelled `data_…`, which is HTML's own extension point; `aria_…` \
          is admitted the same way.",
     ),
+    e(
+        "B0219",
+        Stage::Macros,
+        "image has no alt text",
+        "A screen reader announces an `img` by its `alt` attribute; without one it announces the \
+         file name, or nothing. `alt=\"\"` is HTML's own spelling for an image that carries no \
+         meaning and is accepted — the check is for the attribute, not for a value, because a \
+         compile-time check knows the shape of the tree and not the text in it. \
+         `a11y_exempt=\"…\"` turns it off on one element, with the reason written down.",
+    ),
+    e(
+        "B0220",
+        Stage::Macros,
+        "button has no accessible name",
+        "A `button` is named by its own text. One with no children and no `aria_label`, \
+         `aria_labelledby` or `title` announces nothing at all, which is the icon-button mistake. \
+         Any child is accepted, because whether an expression renders to empty text is not a \
+         question this stage can answer.",
+    ),
+    e(
+        "B0221",
+        Stage::Macros,
+        "form control has no label",
+        "An `input`, `select` or `textarea` is named by `aria_label`, `aria_labelledby`, `title`, \
+         or a `label(for=…)` pointing at its `id`. A **placeholder is not a label** — it disappears \
+         as soon as somebody types, which is WCAG 3.3.2's commonest real failure. An `id` is \
+         accepted as evidence of a label elsewhere, because a `ui:` block composes out of functions \
+         and this check sees one element at a time.",
+    ),
     // ------------------------------------------------------- B03xx: names, types and effects
     e(
         "B0300",

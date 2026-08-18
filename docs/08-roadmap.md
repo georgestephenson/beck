@@ -551,8 +551,7 @@ rows.
   vector run for the WebSocket channel; a test that a TLS-1.2-only peer is refused; **the
   vulnerability matrix** — ISO/IEC 24772-1's catalogue and the CWE claims in one artefact, each
   entry naming the negative test that backs it, with a gate that every named test exists
-  ([`35`](35-standards-landscape.md) §35.2); the first three `ui:` accessibility checks (alt
-  text, accessible name, input label — [`12`](12-standards-and-conformance.md) §12.4); a
+  ([`35`](35-standards-landscape.md) §35.2); a
   Prometheus exposition endpoint beside the JSON dashboard; a Scorecard workflow and REUSE
   per-file metadata; the CLI exit-status table; a semantic-conventions check over the attributes
   telemetry actually emits. Blocked, and recorded as blocked rather than listed as free:
@@ -587,8 +586,10 @@ rows.
      `data_…`/`aria_…` admitted by prefix, because the escape hatch for an attribute that is
      genuinely yours is HTML's own. It was **G** because §12.4's three accessibility checks are
      scheduled over the same typed tree and a tree that accepted `on_keydown` and `cls=` in silence
-     could not honestly carry an accessibility claim; those three now read `ELEMENTS` rather than
-     bringing a table. The events are held to the client's own listener table by a test that reads
+     could not honestly carry an accessibility claim. **Those three have since landed** —
+     `B0219`/`B0220`/`B0221`, reading a `NAMING` table beside `ELEMENTS` rather than bringing one —
+     and what they found on their first run says the ordering was right: every example in this tree
+     with a text input had labelled it with a placeholder and nothing else. The events are held to the client's own listener table by a test that reads
      `beck-patch.js`, in both directions
      ([`104`](104-styling-and-the-component-library.md) §104.8). A **table** rather than expander
      code, because typed macros above retire the compiler-provided `ui:` special case (D22) and a

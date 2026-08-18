@@ -27,6 +27,8 @@
 //! Handlers become *declarative attributes*: `on_click=Toggle(id=t.id)` carries a serialised
 //! command constructor, so §5.1's "no user JavaScript runs in Mode A at all" holds by construction.
 
+use std::collections::BTreeSet;
+
 use beck_diag::{Diagnostic, Diagnostics, Span};
 use beck_syntax::{sym, Node};
 
@@ -90,15 +92,38 @@ fn unit(span: Span) -> Node {
     Node::sym("unit", span)
 }
 
+/// The attribute that turns one of [`accessibility`]'s three checks off, with a reason.
+///
+/// [`docs/12`](../../../../../docs/12-standards-and-conformance.md) §12.4 asked for
+/// `@a11y(exempt, reason=…)`. It is an *attribute* instead because a `ui:` block's statements are
+/// element calls rather than declarations, so an annotation there would be new syntax in the
+/// parser for one escape hatch — and the tree already carries keyword arguments. It is stripped
+/// rather than emitted: the page must not carry it to a browser.
+const EXEMPT: &str = "a11y_exempt";
+
 /// One statement of a `ui` block as a single `Html` expression.
 fn node_expr(n: &Node, diags: &mut Diagnostics) -> Node {
     let span = n.span();
     if let Some(tag) = element_tag(n) {
         let mut attrs = Vec::new();
+        // The names as HTML spells them, for the checks below. Collected here rather than derived
+        // from `attrs` afterwards, because by then each one is an `html_attr` form and the question
+        // "did somebody write `alt`" would be asked of generated code.
+        let mut written: BTreeSet<String> = BTreeSet::new();
+        let mut exempt = false;
         for a in &n.args {
             if a.is_form(sym::KW_ARG) && a.args.len() == 2 {
-                if a.args[0].as_var().map(|s| s.as_str()) == Some("do") {
-                    continue;
+                let name = a.args[0].as_var().map(|s| s.as_str().to_string());
+                match name.as_deref() {
+                    Some("do") => continue,
+                    Some(EXEMPT) => {
+                        exempt = true;
+                        continue;
+                    }
+                    Some(name) => {
+                        written.insert(name.replace('_', "-"));
+                    }
+                    None => {}
                 }
                 attrs.push(attr_expr(a, &tag, diags));
             }
@@ -107,6 +132,10 @@ fn node_expr(n: &Node, diags: &mut Diagnostics) -> Node {
             Some(block) => children_expr(&block.args, diags, span),
             None => Node::form(sym::LIST, vec![], span),
         };
+        if !exempt {
+            let has_children = block_of(n).is_some_and(|b| !b.args.is_empty());
+            accessibility(&tag, &written, has_children, span, diags);
+        }
         return Node::form(
             "html_el",
             vec![
@@ -119,6 +148,97 @@ fn node_expr(n: &Node, diags: &mut Diagnostics) -> Node {
     }
     // Anything that is not an element is a text node.
     Node::form("html_text", vec![n.clone()], span)
+}
+
+/// [`docs/12`](../../../../../docs/12-standards-and-conformance.md) §12.4's first three checks, over
+/// the tree `ui:` already builds.
+///
+/// The design claim §12.4 keeps is that a typed tree makes accessibility *checkable at compile
+/// time* in a way a template language cannot match — and it stayed a claim, because "checkable is
+/// not checked". These are the three it names: an `img` with no alt text, a `button` with no
+/// accessible name, and a form control with no label. Each is an error rather than a warning,
+/// because a warning on a page nobody can use is a page nobody can use.
+///
+/// Which element needs what is [`vocabulary::NAMING`] rather than three tag names written here,
+/// which is why the vocabulary was scheduled in front of these: a tree that accepted `on_keydown`
+/// and `cls=` in silence could not honestly carry an accessibility claim, and a check that matched
+/// a misspelled tag would never fire and no test over correct programs could notice.
+///
+/// # What each one can see, and the one it cannot
+///
+/// A compile-time check knows the *shape* of the tree and not the values in it, so each is written
+/// to fire on an absence rather than on a value: `alt=""` is HTML's own spelling for a decorative
+/// image and is accepted, and a `button` with any child at all is assumed to name itself, because
+/// whether an expression renders to empty text is not a question this stage can answer.
+///
+/// The label check has a real hole and it is stated rather than hidden. A control is named by
+/// `aria-label`, `aria-labelledby` or `title` — or by a `<label for=…>` elsewhere, which this
+/// cannot see, because a `ui:` block composes out of functions and the label may be in another one.
+/// So an `id` is accepted as evidence that such a label exists. What that leaves is the case worth
+/// having: a control whose only human-readable text is a **`placeholder`**, which is the commonest
+/// real failure of WCAG 3.3.2 and is exactly what four programs in this tree were doing.
+///
+/// What none of them can see is a *user's helper that shares an element's name*. Inside a `ui:`
+/// block a lowercase call with keyword arguments is indistinguishable from an element
+/// ([`crate::vocabulary`] says why), so `def input(…)` called by name is checked as an `input`.
+/// That is the same limit `B0218` already has, and it moves when `ui:` becomes a user-written typed
+/// macro rather than a compiler-provided one (D22).
+fn accessibility(
+    tag: &str,
+    written: &BTreeSet<String>,
+    has_children: bool,
+    span: Span,
+    diags: &mut Diagnostics,
+) {
+    let labelled = || vocabulary::LABELLING.iter().any(|n| written.contains(*n));
+    match vocabulary::naming(tag) {
+        None => {}
+        Some(vocabulary::Naming::Alt) if !written.contains("alt") => {
+            diags.push(
+                Diagnostic::error("B0219", "this image has no alt text", span)
+                    .with_primary_label("a screen reader announces the file name, or nothing")
+                    .with_note(
+                        "`alt=\"\"` is the right answer for an image that carries no meaning — it \
+                         is HTML's own way of saying so, and it is accepted here",
+                    )
+                    .with_fix(format!(
+                        "add `alt=\"…\"`, or `{EXEMPT}=\"…\"` with a reason"
+                    )),
+            );
+        }
+        Some(vocabulary::Naming::TextOrLabel) if !has_children && !labelled() => {
+            diags.push(
+                Diagnostic::error("B0220", "this button has no accessible name", span)
+                    .with_primary_label("nothing announces what it does")
+                    .with_note(
+                        "a button is named by its own text, or by `aria_label=` when it has none \
+                         — an icon button is the usual case",
+                    )
+                    .with_fix(format!(
+                        "give it text, `aria_label=\"…\"`, or `{EXEMPT}=\"…\"` with a reason"
+                    )),
+            );
+        }
+        Some(vocabulary::Naming::Label) if !labelled() && !written.contains("id") => {
+            diags.push(
+                Diagnostic::error("B0221", format!("this `{tag}` has no label"), span)
+                    .with_primary_label(if written.contains("placeholder") {
+                        "a placeholder is not a label — it disappears as soon as somebody types"
+                    } else {
+                        "nothing announces what this control is for"
+                    })
+                    .with_note(
+                        "`id=` is accepted as evidence of a `label(for=…)` elsewhere, because a \
+                         `ui:` block composes out of functions and this check sees one at a time",
+                    )
+                    .with_fix(format!(
+                        "add `aria_label=\"…\"`, an `id=` with a `label(for=…)`, or \
+                         `{EXEMPT}=\"…\"` with a reason"
+                    )),
+            );
+        }
+        Some(_) => {}
+    }
 }
 
 /// A statement is an element when its head is a symbol that is not one of the control forms.
@@ -396,6 +516,51 @@ mod tests {
             h1 < loop_at && loop_at < footer,
             "order not preserved: {out}"
         );
+    }
+
+    /// The checks accept what is correct, which is the half a suite of refusals never states.
+    ///
+    /// `docs/12` §12.4's three checks are errors, so every way of satisfying one has to be listed
+    /// somewhere that fails when it stops working — otherwise the first program to name a control
+    /// properly and be refused anyway is a user's.
+    #[test]
+    fn every_way_of_naming_a_control_is_accepted() {
+        for element in [
+            // An image that carries no meaning: HTML's own spelling, and the reason the check is
+            // for the attribute rather than for a value.
+            "img(src=\"/x.png\", alt=\"\")",
+            "img(src=\"/x.png\", alt=\"a chart\")",
+            "input(aria_label=\"name\")",
+            "input(aria_labelledby=\"h\")",
+            "input(title=\"name\")",
+            // An `id` a `label(for=…)` somewhere else may point at — the check's stated hole.
+            "input(id=\"name\")",
+            "select(aria_label=\"tier\")",
+            "textarea(aria_label=\"notes\")",
+            // Exempted by hand, with a reason, which is the escape hatch every one of them has.
+            "img(src=\"/x.png\", a11y_exempt=\"decorative, and behind aria-hidden\")",
+            "input(placeholder=\"search\", a11y_exempt=\"labelled by the heading above it\")",
+        ] {
+            let (out, d, map) = ui(&format!(
+                "def v() -> Html:\n    return ui:\n        {element}\n"
+            ));
+            assert!(!d.has_errors(), "`{element}`: {}", d.render(&map));
+            assert!(
+                !out.contains("a11y-exempt") && !out.contains("a11y_exempt"),
+                "the exemption reached the page: {out}"
+            );
+        }
+    }
+
+    /// A button names itself with its own text, which is the ordinary case and must not be refused.
+    #[test]
+    fn a_button_with_text_names_itself() {
+        let (out, d, map) = ui("def v() -> Html:\n\
+             \x20   return ui:\n\
+             \x20       button(on_click=Drop):\n\
+             \x20           \"x\"\n");
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        assert!(out.contains(r#"(html_el "button""#), "{out}");
     }
 
     #[test]
