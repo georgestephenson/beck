@@ -1002,3 +1002,76 @@ fn an_adr_is_numbered_for_the_file_it_is_in_and_is_listed() {
         bad.join("\n  ")
     );
 }
+
+/// **A document that shows a spelling the compiler refuses says that it does.**
+///
+/// [`docs/11-language-tour.md`](../../../../docs/11-language-tour.md) §11.6 said "`ui:` checks
+/// neither attribute nor event names, so `cls=` compiles and reaches the browser as an attribute
+/// nothing reads" for as long as the vocabulary that refuses it has existed, and
+/// [`docs/README.md`](../../../../docs/README.md)'s index said the same in a summary. Both were
+/// false, both were about a compiler behaviour that had *changed under them*, and nothing noticed —
+/// because no gate compiles or reads the Beck in `docs/`, and `docs/86-getting-started.md` is the
+/// one document whose programs a test does run.
+///
+/// This is the narrow version of the gate that would have caught it, and it is narrow on purpose:
+/// most Beck in `docs/` is a fragment or a sketch, and demanding that all of it compile would demand
+/// rewriting [`docs/01`](../../../../docs/01-vision-and-premise.md)'s faithful translation of the
+/// original sketch into a language that did not exist when the sketch was written. What *can* be
+/// checked mechanically is narrower and is exactly the failure that happened: a document showing a
+/// spelling the compiler has a diagnostic for must name the diagnostic.
+///
+/// The list of spellings is [`beck_macro::vocabulary`]'s own alias tables rather than a copy, so a
+/// new alias is covered the day it is added — which is the difference between this and a blocklist
+/// somebody has to remember to extend.
+#[test]
+fn a_document_showing_a_refused_spelling_names_the_diagnostic_that_refuses_it() {
+    // `00-original-idea.md` is a preserved transcript and is the source every other document defers
+    // to (`AGENTS.md`). It predates every diagnostic in this compiler and is not editable to satisfy
+    // one, so it is exempt by name rather than by an accident of not currently tripping.
+    const VERBATIM: &[&str] = &["00-original-idea.md"];
+
+    let refused: Vec<(String, &str)> = beck_macro::vocabulary::ALIASES
+        .iter()
+        .map(|(wrong, _)| (format!("{wrong}="), "B0218"))
+        .chain(
+            beck_macro::vocabulary::EVENT_ALIASES
+                .iter()
+                .map(|(wrong, _)| (format!("on_{wrong}="), "B0217")),
+        )
+        .collect();
+
+    let mut bad = Vec::new();
+    let dir = repo_root().join("docs");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("docs/ is checked in")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "md"))
+        .collect();
+    files.sort();
+
+    for path in &files {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if VERBATIM.contains(&name) {
+            continue;
+        }
+        let text = std::fs::read_to_string(path).expect("a document is readable");
+        for (spelling, code) in &refused {
+            if text.contains(spelling.as_str()) && !text.contains(code) {
+                bad.push(format!(
+                    "{name} shows `{spelling}`, which `{code}` refuses, and never mentions {code}"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "{} document(s) show a spelling the compiler refuses without saying so — a reader who \
+         copies one gets a compile error the page told them was fine:\n  {}",
+        bad.len(),
+        bad.join("\n  ")
+    );
+}

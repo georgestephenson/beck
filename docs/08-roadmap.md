@@ -741,8 +741,14 @@ be stale), and **look for it in §8.5.4** (a phase bullet is not a position, and
 | The presence second clock | Unscheduled | [`48`](48-identity-report.md) §48.13's first row, in no phase, with a successor in [`99`](99-the-data-tier-means-of-combination.md) decision 3. Now placed |
 | Comment-preserving printing | In a lane, not in the order | §8.5.5's Lane C cell since that table existed. Placed, recorded as a defect, and **built** — the second item the sweep carried from *nobody scheduled this* to *it is done* |
 | The `@public` surface | Unscheduled in this list | A Phase 4 bullet with its own internal order (§101.10) and no position here. Now placed, G-first |
+| `cls=` "compiles and reaches the browser" | Document behind code | [`11`](11-language-tour.md) §11.6 and [`README.md`](README.md)'s index both said `ui:` checks no attribute names, for as long as the vocabulary that refuses `cls=` had existed. **Corrected in place, and this one now has a gate**: `docs.rs::a_document_showing_a_refused_spelling_names_the_diagnostic_that_refuses_it` reads `beck_macro::vocabulary`'s own alias tables, so a new alias is covered the day it is added. It goes red on both documents as they stood |
+| [`01`](01-vision-and-premise.md)'s canonical example | Document behind code, and *not* to be fixed | The vision's flagship program has not compiled since the surface settled — method calls, `f"…"`, `cls=`, `css:`, an unlabelled `input` — and said nothing about it. It is a faithful translation of the original sketch and rewriting it would break the claim the section makes, so what it gained is the sentence saying so and a pointer to `examples/todo.beck`, which is the same program in the language and is gated. **Not every stale document is a document to update** |
 
-**A third direction, found by running the sweep on numbers instead of on absences.** A document can
+**A third direction, found by running the sweep on numbers instead of on absences**, and a fourth
+under it: a document can show **code the compiler now refuses**, which is the same decay with a
+different instrument and the one class of it that turned out to be mechanically checkable (the row
+above). Both were found the same way — by asking, after a change that refuses something, where else
+in the tree that spelling appears. A document can
 also be behind the code by *quoting a figure that has since moved*, which neither table above
 describes because every sentence involved stays grammatically true. Re-running the measurement suites
 on 2026-08-17 found three at once — the corpus's placement share (43%, quoted as 44%, actually 52%),

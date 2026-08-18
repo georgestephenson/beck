@@ -361,11 +361,15 @@ incrementally* ([`23`](23-incremental-views-report.md)), where every dataframe l
 construction. A pandas-shaped Beck package would put whole-table recompute semantics on top of an
 incremental engine, which is the defect class [`AGENTS.md`](../AGENTS.md) names first.
 
-§99.3 shows the cost is already being paid: `corpus/27-review.beck` contains a nested-loop join,
-reapplied to every element on every event, and `beck explain cost` prints the defect without
-counting it.
+§99.3 showed the cost was already being paid: `corpus/27-review.beck` contained a nested-loop join,
+reapplied to every element on every event, and `beck explain cost` printed the defect without
+counting it. **The join half is built** ([`99`](99-the-data-tier-means-of-combination.md) §99.6):
+that program and two others compile to a maintained equi-join with no edit to any of them, and the
+tally counts what it prints. `group by` and the aggregates — which is where the dataframe verbs
+actually live — are not.
 
-**Verdict: build, as the missing half of the language, in §99.9's order.**
+**Verdict: build, as the missing half of the language, in §99.9's order.** That order is now
+`arrange_by`, then `group by` and the aggregates.
 
 ## 105.8 NumPy is a notation over a link
 

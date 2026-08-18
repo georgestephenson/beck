@@ -138,14 +138,22 @@ styles = css:
 `ui:` and `css:` are macros producing typed trees (the Hiccup lineage of the original sketch), not
 privileged syntax. Interpolated HTML is escaped by type — XSS has no representation.
 
-**Three things above are designed and not built**, and
+**Two things above are designed and not built**, and
 [`104`](104-styling-and-the-component-library.md) §104.1 measures the gap. `component` is not a
 keyword: a component today is a `def` returning `Html`, which composes across modules and may be
 generic over the application's command (§104.7), and a program has one `page`
 ([`94`](94-the-client-report.md) §94.15). `css:` has no parser and no macro — the stylesheet a
-running application serves is a Rust constant. And the attribute is spelled `class`, not `cls`;
-`ui:` checks neither attribute nor event names, so `cls=` compiles and reaches the browser as an
-attribute nothing reads (§104.8).
+running application serves is a Rust constant.
+
+**The third thing this paragraph listed is now a compile error, and the block above trips it.** The
+attribute is spelled `class`, not `cls`, and `ui:` used to check neither attribute nor event names,
+so `cls=` reached the browser as an attribute nothing reads. It has a vocabulary now (§104.8):
+`B0218` refuses `cls=` with `class` as the suggestion, `B0217` refuses an event the client does not
+listen for, and `B0219`–`B0221` refuse an image with no alt text, a button with no accessible name
+and a control with no label ([`12`](12-standards-and-conformance.md) §12.4). This sentence claimed
+the opposite for as long as the vocabulary has existed, and nothing caught it, because **no gate
+compiles the Beck in this document** — [`08`](08-roadmap.md) §8.5.6 is where that is recorded and
+[`86`](86-getting-started.md) is the one document whose programs a test does compile and run.
 
 ## 11.7 Macros — the Lisp inheritance
 
