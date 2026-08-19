@@ -1,0 +1,162 @@
+# The program that asks a group for one of its *ends* (docs/99 §99.9 item 6).
+#
+# `35-workload.beck` asks each group how big it is, which is a question the group does not have to
+# exist to answer — a tally moves by ±1 and nothing reads a row. This one asks what the rows say:
+# the lowest bid on a lot and the highest, which no count can answer and which the obvious
+# implementation answers by building the pile and walking it.
+#
+# Two things it exists to hold that the count cannot:
+#
+#   * **both ends, from one shape**. `min` and `max` are the same operator with the tree read from
+#     the other side, and §99.9 item 6 forecast they would not be — that a maximum needs an upper
+#     bound a `Value` cannot supply. That is true of a range over an index of the *rows* and false
+#     of a tree kept per group, which is what the operator keeps;
+#   * **an event that changes nothing**. A bid below the standing low and beneath the standing high
+#     moves the group and moves neither answer, so the page must not re-render — which is a
+#     property of the operator's output rather than of its cost, and is what separates an aggregate
+#     from a filter somebody measures.
+#
+# The projection is the point of the shape: what is compared is the bid's *amount*, so the page
+# never holds a bid. `list_min(map_list(filter_list(…), …))` is how anybody writes that, and this
+# file says neither `group by` nor `min by`.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model State:
+    lots: Map[Str, Lot]
+    bids: Map[Str, Bid]
+
+model Lot:
+    id: Str
+    title: Str
+
+model Bid:
+    id: Str
+    lot: Str
+    amount: Int
+
+union Command:
+    Open(id: Str, title: Str)
+    Offer(id: Str, lot: Str, amount: Int)
+    Withdraw(id: Str)
+
+union Event:
+    Opened(id: Str, title: Str)
+    Offered(id: Str, lot: Str, amount: Int)
+    Withdrawn(id: Str)
+
+union Rejection:
+    Blank
+    NoSuchLot
+    NoSuchBid
+    NotPositive
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Opened(id, title):
+            return s.with(lots=map_insert(s.lots, id, Lot(id=id, title=title)))
+        case Offered(id, lot, amount):
+            return s.with(bids=map_insert(s.bids, id, Bid(id=id, lot=lot, amount=amount)))
+        case Withdrawn(id):
+            return s.with(bids=map_remove(s.bids, id))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Open(id, title):
+            if str_is_empty(str_trim(title)):
+                return Err(error=Blank)
+            return Ok(value=[Opened(id=id, title=title)])
+        case Offer(id, lot, amount):
+            if not map_contains(s.lots, lot):
+                return Err(error=NoSuchLot)
+            if amount < 1:
+                return Err(error=NotPositive)
+            return Ok(value=[Offered(id=id, lot=lot, amount=amount)])
+        case Withdraw(id):
+            if not map_contains(s.bids, id):
+                return Err(error=NoSuchBid)
+            return Ok(value=[Withdrawn(id=id)])
+
+# The two questions, written the way anybody would write them: the bids on this lot, taken down to
+# their amounts, at their smallest and at their largest.
+def lowest(s: State, lot: Str) -> Option[Int]:
+    return list_min(map_list(filter_list(map_values(s.bids), lambda b: b.lot == lot),
+                             lambda b: b.amount))
+
+def highest(s: State, lot: Str) -> Option[Int]:
+    return list_max(map_list(filter_list(map_values(s.bids), lambda b: b.lot == lot),
+                             lambda b: b.amount))
+
+# A lot nobody has bid on has no lowest bid, which is an ordinary answer rather than an error —
+# `list_min` of an empty list is `None` and so is the aggregate's, which is what lets the join above
+# it be the same point lookup a `map_get` gets.
+def money(v: Option[Int]) -> Str:
+    match v:
+        case Some(value):
+            return str(value)
+        case None:
+            return "no bids"
+
+def catalogue(s: State) -> list[Lot]:
+    return sort_by(map_values(s.lots), lambda lot: lot.title)
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "auction"
+            ul:
+                for lot in catalogue(s):
+                    li(key=lot.id):
+                        (lot.title + ": " + money(lowest(s, lot.id))
+                         + " / " + money(highest(s, lot.id)))
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, room, validate)
+room: Signal[State] = durable(fold(apply_event, State(lots={}, bids={}), events))
+page: Signal[Html] = per_session(room, view)
+
+test "a lot nobody has bid on says so":
+    given [Opened(id="l1", title="a lamp")]
+    expect page contains "a lamp: no bids / no bids"
+
+test "one bid is both ends of its lot":
+    given [Opened(id="l1", title="a lamp"),
+           Offered(id="b1", lot="l1", amount=40)]
+    expect page contains "a lamp: 40 / 40"
+
+test "the ends are the ends, whatever order the bids arrived in":
+    given [Opened(id="l1", title="a lamp"),
+           Offered(id="b1", lot="l1", amount=40),
+           Offered(id="b2", lot="l1", amount=12),
+           Offered(id="b3", lot="l1", amount=95),
+           Offered(id="b4", lot="l1", amount=63)]
+    expect page contains "a lamp: 12 / 95"
+
+test "a bid on one lot is no bid on another":
+    given [Opened(id="l1", title="a lamp"), Opened(id="l2", title="a rug"),
+           Offered(id="b1", lot="l1", amount=40)]
+    expect page contains "a lamp: 40 / 40"
+    expect page contains "a rug: no bids / no bids"
+
+test "withdrawing the low bid promotes the next one":
+    given [Opened(id="l1", title="a lamp"),
+           Offered(id="b1", lot="l1", amount=12),
+           Offered(id="b2", lot="l1", amount=40)]
+    when Withdraw(id="b1")
+    expect page contains "a lamp: 40 / 40"
+
+test "two bids of the same amount are two bids, and withdrawing one leaves the other":
+    given [Opened(id="l1", title="a lamp"),
+           Offered(id="b1", lot="l1", amount=40),
+           Offered(id="b2", lot="l1", amount=40)]
+    when Withdraw(id="b1")
+    expect page contains "a lamp: 40 / 40"
+
+test "a bid on a lot that was never opened never reaches the log":
+    given []
+    when Offer(id="b1", lot="ghost", amount=40)
+    expect Err(error=NoSuchLot)
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "auction"

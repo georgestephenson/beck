@@ -889,3 +889,151 @@ fn what_counting_a_group_saves() {
          \x20 constant in it and the other is linear."
     );
 }
+
+/// What answering a group from a maintained extreme rather than from the group saves, in a clock.
+///
+/// `docs/99` §99.9 item 6. `scaling.rs::asking_a_group_for_one_end_does_not_build_it` holds the
+/// shape — 72 backend steps at any pile size against a number that grows — and this is the rate,
+/// which is printed rather than thresholded (§13.7).
+///
+/// The contrast is the **same expression with a `let` in it**, and that is the whole variant: the
+/// recogniser reads `list_min(map_list(filter_list(…), …))` as an aggregate and the same three
+/// operators written through a name as a *group*, because a site inside another one is skipped and
+/// a name is not a site. So the two plans differ in exactly one thing — item 3's index is in both,
+/// item 6's aggregate is in one — and nothing was added to the slow side to make it slow.
+/// `scaling.rs` is where the off switch itself is measured.
+#[test]
+fn what_answering_a_group_from_its_ends_saves() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/36-auction.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let compiled = |name: &str, text: &str| {
+        let (placed, diags, map) = beck_core::compile_str(name, text);
+        assert!(!diags.has_errors(), "{}", diags.render(&map));
+        placed.expect("it compiles")
+    };
+    let ends = compiled("36-auction.beck", &src);
+    let grouped = compiled(
+        "36-auction-built.beck",
+        &src.replace(
+            "return list_min(map_list(filter_list(map_values(s.bids), lambda b: b.lot == lot),",
+            "bids = filter_list(map_values(s.bids), lambda b: b.lot == lot)\n    return \
+             list_min(map_list(bids,",
+        )
+        .replace(
+            "return list_max(map_list(filter_list(map_values(s.bids), lambda b: b.lot == lot),",
+            "bids = filter_list(map_values(s.bids), lambda b: b.lot == lot)\n    return \
+             list_max(map_list(bids,",
+        ),
+    );
+    // The variant is the *same* three operators through a name, so it must still be a join over an
+    // index — otherwise this measures the scan item 3 removed and credits it to item 6.
+    let aggregates = |p: &Placed| {
+        Plan::compile(p)
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.op, Op::GroupBy { .. }))
+            .count()
+    };
+    let indexes = |p: &Placed| {
+        Plan::compile(p)
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.op, Op::ArrangeBy { .. }))
+            .count()
+    };
+    assert_eq!(
+        (aggregates(&ends), indexes(&ends)),
+        (2, 0),
+        "the aggregate side no longer compiles to two `group_by`s and no index"
+    );
+    assert_eq!(
+        (aggregates(&grouped), indexes(&grouped)),
+        (0, 1),
+        "the variant no longer compiles to an index and no aggregate, so the two plans differ in \
+         more than the thing being measured"
+    );
+
+    let event = |variant: &str, fields: &[(&str, Value)]| {
+        let mut f = beck_core::core::Fields::new();
+        for (k, v) in fields {
+            f.insert(Arc::from(*k), v.clone());
+        }
+        Value::data(Arc::from("Event"), Some(Arc::from(variant)), f)
+    };
+    let offered = |id: &str, amount: i64| {
+        event(
+            "Offered",
+            &[
+                ("id", Value::str_(id)),
+                ("lot", Value::str_("l1")),
+                ("amount", Value::Int(amount)),
+            ],
+        )
+    };
+
+    let once = |subject: &Placed, n: i64| -> u128 {
+        let backend = beck_eval::backend(subject);
+        let prepared = Arc::new(
+            Prepared::new(Arc::new(Plan::compile(subject)), backend.as_ref()).expect("prepares"),
+        );
+        let runtime = Runtime::new(subject.clone(), backend).expect("prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let mut seq = 0u64;
+        let mut state = runtime.initial_state().expect("initial");
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: At(seq as i64),
+                actor: "ana".to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("fold")
+        };
+        seq += 1;
+        state = fold(
+            &state,
+            event(
+                "Opened",
+                &[("id", Value::str_("l1")), ("title", Value::str_("a lamp"))],
+            ),
+            seq,
+        );
+        for i in 0..n {
+            seq += 1;
+            state = fold(&state, offered(&format!("b{i:06}"), 1_000 + i), seq);
+        }
+        engine.render(&state, &session, &here).expect("warm");
+        seq += 1;
+        let next = fold(&state, offered("b999999", 5), seq);
+        let t = Instant::now();
+        engine.render(&next, &session, &here).expect("step");
+        t.elapsed().as_micros()
+    };
+
+    // The first thing measured in a process pays for warm-up (CHANGELOG 2026-08-17).
+    let _ = once(&ends, 200);
+
+    println!(
+        "\n{:>8}  {:>12} {:>12} {:>7}",
+        "bids", "ends µs", "grouped µs", "ratio"
+    );
+    for n in [200i64, 1_600] {
+        let with = (0..3).map(|_| once(&ends, n)).min().expect("three runs");
+        let without = (0..3).map(|_| once(&grouped, n)).min().expect("three runs");
+        println!(
+            "{n:>8}  {with:>12} {without:>12} {:>6.1}×",
+            without as f64 / with.max(1) as f64
+        );
+    }
+    println!(
+        "\n  Both render the same page and both hold an index. `ends` answers each lot from a\n\
+         \x20 multiset the aggregate keeps; `grouped` copies the group out, maps it and walks it,\n\
+         \x20 which is what item 3 left behind and what this closes. The measured event is a new\n\
+         \x20 low, so the answer moves and the page is reassembled on both sides — the ratio is\n\
+         \x20 the group's size and nothing else."
+    );
+}

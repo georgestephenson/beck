@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **968 definitions compiled against 137 refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **972 definitions compiled against 140 refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -95,7 +95,7 @@ ask in order:
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
-| "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for that group's size, and you write all three as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that only asks `list_len` of that filter is answered from a maintained count with no group built. All are maintained from both sides and `beck explain query` shows them. `sum`, `min` and `max` per group and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
+| "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for three questions about that group, and you write all of them as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that asks `list_len`, `list_min` or `list_max` of that filter is answered without the group being built at all — the count from a tally the join keeps, the two ends from a `group_by` holding one multiset per group. All are maintained from both sides and `beck explain query` shows them. `sum` per group and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
 | "How do I make it look like anything?" | **Badly, and this is the newest row.** The stylesheet a running application serves is eight rules hard-coded in `beck-rt/src/css.rs`; `css:` appears in the tour and has no parser. `class=` takes a list now and `beck explain style` will tell you every class your pages can carry — but nothing emits a stylesheet from that set yet, so the answer to the question as asked is unchanged. Tailwind styles a Beck page with no configuration today, and its scanner cannot survive a package manager ([`104`](104-styling-and-the-component-library.md) §104.3), so the answer until §8.5.4's styling cluster lands is "bring npm" — which for a project whose product is one static binary is the wrong answer, not a smaller one |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
@@ -175,12 +175,14 @@ read it.**
   tools, views as resources, effect rows in the tool annotations), each gated by a foreign reader
   per §101.9, and the rest of §101.7's edge ledger — idempotency, `seq`-derived ETags, the response
   vocabulary, deprecation headers — arriving with the forms that need them.
-- **The data tier's means of combination** ([`99`](99-the-data-tier-means-of-combination.md)):
-  `join`, `group by` and the aggregates, which the view algebra has never had — every operator it
-  implements takes one collection, so a program relating two of them escapes the algebra into a
-  per-element function that captured the accumulator and is reapplied on every event. The order is
-  §99.9's and its **first item is a gate that goes red today**, not an operator. This is what §8.4's
-  Phase 5 TPC-H row has always been conditioned on, and it had never been assigned.
+- **What is left of the data tier's means of combination**
+  ([`99`](99-the-data-tier-means-of-combination.md)): `sum` per group, `distinct` and difference,
+  fusion for the new operators, and the read-model SQL compiling into the plan rather than growing a
+  second interpreter. The join, both of its indexes and per-group `count`, `min` and `max` have
+  landed and are §8.5.4's row; what remains is §99.9 items 6 (`sum` only), 7, 8 and 9, and the first
+  of those is a **surface decision** — `Int` and `Float` disagree about whether a maintained sum is
+  the recomputed one — rather than a delta rule. This is what §8.4's Phase 5 TPC-H row has always
+  been conditioned on.
 - **The log's own lifecycle, and the substrate that reads it** ([`10`](10-decisions.md) D3's
   obligations, [`09`](09-risks-and-open-questions.md) R6): segment archival to Parquet on object
   storage, bounded retention for the stores that opt down from `retain=forever`, and **DataFusion**
@@ -445,10 +447,18 @@ rows.
   `arrange_by` removes the scan and leaves the group, which is what `group by` takes — **and its first
   aggregate has taken it**: `list_len` over the same filter is answered from a tally the join keeps,
   so `corpus/35-workload.beck` shows every person's open-issue count while copying **one** entry out
-  of an arrangement at 200 issues and at 1,600. What is left, in §99.9's order: **`sum`, `min` and
-  `max` per group**, each waiting on a surface rather than on a delta rule (§99.9 item 6 has the
-  design for `min`/`max` and the `Int`-versus-`Float` decision `sum` needs), then `distinct` and
-  difference, fusion for the new operators, and the read-model SQL compiling into the plan. This was a Phase 4 bullet from the
+  of an arrangement at 200 issues and at 1,600 — **and its other two have taken it as well**:
+  `list_min` and `list_max` over that filter compile to `group_by`, one entry per group holding a
+  multiset of what its rows projected to, so `corpus/36-auction.beck` shows the lowest and the
+  highest bid on every lot in **72 backend steps at 200 bids and at 1,600, against 4,097 and
+  32,097** with the operator switched off. §99.9 item 6 had forecast that `max` would cost more than
+  `min`; it does not, and the asymmetry turned out to belong to the design rather than to the
+  problem — a tree the operator builds itself is bounded at both ends, and what cannot be entered
+  from its end is a prefix range of *somebody else's* arrangement. What is left, in §99.9's order:
+  **`sum` per group**, which waits on a surface rather than on a delta rule — the `Int`-versus-`Float`
+  decision in §99.9 item 6, and the only one of the four the language has no spelling for — then
+  `distinct` and difference, fusion for the new operators, and the read-model SQL compiling into the
+  plan. This was a Phase 4 bullet from the
   day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list,
   which is the same defect §8.5 opens by describing one level down — a phase is not a position. It
   lives in **Lane B** (`engine.rs`, `plan.rs`, `relate.rs`) and contends with nothing in Lane A.

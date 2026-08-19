@@ -1,6 +1,6 @@
 # The corpus
 
-Thirty-four single-file programs and a three-module project, and the Phase 2 exit criterion measured
+Thirty-six single-file programs and a three-module project, and the Phase 2 exit criterion measured
 against them:
 
 > On a corpus of 20+ programs, placement is inferred with no annotations for the common cases.
@@ -58,6 +58,12 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
   has to move every issue assigned to them and none of the issues that are not. The differential
   harness is what holds that, since it compares the maintained page with the recomputed one after
   every event and an in-language `contains` can only ask about a string somebody thought to name.
+- **a question *about* a group rather than for its members** (programs 35 and 36,
+  [`docs/99`](../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6). Program 35 asks
+  each group how big it is, which a tally answers; program 36 asks what its rows say — the lowest
+  and the highest bid on a lot — which a tally cannot. Neither page ever holds a group, and the
+  second is where the events a generated log reaches only by luck are written out: the standing
+  minimum withdrawn, the standing maximum withdrawn, half of a tie, and the last row of a group.
 
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.

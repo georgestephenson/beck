@@ -7,14 +7,15 @@ backends** — carried since Phase 1 as a shape with the evaluator on both sides
 file — is a three-way one: the tree-walker, LLVM and Cranelift on every call.
 
 Across the corpus, both benchmark suites, both SICP chapters, the examples and the standard library,
-**963 definitions compile and 137 are refused**, and `examples/todo.beck` compiles **all nine of its
+**972 definitions compile and 140 are refused**, and `examples/todo.beck` compiles **all nine of its
 definitions** — the sentence that used to name `validate` as the one left, for a Unicode table, was
 out of date rather than made true again by §93.12: `validate` reaches none of the fifteen primitives
-that section is about. **All thirty-four** corpus programs compile their `apply_event` — the step
-function of a `durable` fold — and **twenty-four of thirty-four** compile their `view`
-(`BECK_REQUIRE_LLVM=1 cargo test --release --test native -- --nocapture`, re-read 2026-08-17; the
-figures this replaces were 968, nine and twenty-one of thirty-two, and both the numerator and the
-corpus have grown since).
+that section is about. **All thirty-six** corpus programs compile their `apply_event` — the step
+function of a `durable` fold — and **twenty-five of thirty-six** compile their `view`
+(`BECK_REQUIRE_LLVM=1 cargo test --release --test native -- --nocapture`, re-read 2026-08-19; the
+figures this replaces were 963, thirty-four and twenty-four of thirty-four, and both the numerator
+and the corpus have grown since — [`DEFECTS.md`](../DEFECTS.md)'s `corpus-wide-counts-drift` is why
+that keeps happening).
 
 This chapter is the whole of Lane E. It arrived in fifteen pieces over as many changes, and for
 fourteen of them the frame was the same: a thing gets a layout, both emitters learn it, the
@@ -432,7 +433,7 @@ is the fifteen primitives that were paying it.
 ## 93.6 What compiles, and the order it arrived in
 
 Each row is one change. "Compiled" is the total of `beck native <file>`'s own two headline lines over
-`corpus/ awfy/ clbg/ sicp/ examples/ lib/`, each file compiled alone, taken before and after.
+`corpus/ awfy/ clbg/ sicp/ examples/ lib/`, each file compiled alone, taken before and after. **The Compiled column is the reading when that row landed**, not today's: the corpus has grown since, and the current figure is the one at the top of this chapter.
 
 | # | What arrived | Compiled | The finding it left behind |
 |---|---|---:|---|

@@ -326,6 +326,136 @@ fn a_loop_that_filters_by_an_equality_is_a_join_answering_what_its_body_asked() 
     );
 }
 
+/// **One end of a group is a third question over the same recognition**, and its right side is not
+/// an index over the rows at all.
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's other two
+/// aggregates. `list_min` and `list_max` over the same `filter_list` — bare, or over a `map_list` of
+/// it — compile to [`Op::GroupBy`], which holds one entry per group; so the join above it probes a
+/// point rather than a range and there is **no `arrange_by` in the plan at all**. That last half is
+/// the one worth asserting: an implementation that built the index and then took the first row of
+/// each range would answer correctly, cost the group, and pass every test that only reads the page.
+#[test]
+fn one_end_of_a_group_is_a_group_by_and_not_an_index_over_its_rows() {
+    use beck_core::plan::{Agg, Matching, Op, Plan};
+
+    let shape = |name: &str, body: &str| -> (bool, Option<Agg>, Option<Matching>) {
+        let plan = Plan::compile(&ok(name, &capturing(body)));
+        (
+            plan.nodes
+                .iter()
+                .any(|n| matches!(n.op, Op::ArrangeBy { .. })),
+            plan.nodes.iter().find_map(|n| match n.op {
+                Op::GroupBy { agg, .. } => Some(agg),
+                _ => None,
+            }),
+            plan.nodes.iter().find_map(|n| match n.op {
+                Op::Join { matched, .. } => Some(matched),
+                _ => None,
+            }),
+        )
+    };
+
+    // The smallest row of the group, with no projection: what each row contributes is the row.
+    assert_eq!(
+        shape(
+            "smallest.beck",
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return map_list(map_keys(s.items), \
+                                 lambda k: str(unwrap_or(list_min(filter_list(map_values(s.items), \
+                                                                              lambda v: str(v) == \
+                                                                              k)), 0)))\n",
+        ),
+        (false, Some(Agg::Min), Some(Matching::Unique)),
+        "the smallest of a group is one entry per group, probed like a `map_get` — not a range \
+         over an index of the rows"
+    );
+
+    // The largest of a *projection* of the group, which is how the question is usually asked, and
+    // the half §99.9 item 6 expected to be the expensive one.
+    assert_eq!(
+        shape(
+            "largest.beck",
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return map_list(map_keys(s.items), \
+                                 lambda k: str(unwrap_or(list_max(map_list(\
+                                                  filter_list(map_values(s.items), \
+                                                              lambda v: str(v) == k), \
+                                                  lambda v: v + 1)), 0)))\n",
+        ),
+        (false, Some(Agg::Max), Some(Matching::Unique)),
+        "the largest of a projection of a group is the same operator reading its own tree from the \
+         other end, and costs what the smallest costs"
+    );
+
+    // A projection that reads the **loop's** element is not a function of the group, so there is no
+    // aggregate to maintain — and the filter under it is still the group the program would
+    // otherwise re-scan. The recogniser falls back to the site inside the one that failed rather
+    // than refusing the whole body, which is the difference between paying for an index and paying
+    // for the collection.
+    assert_eq!(
+        shape(
+            "unmaintainable.beck",
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return map_list(map_keys(s.items), \
+                                 lambda k: str(unwrap_or(list_min(map_list(\
+                                                  filter_list(map_values(s.items), \
+                                                              lambda v: str(v) == k), \
+                                                  lambda v: v + str_len(k))), 0)))\n",
+        ),
+        (true, None, Some(Matching::Group)),
+        "a projection the aggregate cannot maintain took the index down with it — the group is \
+         still a group, and refusing the whole body leaves the loop at O(n) per event"
+    );
+}
+
+/// **Two lookups that index the same collection by the same key build one index.**
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.5 decision 4: an
+/// index is a second arrangement and the sharing is what keeps a second one from costing a second
+/// copy. The sharing key is a string, and `Core` numbers variables **per definition** — so
+/// `lambda v: str(v)` and `lambda w: str(w)`, which are the same key, arrived with different
+/// numbers and built two identical arrangements. An arrangement is memory per subscriber as well as
+/// work per event ([`docs/23`](../../../../docs/23-incremental-views-report.md) §23.14).
+///
+/// The two lookups here ask *different questions* of the same index — one the group's size, one a
+/// row of it — because that is what makes them two joins rather than one common subexpression the
+/// front end would have folded before the plan ever saw it.
+#[test]
+fn two_lookups_by_the_same_key_share_one_index() {
+    use beck_core::plan::{Op, Plan};
+
+    let plan = Plan::compile(&ok(
+        "twice.beck",
+        &capturing(
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return map_list(map_keys(s.items), \
+                                 lambda k: str(list_len(filter_list(map_values(s.items), \
+                                                                    lambda v: str(v) == k))) + \
+                                           str(unwrap_or(list_get(filter_list(\
+                                                   map_values(s.items), \
+                                                   lambda w: str(w) == k), 0), 0)))\n",
+        ),
+    ));
+    let indexes = plan
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.op, Op::ArrangeBy { .. }))
+        .count();
+    let joins = plan
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.op, Op::Join { .. }))
+        .count();
+    assert_eq!(
+        (joins, indexes),
+        (2, 1),
+        "two questions about one collection keyed the same way are two joins over **one** index: \
+         {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+}
+
 /// **Several lookups in one body are several joins**, chained — not a refusal.
 ///
 /// `corpus/33-awareness.beck` renders a person's whereabouts *and* their note, so its loop looks up

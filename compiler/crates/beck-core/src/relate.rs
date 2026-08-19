@@ -60,6 +60,20 @@
 //! this is a field of the grouped shape ([`Answers`]) rather than a shape of its own — and it is the
 //! first of §99.9 item 6's aggregates, the one the language already had a spelling for. A group that
 //! is only ever counted is never built, which is what [`crate::plan::Matching::Count`] is for.
+//!
+//! # The fourth shape: one end of the group
+//!
+//! `list_min(filter_list(…))` and `list_max(…)`, bare or over a `map_list` of the same filter, are
+//! the same question once more — §99.9 item 6's other two aggregates. What differs from the count
+//! is that the answer is a function of the rows rather than only of how many there are, so
+//! something has to hold what the rows contribute: [`crate::plan::Op::GroupBy`], keyed by the
+//! group and holding a multiset of the projection, whose two ends are the two aggregates.
+//!
+//! It is the one shape whose *index* is not an index. The other three probe an arrangement of the
+//! collection; this probes an arrangement of the **groups**, one entry each, which is why the join
+//! above it is a [`crate::plan::Matching::Unique`] — the same probe a `map_get` gets, answering
+//! `Some` for a group with rows and `None` for one without, which is what `list_min` returns of a
+//! list and of an empty one.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -68,6 +82,7 @@ use beck_diag::Span;
 
 use crate::check::Def;
 use crate::core::{free_vars, Arm, Core, CoreKind, Prim, VarId};
+use crate::plan::Agg;
 use crate::ty::{Tier, Ty};
 
 /// The two halves of a joined row, as the field names the rewritten body reads them by.
@@ -120,14 +135,34 @@ pub enum Index {
 ///
 /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6: an
 /// aggregate that builds the collection in order to measure it has done the work the question was
-/// avoiding. The two are recognised from the same `filter_list` — one wrapped in `list_len` and one
-/// not — which is why they are a field of one variant rather than two shapes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// avoiding. All of these are recognised from the same `filter_list` — bare, or wrapped in the
+/// question the program asked of it — which is why they are a field of one variant rather than
+/// several shapes.
+#[derive(Clone, Debug)]
 pub enum Answers {
     /// The rows. `filter_list(…)` on its own, whose value is a `list`.
     Rows,
     /// How many rows. `list_len(filter_list(…))`, whose value is an `Int` — and no list is built.
     Count,
+    /// One end of the group. `list_min(filter_list(…))`, or the same over a `map_list` of it,
+    /// whose value is an `Option` — and no list is built.
+    ///
+    /// Boxed because it is the only variant carrying an expression, and an enum is as large as its
+    /// largest arm wherever it is held.
+    Extreme(Box<Extreme>),
+}
+
+/// One end of a group, and what its rows contribute to the question.
+#[derive(Clone, Debug)]
+pub struct Extreme {
+    /// Which end.
+    pub agg: Agg,
+    /// What each row contributes, as a function of one row of the *filtered* collection: the
+    /// `map_list`'s function, or the identity when the program asked for the extreme of the rows
+    /// themselves.
+    pub of: Core,
+    /// The parameter [`Extreme::of`] is written over — the filtered element, not the loop's.
+    pub param: VarId,
 }
 
 /// A loop whose body looked things up, taken apart.
@@ -173,6 +208,9 @@ pub enum Refusal {
     /// The filter's predicate is not an equality with one side over each element, so there is no
     /// key to arrange the collection by.
     PredicateIsNotAnEquality,
+    /// The aggregate's projection reads something other than the row it is applied to, so what
+    /// each row contributes to its group is not a function of that row.
+    ProjectionReadsMoreThanTheRow,
     /// Recognising it would not remove the capture that costs the rebuild, so it buys nothing.
     NothingSaved,
 }
@@ -195,6 +233,11 @@ impl Refusal {
             Refusal::PredicateIsNotAnEquality => {
                 "the predicate it filters by is not an equality between a function of the row and \
                  a function of the element, so there is no key to arrange the collection by"
+                    .into()
+            }
+            Refusal::ProjectionReadsMoreThanTheRow => {
+                "what it takes the smallest or largest of reads more than the row it is applied \
+                 to, so a group's answer is not a function of the group"
                     .into()
             }
             Refusal::NothingSaved => {
@@ -239,20 +282,25 @@ pub fn recognise(
 
     // Each site tested on its own, and the first failure kept only in case *none* qualifies: a body
     // with one lookup this can index and one it cannot is still worth indexing once.
+    //
+    // Outermost first — [`lookups`] collects in pre-order — and a site under one that **qualified**
+    // is skipped: two chosen sites on one spine would collide under the rewrite, and an aggregate's
+    // own filter is exactly that case. A site under one that *failed* is still considered, which is
+    // the difference between this and skipping every nested site outright: `list_min` over a filter
+    // whose projection reads the loop's element is not an aggregate this can maintain, and the
+    // filter under it is still the group the program would otherwise re-scan.
     let mut chosen: Vec<(Vec<usize>, Core, Core, Index)> = Vec::new();
+    let mut claimed: Vec<&[usize]> = Vec::new();
     let mut why = Refusal::NoLookup;
     for site in &sites {
-        // A lookup inside another one's arguments cannot qualify — its enclosing key would then read
-        // a captured collection — but the paths would also collide under the rewrite, so the check
-        // is here rather than left to the conditions.
-        if sites
-            .iter()
-            .any(|other| other != site && site.starts_with(other))
-        {
+        if claimed.iter().any(|outer| site.starts_with(outer)) {
             continue;
         }
         match qualify(&body, site, elem, defs, captured) {
-            Ok((over, key, index)) => chosen.push((site.clone(), over, key, index)),
+            Ok((over, key, index)) => {
+                claimed.push(site);
+                chosen.push((site.clone(), over, key, index));
+            }
             Err(refused) => why = refused,
         }
     }
@@ -322,17 +370,11 @@ fn qualify(
     captured: &BTreeSet<VarId>,
 ) -> Result<(Core, Core, Index), Refusal> {
     let at = follow(body, site);
-    // A `list_len` site is the `filter_list` under it, asked a different question. Everything below
-    // reads the filter, and only the answer differs.
-    let (at, answers) = match counts_a_filter(at) {
-        true => (
-            match &at.kind {
-                CoreKind::Prim { args, .. } => &args[0],
-                _ => unreachable!("`counts_a_filter` matched a `Prim`"),
-            },
-            Answers::Count,
-        ),
-        false => (at, Answers::Rows),
+    // An aggregate's site is the `filter_list` under it, asked a different question. Everything
+    // below reads the filter, and only the answer differs.
+    let (at, asked) = match asked(at) {
+        Some(pair) => pair,
+        None => (at, Asked::Rows),
     };
     let CoreKind::Prim { op, args } = &at.kind else {
         unreachable!("a site is where a `map_get` or a `filter_list` is")
@@ -342,6 +384,7 @@ fn qualify(
     // one.
     let mut lets = BTreeMap::new();
     collect_lets(body, site, &mut lets);
+    let outer = lets.clone();
 
     let over = resolve(&args[0], &lets, DEPTH);
     let reads_over = reads(&over);
@@ -393,6 +436,26 @@ fn qualify(
     } else {
         return Err(Refusal::PredicateIsNotAnEquality);
     };
+    let answers = match asked {
+        Asked::Rows => Answers::Rows,
+        Asked::Count => Answers::Count,
+        // The identity, written as the *variable node* the predicate already reads `y` through
+        // rather than as one this function builds: a `Core` carries its type, and the type of the
+        // row is not something the shape of a `filter_list` says.
+        Asked::Extreme { agg, of: None } => Answers::Extreme(Box::new(Extreme {
+            agg,
+            of: find_var(&by, y).ok_or(Refusal::PredicateIsNotAnEquality)?,
+            param: y,
+        })),
+        Asked::Extreme { agg, of: Some(f) } => {
+            let (z, of) = lambda(f, defs).ok_or(Refusal::ProjectionReadsMoreThanTheRow)?;
+            let of = resolve(&of, &outer, DEPTH);
+            if !reads(&of).is_subset(&BTreeSet::from([z])) {
+                return Err(Refusal::ProjectionReadsMoreThanTheRow);
+            }
+            Answers::Extreme(Box::new(Extreme { agg, of, param: z }))
+        }
+    };
     Ok((
         over,
         key,
@@ -402,6 +465,84 @@ fn qualify(
             answers,
         },
     ))
+}
+
+/// What a site asks of a group, before the group's own key is known.
+///
+/// [`Answers`] is the same thing with the projection resolved, which cannot happen until the
+/// filter's parameter has been read out of its predicate — so this carries the *unresolved*
+/// function and [`qualify`] finishes it.
+enum Asked<'a> {
+    Rows,
+    Count,
+    Extreme {
+        agg: Agg,
+        /// The `map_list`'s function, or `None` for the extreme of the rows themselves.
+        of: Option<&'a Core>,
+    },
+}
+
+/// The `filter_list` under an aggregate, and the question the aggregate asked of it.
+///
+/// `None` for anything that is not one, which is what keeps [`lookups`] and [`qualify`] agreeing
+/// about what a site is: a site is a `map_get`, a `filter_list`, or a node this function reads.
+///
+/// The wrappers are alternatives rather than a chain, so they are listed here rather than peeled in
+/// a loop, and a reader looking for "which shapes count as an aggregate" finds them in one place.
+fn asked(c: &Core) -> Option<(&Core, Asked<'_>)> {
+    let CoreKind::Prim { op, args } = &c.kind else {
+        return None;
+    };
+    match op {
+        Prim::ListLen if args.len() == 1 && is_filter(&args[0]) => Some((&args[0], Asked::Count)),
+        Prim::ListMin | Prim::ListMax if args.len() == 1 => {
+            let agg = match op {
+                Prim::ListMin => Agg::Min,
+                _ => Agg::Max,
+            };
+            if is_filter(&args[0]) {
+                return Some((&args[0], Asked::Extreme { agg, of: None }));
+            }
+            // `list_min(map_list(filter_list(…), f))` — the extreme of what each row projects to,
+            // which is how anybody writes "the earliest of their deadlines" rather than "the
+            // smallest of their rows".
+            let CoreKind::Prim {
+                op: Prim::MapList,
+                args: mapped,
+            } = &args[0].kind
+            else {
+                return None;
+            };
+            match mapped.len() == 2 && is_filter(&mapped[0]) {
+                true => Some((
+                    &mapped[0],
+                    Asked::Extreme {
+                        agg,
+                        of: Some(&mapped[1]),
+                    },
+                )),
+                false => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Whether this node is `filter_list(xs, p)`.
+fn is_filter(c: &Core) -> bool {
+    matches!(
+        &c.kind,
+        CoreKind::Prim { op: Prim::FilterList, args } if args.len() == 2
+    )
+}
+
+/// The first node in an expression that reads `v`, so a variable can be recovered with the type it
+/// was written with.
+fn find_var(c: &Core, v: VarId) -> Option<Core> {
+    if matches!(&c.kind, CoreKind::Var(id) if *id == v) {
+        return Some(c.clone());
+    }
+    children(c).into_iter().find_map(|child| find_var(child, v))
 }
 
 /// An expression with its leading `let`s taken off and remembered.
@@ -442,13 +583,13 @@ fn lambda(f: &Core, defs: &BTreeMap<Arc<str>, Def>) -> Option<(VarId, Core)> {
 /// A site inside a nested `lambda` is not found, because [`children`] does not enter one: a lookup
 /// there is a lookup per *call* of that function rather than per element.
 ///
-/// A `list_len` counts as a site only when its argument is *syntactically* the `filter_list` it
-/// would otherwise be measuring. That is not a shortcut, it is what keeps the aggregate from
-/// swallowing the group: a site inside another one is skipped, so admitting every `list_len` would
-/// hide the `filter_list` under it behind an outer site that could not qualify. Written this way,
-/// the outer site exists exactly when the inner one would have qualified too. What it costs is a
-/// count written through a `let` — `g = filter_list(…)` then `list_len(g)` — which is recognised as
-/// the group rather than as the count, and is slower rather than wrong.
+/// An aggregate counts as a site only when the `filter_list` it measures is *syntactically* under
+/// it ([`asked`]). That is not a shortcut, it is what keeps the aggregate from swallowing the
+/// group: a site inside another one is skipped, so admitting every `list_len` would hide the
+/// `filter_list` under it behind an outer site that could not qualify. Written this way, the outer
+/// site exists exactly when the inner one would have qualified too. What it costs is an aggregate
+/// written through a `let` — `g = filter_list(…)` then `list_len(g)` — which is recognised as the
+/// group rather than as the question, and is slower rather than wrong.
 fn lookups(c: &Core, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
     if matches!(
         &c.kind,
@@ -456,7 +597,7 @@ fn lookups(c: &Core, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
             op: Prim::MapGet | Prim::FilterList,
             args
         } if args.len() == 2
-    ) || counts_a_filter(c)
+    ) || asked(c).is_some()
     {
         out.push(path.clone());
     }
@@ -465,22 +606,6 @@ fn lookups(c: &Core, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
         lookups(child, path, out);
         path.pop();
     }
-}
-
-/// Whether this node is `list_len(filter_list(xs, p))` — the count of a group, written out.
-fn counts_a_filter(c: &Core) -> bool {
-    let CoreKind::Prim {
-        op: Prim::ListLen,
-        args,
-    } = &c.kind
-    else {
-        return false;
-    };
-    args.len() == 1
-        && matches!(
-            &args[0].kind,
-            CoreKind::Prim { op: Prim::FilterList, args } if args.len() == 2
-        )
 }
 
 /// The `let` bindings that are in scope at a path, so an expression under it can be resolved.
@@ -713,19 +838,42 @@ fn substitute(c: &mut Core, v: VarId, to: &Core) {
 /// differ where the expressions agree build two indexes that hold the same thing.
 pub fn fingerprint(c: &Core) -> String {
     let mut out = String::new();
-    write_fingerprint(c, &mut out);
+    write_fingerprint(c, None, &mut out);
     out
 }
 
-fn write_fingerprint(c: &Core, out: &mut String) {
+/// The same, for an expression written over one **bound** parameter, whose number is written
+/// canonically.
+///
+/// This is the form every index's key takes, and it is a separate function because the difference
+/// is not cosmetic: `lambda b: b.lot` and `lambda c: c.lot` are the same key, and `Core` numbers
+/// variables per definition, so two loops that index the same collection by the same key arrive
+/// here with different numbers. Fingerprinting them apart built **two identical arrangements** — an
+/// arrangement is memory per subscriber as well as work per event
+/// ([`docs/23`](../../../../../docs/23-incremental-views-report.md) §23.14), so the safe direction
+/// was not free.
+///
+/// Only the parameter is normalised, and that is enough because an index key **reads nothing else**
+/// — the recogniser refuses the shape otherwise. A `let` bound inside one would still fingerprint
+/// by its number, which is the same conservatism one level down and has no program.
+pub fn fingerprint_fun(param: VarId, body: &Core) -> String {
+    let mut out = String::new();
+    write_fingerprint(body, Some(param), &mut out);
+    out
+}
+
+fn write_fingerprint(c: &Core, param: Option<VarId>, out: &mut String) {
     use std::fmt::Write;
     match &c.kind {
         CoreKind::Const(v) => {
             let _ = write!(out, "c{v:?}");
         }
-        CoreKind::Var(v) => {
-            let _ = write!(out, "v{v}");
-        }
+        CoreKind::Var(v) => match param == Some(*v) {
+            true => out.push_str("v_"),
+            false => {
+                let _ = write!(out, "v{v}");
+            }
+        },
         CoreKind::Global(n) => {
             let _ = write!(out, "g{n}");
         }
@@ -740,7 +888,7 @@ fn write_fingerprint(c: &Core, out: &mut String) {
         }
         CoreKind::Lam { params, body } => {
             let _ = write!(out, "l{params:?}");
-            write_fingerprint(body, out);
+            write_fingerprint(body, param, out);
         }
         CoreKind::Let { var, .. } => {
             let _ = write!(out, "b{var}");
@@ -760,7 +908,7 @@ fn write_fingerprint(c: &Core, out: &mut String) {
     }
     out.push('(');
     for child in children(c) {
-        write_fingerprint(child, out);
+        write_fingerprint(child, param, out);
         out.push(',');
     }
     out.push(')');
