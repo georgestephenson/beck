@@ -610,14 +610,20 @@ rows.
      `beck_core::style` enumerates every class that can reach a `class=` — through a call and through
      both arms of an `if`, which is how every dynamic class in this tree is already written.
      `beck explain style` prints the set and, beside it, every site where a class is *built* rather
-     than named, with which of three reasons it was. A `Class` **type** has nothing to be checked
-     against until item 4's table exists, so it moved behind it rather than in front: a type whose
+     than named, with which of three reasons it was. A `Class` **type** had nothing to be checked
+     against until item 4's table existed, so it moved behind it rather than in front: a type whose
      checking is empty is a scaffold. Lanes A and C.
   4. **The utility table and the sheet emitter** (S): exact extraction over the typed tree,
      `beck build` writing the stylesheet, `styles = none` turning all of it off, and the
      differential gate that holds the accepted table against Tailwind's own compiler
      ([`104`](104-styling-and-the-component-library.md) §104.4). This is what retires
-     `beck-rt/src/css.rs`. **Both paths gated**, per §8.3 — the switched-off program is compiled and
+     `beck-rt/src/css.rs`. **The table and its oracle are built**: `beck_core::style::is_utility`
+     knows 631 of 782 candidate names with no unsound acceptance, held against Tailwind 4.3.3's own
+     answer, committed under `compiler/style/expected/` so no gate needs a package registry. Two
+     things a person writing the table down would have got wrong were caught by asking it — the
+     spacing scale is multiplicative rather than a list of steps, and the first generator matched
+     `.rounded-ful` against `.rounded-full`. **The emitter is not built**: nothing writes CSS,
+     `styles = none` does not exist, and `css.rs` still serves its eight rules. **Both paths gated**, per §8.3 — the switched-off program is compiled and
      run beside the switched-on one, because a default nobody has run is a claim. Lane B, with the
      table generated into Lane A's tables.
   5. **The theme as a Beck value**, and a styled `beck new` (S): tokens as a record generating both

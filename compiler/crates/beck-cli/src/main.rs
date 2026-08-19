@@ -1737,12 +1737,23 @@ fn explain_style(styles: &beck_core::style::Styles) -> String {
     if styles.classes.is_empty() {
         let _ = writeln!(out, "  none — no `class=` reaches a page");
     }
+    let mut utilities = 0usize;
     for class in &styles.classes {
-        let _ = writeln!(out, "  {class}");
+        let known = beck_core::style::is_utility(class);
+        utilities += usize::from(known);
+        let _ = writeln!(
+            out,
+            "  {class:<28} {}",
+            if known {
+                "a utility"
+            } else {
+                "this program's own"
+            }
+        );
     }
     let _ = writeln!(
         out,
-        "\n  {} class{}, from every `class=` in the program and everything it calls.",
+        "\n  {} class{}, from every `class=` in the program and everything it calls.\n  {utilities} of them are utilities this compiler knows the name of; the rest are yours,\n  and a stylesheet for those is a stylesheet you write (§104.4).",
         styles.classes.len(),
         if styles.classes.len() == 1 { "" } else { "es" }
     );

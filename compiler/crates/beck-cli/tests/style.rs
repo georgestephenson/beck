@@ -187,3 +187,123 @@ fn a_class_read_from_a_value_says_so_rather_than_blaming_a_concatenation() {
     assert_eq!(styles.dynamic.len(), 1, "{:?}", styles.dynamic);
     assert_eq!(styles.dynamic[0].because, Because::FromData);
 }
+
+/// **Beck's utility table agrees with Tailwind's compiler**, which is the only oracle for it.
+///
+/// §104.4: "the oracle is Tailwind itself, not a table somebody typed in […] The gate is: for every
+/// name Beck accepts, Tailwind emits a rule; for every name Beck refuses, Tailwind emits nothing."
+/// That is `clbg/`'s pattern — hold somebody else's published artefact so a wrong constant fails
+/// even against a matching wrong expectation — and `compiler/style/generate.sh` is how the artefact
+/// is obtained. It is committed rather than produced here, because a gate that installs from a
+/// package registry fails when somebody else's server does.
+///
+/// # Three buckets, and only two of them are failures
+///
+/// **Unsound** — Beck accepts a name Tailwind refuses — is the one that matters: it is a class the
+/// compiler would put in a stylesheet and the browser would find no rule for, which is a page
+/// missing a style with every gate green. **Wrongly refused** — Tailwind refuses and Beck accepts —
+/// is the same error read the other way. Both are asserted at zero.
+///
+/// The third is **not** a failure and is printed: a name Tailwind accepts and Beck does not know is
+/// a gap in a table this documents as a subset. Counting it is what stops the subset from quietly
+/// becoming the claim, and it is the number to watch shrink as the families grow.
+#[test]
+fn the_utility_table_agrees_with_tailwind() {
+    use beck_core::style::is_utility;
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../style/expected/tailwind-4.3.3.txt");
+    let text = std::fs::read_to_string(&path).expect("the committed oracle is where it belongs");
+    let mut accepted = 0usize;
+    let (mut unsound, mut wrongly_refused, mut gaps) = (Vec::new(), Vec::new(), Vec::new());
+    for line in text
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+    {
+        let (verdict, name) = line.split_once('\t').expect("a verdict and a name");
+        match (verdict, is_utility(name)) {
+            ("rule", true) => accepted += 1,
+            ("rule", false) => gaps.push(name),
+            ("none", true) => unsound.push(name),
+            ("none", false) => wrongly_refused.push(name),
+            _ => panic!("the oracle says `{verdict}`, which this gate does not know"),
+        }
+    }
+    let total = accepted + gaps.len() + unsound.len() + wrongly_refused.len();
+    assert!(total > 500, "only {total} candidates were compared");
+    println!(
+        "\n  {accepted} of {} names Tailwind emits a rule for are known here; {} are not.\n  \
+         {} names Tailwind refuses, and this refuses all of them.",
+        accepted + gaps.len(),
+        gaps.len(),
+        wrongly_refused.len()
+    );
+
+    assert!(
+        unsound.is_empty(),
+        "these are not Tailwind utilities and this table accepts them, so a stylesheet built \
+         from it would name rules the browser will not find: {unsound:?}"
+    );
+    // Named rather than counted, because a gap is a decision about which family to add next and a
+    // reader of a green run should be able to make it without re-running the suite.
+    // A ratchet rather than a bound: the gaps are the families this table has not taken, and the
+    // number is here so that adding one is visible and losing one is a failure. It is measured
+    // rather than chosen — 630 of 782 when the candidates were widened past the table on purpose,
+    // which is what makes the row above a measurement instead of a restatement of what was typed in.
+    assert!(
+        accepted >= 630,
+        "the table knows {accepted} of Tailwind's names and knew 630, so a family was lost"
+    );
+    assert!(
+        !gaps.is_empty(),
+        "every candidate Tailwind accepts is one this table knows, so the list is a restatement \
+         of the table rather than an oracle over it — widen `compiler/style/candidates.txt`"
+    );
+    assert!(
+        !wrongly_refused.is_empty(),
+        "the oracle contains no name Tailwind refuses, so the soundness assertion above is over \
+         an empty set and this gate cannot fail"
+    );
+}
+
+/// **A page's own class names are not utilities, and the report says which is which.**
+///
+/// Every `class=` in this tree is a semantic name — `done`, `mine`, `column` — served by the eight
+/// hard-coded rules in `beck-rt/src/css.rs`, and none of them is a Tailwind utility. That is not a
+/// defect in those programs and the table must not treat it as one: §104.4 takes Tailwind's *names*
+/// for the utilities it has, and a program's own names are the program's own. What the compiler owes
+/// is to tell the two apart, so that the item which emits a stylesheet emits rules for the first and
+/// leaves the second alone.
+#[test]
+fn a_programs_own_class_names_are_not_mistaken_for_utilities() {
+    use beck_core::style::is_utility;
+
+    for file in [
+        "examples/todo.beck",
+        "examples/board.beck",
+        "corpus/02-chat.beck",
+    ] {
+        for class in classes(&example(file).program).classes {
+            assert!(
+                !is_utility(&class),
+                "{file}'s `{class}` is being read as a Tailwind utility, so a stylesheet would \
+                 claim a rule for it that this program serves itself"
+            );
+        }
+    }
+    // And the other direction on one page, so this is not a test that nothing is ever a utility.
+    let styles = classes(
+        &compile(
+            "utilities.beck",
+            &page(r#"class=["flex", "items-center", "gap-2", "mine"]"#),
+        )
+        .program,
+    );
+    let known: Vec<&str> = styles
+        .classes
+        .iter()
+        .filter(|c| is_utility(c))
+        .map(|c| &**c)
+        .collect();
+    assert_eq!(known, vec!["flex", "gap-2", "items-center"]);
+}

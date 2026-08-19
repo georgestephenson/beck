@@ -202,11 +202,38 @@ function from a candidate name to a rule or to nothing, which is precisely the p
 | `p-2.5`, `p-[13px]`, `supports-[display:grid]:grid`, `dark:md:flex` | a rule | accept |
 | `rounded-ful`, `bg-emerald-550`, `text-4xxl` | nothing | **refuse, with a suggestion** |
 
+**Asked, and one row of that table was wrong in a way worth keeping.** Tailwind 4's spacing scale is
+*multiplicative* — `calc(var(--spacing) * n)` — so `p-2.75` and `gap-13.5` are rules, and a table of
+steps would have refused both. This section names `p-[13px]` as the arbitrary case and does not say
+that the **numeric** scale is open as well; a person writing the table down would have got it wrong,
+and asking the oracle is what caught it. Beck's spacing families take a number rather than a member
+of a set for that reason.
+
+**And the first attempt at the oracle was wrong, which is the other half of why this pattern
+exists.** `compiler/style/generate.sh` originally asked `grep -F ".rounded-ful"` of Tailwind's
+output and got a hit — from `.rounded-full`. So a misspelling came back as a utility, and a gate
+built on it would have been green about the exact name §104.4 chose to illustrate the point. The
+generator compares *selectors* now, as a set. A generator that reads its oracle wrongly is worse than
+no oracle, because the answer looks authoritative.
+
 That is [`clbg/`](../compiler/clbg/README.md)'s pattern — rebuild the asserted constants from
 somebody else's published artefact so a wrong constant fails even against a matching wrong
-expectation — applied to a utility table. The gate is: for every name Beck accepts, Tailwind emits a
-rule; for every name Beck refuses, Tailwind emits nothing. It runs where a Node is available and
-skips loudly where one is not, like every other environment-dependent suite this repository has.
+expectation — applied to a utility table. **Built**, and the shape it took is worth two corrections
+to this paragraph.
+
+The gate does **not** run Tailwind: it reads a committed answer. `compiler/style/candidates.txt` is
+the list of names, `compiler/style/generate.sh` asks Tailwind about every one of them, and
+`compiler/style/expected/tailwind-4.3.3.txt` is what it said. A gate that installed a package from a
+registry would fail when somebody else's server did, which is not a property a compiler's test suite
+should have — so the script is run by a person when the pinned version moves, exactly as `clbg/`
+holds the Game's published output rather than re-running it.
+
+And the gate has **three** buckets rather than two. *Unsound* — Beck accepts a name Tailwind refuses
+— is a page missing a rule with every gate green, and is asserted at zero. *Wrongly refused* is the
+same error read the other way, also zero. The third is a **gap**: a name Tailwind accepts that Beck's
+table does not know, which is not a failure because the table is a documented subset. It is counted
+and printed — **631 of 782 today** — so that the subset cannot quietly become the claim, and the
+candidate list is deliberately wider than the table so the number means something.
 
 ## 104.5 Why Tailwind cannot be a dependency, and should still be the default look
 
@@ -723,9 +750,15 @@ schedule:
   [`style.rs`](../compiler/crates/beck-core/src/style.rs) enumerates every class that can reach a
   `class=` — through a call and through both arms of an `if`, which is the shape every dynamic class
   in this tree is already written in. `beck explain style` prints the set and, beside it, the sites
-  where a class is *built* rather than named, with the reason. What is still owed is the type:
-  a `Class` has nothing to be checked against until the utility table exists, so it lands with item
-  4 rather than in front of it.
+  where a class is *built* rather than named, with the reason. The type is still owed and has moved:
+  a `Class` has something to be checked against now that the table exists, so it lands with the
+  emitter rather than in front of it.
+- **Item 4 is half built.** The utility table is, and against Tailwind's own compiler as its oracle
+  (§104.4) — 631 of 782 candidate names, no unsound acceptance, and `beck explain style` says of
+  every class a page carries whether it is a utility or the program's own. The **sheet emitter** is
+  not: nothing writes CSS yet, `styles = none` does not exist, and `beck-rt/src/css.rs` still serves
+  its eight hard-coded rules. So the exit-table row this cluster exists to move is unmoved, and
+  §8.5.4 says so.
 - **The last three are behind a decision, not behind effort.** Where interface state lives (Wall 1)
   determines what a combobox, a menu and a custom date picker even look like, so building the kit
   before that decision would be building the part of it that does not depend on the answer and

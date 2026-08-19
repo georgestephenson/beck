@@ -225,3 +225,236 @@ fn follow(
     seen.remove(name);
     answer
 }
+
+// -------------------------------------------------------------------------------------------
+// Which names are utilities
+// -------------------------------------------------------------------------------------------
+
+/// Whether this class is a Tailwind utility Beck knows.
+///
+/// [`docs/104`](../../../../../docs/104-styling-and-the-component-library.md) §104.4 takes
+/// Tailwind's **design system** and refuses its delivery mechanism, and the names are the largest
+/// part of what "the design system" means: a decade of taste that every web developer and every
+/// model they ask already knows. This is the predicate over those names.
+///
+/// # It is a subset, and the gate measures which one
+///
+/// Tailwind's surface is enormous and this covers the families a page is actually built from —
+/// layout, spacing, colour, type, borders, flex and grid — with the variants in front of them.
+/// **What matters is the direction of the error.** A name this accepts must be one Tailwind emits a
+/// rule for; a name Tailwind refuses must be refused here. A name Tailwind accepts and this does not
+/// is a *gap*, counted rather than tolerated silently, and
+/// `style.rs::the_utility_table_agrees_with_tailwind` is where all three are asserted against
+/// Tailwind's own answer rather than against a table somebody typed in.
+///
+/// # What made a fixed table wrong, found by asking
+///
+/// Tailwind 4's spacing is multiplicative — `calc(var(--spacing) * n)` — so `p-2.75` and `gap-13.5`
+/// are rules, and any list of steps would have refused them. §104.4's own worked example listed
+/// `p-[13px]` as the arbitrary case and did not say that the *numeric* scale is open too. So the
+/// spacing families here take a number rather than a member of a set, which is a thing the oracle
+/// said and a person would not have.
+pub fn is_utility(name: &str) -> bool {
+    let mut parts: Vec<&str> = name.split(':').collect();
+    let Some(base) = parts.pop() else {
+        return false;
+    };
+    parts.iter().all(|v| VARIANTS.contains(v)) && base_utility(base)
+}
+
+/// The variants this knows, in front of any utility.
+///
+/// A state, a breakpoint, or the colour scheme. Stacking is Tailwind's own (`dark:md:flex`), so
+/// every component but the last is checked against this and the last against the utility itself.
+const VARIANTS: &[&str] = &[
+    "hover",
+    "focus",
+    "focus-visible",
+    "focus-within",
+    "active",
+    "visited",
+    "disabled",
+    "checked",
+    "first",
+    "last",
+    "odd",
+    "even",
+    "empty",
+    "dark",
+    "motion-safe",
+    "motion-reduce",
+    "print",
+    "sm",
+    "md",
+    "lg",
+    "xl",
+    "2xl",
+];
+
+/// Utilities that are one name and take no argument.
+const WORDS: &[&str] = &[
+    "flex",
+    "inline-flex",
+    "grid",
+    "inline-grid",
+    "block",
+    "inline-block",
+    "inline",
+    "hidden",
+    "contents",
+    "flow-root",
+    "table",
+    "static",
+    "relative",
+    "absolute",
+    "fixed",
+    "sticky",
+    "italic",
+    "not-italic",
+    "underline",
+    "overline",
+    "line-through",
+    "no-underline",
+    "uppercase",
+    "lowercase",
+    "capitalize",
+    "normal-case",
+    "truncate",
+    "border",
+    "rounded",
+    "sr-only",
+    "outline-none",
+];
+
+/// The parameterised families, each a prefix and a rule for what may follow it.
+fn base_utility(base: &str) -> bool {
+    if WORDS.contains(&base) {
+        return true;
+    }
+    if let Some(rest) = base.strip_prefix("text-") {
+        return TEXT_SIZES.contains(&rest) || colour(rest);
+    }
+    if let Some(rest) = base.strip_prefix("font-") {
+        return WEIGHTS.contains(&rest) || ["sans", "serif", "mono"].contains(&rest);
+    }
+    if let Some(rest) = base.strip_prefix("rounded-") {
+        return [
+            "none", "xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl", "full",
+        ]
+        .contains(&rest);
+    }
+    if let Some(rest) = base.strip_prefix("border-") {
+        return ["0", "2", "4", "8"].contains(&rest) || colour(rest);
+    }
+    if let Some(rest) = base.strip_prefix("items-") {
+        return ["start", "center", "end", "baseline", "stretch"].contains(&rest);
+    }
+    if let Some(rest) = base.strip_prefix("justify-") {
+        return [
+            "start", "center", "end", "between", "around", "evenly", "stretch",
+        ]
+        .contains(&rest);
+    }
+    if let Some(rest) = base.strip_prefix("flex-") {
+        return [
+            "row",
+            "row-reverse",
+            "col",
+            "col-reverse",
+            "wrap",
+            "nowrap",
+            "wrap-reverse",
+            "1",
+            "auto",
+            "initial",
+            "none",
+        ]
+        .contains(&rest);
+    }
+    if let Some(rest) = base.strip_prefix("overflow-") {
+        return ["auto", "hidden", "clip", "visible", "scroll"].contains(&rest);
+    }
+    for family in [
+        "bg-",
+        "fill-",
+        "stroke-",
+        "ring-",
+        "outline-",
+        "decoration-",
+    ] {
+        if let Some(rest) = base.strip_prefix(family) {
+            return colour(rest);
+        }
+    }
+    for family in ["size-", "min-w-", "min-h-", "max-w-", "max-h-", "w-", "h-"] {
+        if let Some(rest) = base.strip_prefix(family) {
+            return ["full", "auto", "screen", "min", "max", "fit", "px"].contains(&rest)
+                || number(rest);
+        }
+    }
+    for family in SPACING {
+        if let Some(rest) = base.strip_prefix(family) {
+            if let Some(rest) = rest.strip_prefix('-') {
+                return rest == "px" || rest == "auto" || number(rest);
+            }
+        }
+    }
+    false
+}
+
+/// The families whose argument is a multiple of the spacing scale.
+///
+/// Longest first, so `gap-x` is tried before `gap` and `-x-2` is never read as a number.
+const SPACING: &[&str] = &[
+    "gap-x", "gap-y", "space-x", "space-y", "px", "py", "pt", "pr", "pb", "pl", "ps", "pe", "mx",
+    "my", "mt", "mr", "mb", "ml", "ms", "me", "gap", "inset", "top", "right", "bottom", "left",
+    "p", "m",
+];
+
+const TEXT_SIZES: &[&str] = &[
+    "xs", "sm", "base", "lg", "xl", "2xl", "3xl", "4xl", "5xl", "6xl", "7xl", "8xl", "9xl",
+];
+
+const WEIGHTS: &[&str] = &[
+    "thin",
+    "extralight",
+    "light",
+    "normal",
+    "medium",
+    "semibold",
+    "bold",
+    "extrabold",
+    "black",
+];
+
+/// The palette, as the names rather than the values: what a shade *is* belongs to the theme.
+const PALETTE: &[&str] = &[
+    "slate", "gray", "zinc", "neutral", "stone", "red", "orange", "amber", "yellow", "lime",
+    "green", "emerald", "teal", "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia",
+    "pink", "rose",
+];
+
+const SHADES: &[&str] = &[
+    "50", "100", "200", "300", "400", "500", "600", "700", "800", "900", "950",
+];
+
+/// Whether this is a colour: one of the keywords, or a palette name and a shade.
+fn colour(rest: &str) -> bool {
+    if ["white", "black", "transparent", "current", "inherit"].contains(&rest) {
+        return true;
+    }
+    match rest.rsplit_once('-') {
+        Some((name, shade)) => PALETTE.contains(&name) && SHADES.contains(&shade),
+        None => false,
+    }
+}
+
+/// A multiple of the spacing scale: a decimal number, because Tailwind 4's scale is multiplicative
+/// rather than a list of steps.
+fn number(rest: &str) -> bool {
+    !rest.is_empty()
+        && rest.chars().all(|c| c.is_ascii_digit() || c == '.')
+        && rest.chars().filter(|c| *c == '.').count() <= 1
+        && rest.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && rest.chars().last().is_some_and(|c| c.is_ascii_digit())
+}
