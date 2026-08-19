@@ -1,11 +1,11 @@
 ---
 source: crates/beck-cli/tests/ui.rs
-expression: "render(&edited(\"span(on_click=Toggle(id=t.id)): t.text\",\n\"span(on_keydown=Toggle(id=t.id)): t.text\"))"
+expression: "render(&edited(\"span(class=[\\\"flex-1\\\"], on_click=Toggle(id=t.id)): t.text\",\n\"span(on_keydown=Toggle(id=t.id)): t.text\"))"
 ---
 error[B0217]: `on_keydown` is not an event the client listens for
-  --> t.beck:113:30
+  --> t.beck:114:30
     |
-113 |                         span(on_keydown=Toggle(id=t.id)): t.text
+114 |                         span(on_keydown=Toggle(id=t.id)): t.text
     |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^ this would be an attribute wired to nothing
     |
   = note: the client interprets `on_click` (a click on this element), `on_enter` (the Enter key, in a text input), `on_submit` (a form submission), `on_input` (each edit to a control's value), `on_change` (a committed change to a control's value)

@@ -3,9 +3,9 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&format!(\"{}\\ntest \\\"a stub with nowhere to go\\\":\\n    stub net.out(nobody.example.com): True\\n\",\nBASE))"
 ---
 error[B0704]: nothing in this program performs `net.out(nobody.example.com)`
-  --> t.beck:194:5
+  --> t.beck:203:5
     |
-194 |     stub net.out(nobody.example.com): True
+203 |     stub net.out(nobody.example.com): True
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this stub would never be reached
     |
   = note: the complete list of what a program touches is its effect rows, and this atom is not among them

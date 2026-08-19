@@ -1,11 +1,11 @@
 ---
 source: crates/beck-cli/tests/ui.rs
-expression: "render(&edited(\"span(on_click=Toggle(id=t.id)): t.text\",\n\"button(on_click=Toggle(id=t.id))\"))"
+expression: "render(&edited(\"span(class=[\\\"flex-1\\\"], on_click=Toggle(id=t.id)): t.text\",\n\"button(on_click=Toggle(id=t.id))\"))"
 ---
 error[B0220]: this button has no accessible name
-  --> t.beck:113:25
+  --> t.beck:114:25
     |
-113 |                         button(on_click=Toggle(id=t.id))
+114 |                         button(on_click=Toggle(id=t.id))
     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ nothing announces what it does
     |
   = note: a button is named by its own text, or by `aria_label=` when it has none — an icon button is the usual case

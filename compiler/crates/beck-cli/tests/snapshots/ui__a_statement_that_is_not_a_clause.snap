@@ -3,9 +3,9 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&format!(\"{}\\ntest \\\"a setUp that is not one\\\":\\n    fixture = 1\\n    expect list_len(events) == 0\\n\",\nBASE))"
 ---
 error[B0705]: only `given`, `when`, `stub` and `expect` may appear in a test
-  --> t.beck:194:5
+  --> t.beck:203:5
     |
-194 |     fixture = 1
+203 |     fixture = 1
     |     ^^^^^^^^^^^
     |
   = note: §21.2: a test names a log, an input and an expectation — there is no fixture to build and no `setUp` to write

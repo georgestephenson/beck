@@ -28,12 +28,13 @@ walls that are load-bearing rather than incidental.
 
 ## 104.1 What exists today
 
-**The stylesheet is eight rules, hard-coded in Rust.**
-[`beck-rt/src/css.rs`](../compiler/crates/beck-rt/src/css.rs) holds `STYLES`, a `&'static [Rule]`
-containing the todo sketch's own CSS transcribed by hand; `http.rs` serves it at `/beck.css` and the
-page shell links it. A user's program cannot contribute a rule, override one, or remove one. The
-file's own doc comment says "there is no runtime CSS story in Beck and there should not be one",
-which is right about *runtime* and has been read as covering the whole subject.
+**The stylesheet used to be eight rules, hard-coded in Rust.** `beck-rt/src/css.rs` held `STYLES`,
+a `&'static [Rule]` containing the todo sketch's own CSS transcribed by hand; `http.rs` served it at
+`/beck.css` and the page shell linked it. A user's program could not contribute a rule, override one,
+or remove one. **That file is gone** (§104.4): `/beck.css` now carries the sheet the compiler derives
+from the classes the running program's pages can carry, and `beck build` writes the same sheet to
+disk. The rest of this section is the position that made the item worth doing and is otherwise
+unchanged.
 
 **`css:` does not exist** — no parser, no macro, no test. It was written as present tense in
 [`11`](11-language-tour.md) §11.6, and twice in [`12`](12-standards-and-conformance.md) §12.4, the
@@ -57,9 +58,10 @@ all**, and the one artefact that is, is a Rust constant.
 
 ## 104.2 Tailwind in a Beck page, measured
 
-The measurement is Tailwind CSS 4.3.3 under Node 22.22.2. The page is
-[`examples/todo.beck`](../compiler/examples/todo.beck) with its `class=` values replaced by utilities
-and `done_class` widened to a full row style:
+The measurement is Tailwind CSS 4.3.3 under Node 22.22.2. The page was
+[`examples/todo.beck`](../compiler/examples/todo.beck) with its `class=` values replaced by
+utilities and `done_class` widened to a full row style — an edit at the time, and the sketch's own
+markup since §104.4a landed:
 
 ```python
 def render(todos: list[Todo], left: Int) -> Html:
@@ -221,6 +223,32 @@ somebody else's published artefact so a wrong constant fails even against a matc
 expectation — applied to a utility table. **Built**, and the shape it took is worth two corrections
 to this paragraph.
 
+**And the oracle had to be asked a bigger question than "does this name exist".** A table that is a
+*predicate* cannot emit a sheet: `is_utility("p-4")` says nothing about `padding`. So
+`beck_core::style::rule` turns a name into declarations, `is_utility` is defined as "there is a rule
+for it" — one table, so a predicate and a generator cannot disagree about a page — and
+`generate.sh` records the at-rules, the selector and the declarations Tailwind emits for every
+candidate. The gate compares them **byte for byte**: **3,474 of the 3,625 names Tailwind emits a
+rule for are rendered identically here**, 35 names it refuses are refused, and the 151 that remain
+are the families this table has not taken.
+
+**Asking for the rule rather than the name caught four things a person writing it down would not
+have.** Three are in the spacing scale, which is not the arithmetic it looks like: `1` is
+`var(--spacing)` rather than `calc(var(--spacing) * 1)`, `0` is `0px` rather than `0`, and
+`space-x-0` drops the reverse-margin `calc` entirely. The fourth is the escaping: `2xl:flex` is
+`.\32 xl\:flex` — CSS's hex escape for a leading digit, terminated by a *space* that is part of the
+escape — which the previous reader of the oracle stopped at, so every `2xl:` rule had been silently
+absent from its answer.
+
+**And seventeen unsound acceptances were sitting behind a list nobody had widened.** The table
+accepted `size-screen`, `max-w-auto` and fifteen `-auto` paddings; Tailwind emits nothing for any of
+them, so each would have gone into a stylesheet as a rule the browser finds nothing behind. They
+survived every green run because `candidates.txt` had never been asked about them —
+[`82`](82-the-edge-report.md) §82.10's pattern exactly. The cure is that the table now **enumerates
+itself**: `beck_core::style::enumerate` lists the closed part of it, and
+`style.rs::every_name_the_table_accepts_was_asked_about` fails when a name it accepts is not in the
+list the oracle was run over.
+
 The gate does **not** run Tailwind: it reads a committed answer. `compiler/style/candidates.txt` is
 the list of names, `compiler/style/generate.sh` asks Tailwind about every one of them, and
 `compiler/style/expected/tailwind-4.3.3.txt` is what it said. A gate that installed a package from a
@@ -228,12 +256,50 @@ registry would fail when somebody else's server did, which is not a property a c
 should have — so the script is run by a person when the pinned version moves, exactly as `clbg/`
 holds the Game's published output rather than re-running it.
 
-And the gate has **three** buckets rather than two. *Unsound* — Beck accepts a name Tailwind refuses
-— is a page missing a rule with every gate green, and is asserted at zero. *Wrongly refused* is the
-same error read the other way, also zero. The third is a **gap**: a name Tailwind accepts that Beck's
-table does not know, which is not a failure because the table is a documented subset. It is counted
-and printed — **631 of 782 today** — so that the subset cannot quietly become the claim, and the
-candidate list is deliberately wider than the table so the number means something.
+And the gate has **three** buckets rather than two. *Unsound* — Beck accepts a name Tailwind refuses,
+or renders it differently — is a page the browser reads differently from every other page on the web,
+and is asserted at zero. *Wrongly refused* is the same error read the other way, also zero. The third
+is a **gap**: a name Tailwind accepts that Beck's table does not know, which is not a failure because
+the table is a documented subset. It is counted and printed — **3,474 of 3,625 today** — so that the
+subset cannot quietly become the claim, and the candidate list is deliberately wider than the table
+so the number means something.
+
+## 104.4a The sheet, and what is in it
+
+`beck build` writes `styles.css` and a running program serves the same bytes at `/beck.css`, derived
+at startup from the program it is executing rather than read from disk — `/beck-bundle.bpk`'s rule,
+for its reason. Four things are in it, in this order:
+
+1. **A preflight**, nine rules, and each is there because a browser default fights a utility rather
+   than because it is a taste: `p-0` cannot win against a `ul`'s padding, `flex` cannot lay out an
+   `li` carrying a marker, and a `button` renders in the browser's font whatever `font-sans` says.
+   It is **Beck's own and not Tailwind's**, which is four times the size and is part of the delivery
+   mechanism this section refuses — an opinionated global sheet that arrives with the tool.
+2. **The theme tokens the rules read, and only those.** A page using one colour defines one colour:
+   the sketch's sheet defines six of the theme's 293. The values are Tailwind's, transcribed from
+   its own output, because a ramp is not derivable from anything —
+   `oklch(50.8% 0.118 165.612)` is a decade of somebody's taste written down. Item 5 is what makes
+   this a Beck value a program can change.
+3. **`@property` for the internals the rules read**, with the fallback Tailwind ships for browsers
+   that do not register custom properties. Its condition is captured from the oracle rather than
+   transcribed: a browser-detection expression is the kind of string nobody can check by reading it.
+4. **One rule per class the program's pages can carry**, in name order — which puts `p-4` before
+   `px-2` because `-` sorts before a letter, so a shorthand loses to the longhand after it.
+
+**The sketch is the proof and it is 2.3 KB.** `examples/todo.beck` carries seventeen classes, every
+one of them a utility, and the sheet defines seventeen rules and six tokens. Its `done` class — the
+one name in it that was the program's own, and the reason `css.rs` existed — is `line-through` now,
+which is the same look with nothing hard-coded.
+
+**A class that is the program's own gets nothing**, and that is not an oversight: the compiler has
+no rule for a name it did not define, and Beck still has no way for a program to write one (`css:`
+has no parser, §104.1). `beck explain style` says which of a page's classes are which, so the
+absence is visible rather than silent.
+
+**The off switch is `AppConfig::styles`**, which is §104.4's `styles = none`:
+[`08`](08-roadmap.md) §8.3 item 8 asks that a choice the compiler makes unbidden be switchable and
+that the switched-off path be *run*, so `style.rs::the_stylesheet_has_an_off_switch_and_both_settings_run`
+starts the runtime twice and reads what `/beck.css` would serve.
 
 ## 104.5 Why Tailwind cannot be a dependency, and should still be the default look
 
@@ -753,12 +819,15 @@ schedule:
   where a class is *built* rather than named, with the reason. The type is still owed and has moved:
   a `Class` has something to be checked against now that the table exists, so it lands with the
   emitter rather than in front of it.
-- **Item 4 is half built.** The utility table is, and against Tailwind's own compiler as its oracle
-  (§104.4) — 631 of 782 candidate names, no unsound acceptance, and `beck explain style` says of
-  every class a page carries whether it is a utility or the program's own. The **sheet emitter** is
-  not: nothing writes CSS yet, `styles = none` does not exist, and `beck-rt/src/css.rs` still serves
-  its eight hard-coded rules. So the exit-table row this cluster exists to move is unmoved, and
-  §8.5.4 says so.
+- **Item 4 is built, both halves.** The table is held against Tailwind's own compiler as its oracle
+  (§104.4), and the emitter with it: `beck build` writes `styles.css`, `/beck.css` serves the same
+  sheet from the running program, `AppConfig::styles` is the `styles = none` switch and both of its
+  settings are run by a gate. `beck-rt/src/css.rs` is deleted. What the second half changed about
+  the first is the finding: a table that only said *which names are utilities* could not be the
+  thing a sheet is emitted from, so `is_utility` is now defined as "there is a rule for it" and the
+  oracle records what Tailwind **emits** rather than whether it emits. Asking that question found
+  seventeen unsound acceptances the previous gate could not see. **The `Class` type is still owed**
+  and is the one part of item 4 that did not land with the emitter.
 - **The last three are behind a decision, not behind effort.** Where interface state lives (Wall 1)
   determines what a combobox, a menu and a custom date picker even look like, so building the kit
   before that decision would be building the part of it that does not depend on the answer and

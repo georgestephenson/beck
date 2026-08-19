@@ -3,14 +3,14 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&edited(\"@on(server)\\nproposals: Stream[Proposal] = merge_clients()\",\n\"@on(server)\\nproposals: Stream[Proposal] = merge_clients()\\n\\n@on(server)\\nother: Stream[Proposal] = merge_clients()\"))"
 ---
 error[B0403]: a program has exactly one merge point
-  --> t.beck:126:1
+  --> t.beck:135:1
     |
-126 | other: Stream[Proposal] = merge_clients()
+135 | other: Stream[Proposal] = merge_clients()
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a second `merge_clients()`
     |
-  --> t.beck:123:1
+  --> t.beck:132:1
     |
-123 | proposals: Stream[Proposal] = merge_clients()
+132 | proposals: Stream[Proposal] = merge_clients()
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the first one is here
     |
   = note: the merge point is where time and nondeterminism enter; two of them would mean two total orders, and replay would no longer be a function of the log

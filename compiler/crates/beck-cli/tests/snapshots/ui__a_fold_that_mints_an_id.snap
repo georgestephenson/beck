@@ -3,9 +3,9 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&edited(\"return s.with(todos=map_remove(s.todos, id))\",\n\"return s.with(todos=map_remove(s.todos, Id(value=uuid())))\"))"
 ---
 error[B0402]: `apply_event` is a fold function, so it must be replay-pure
-  --> t.beck:129:37
+  --> t.beck:138:37
     |
-129 | todos: Signal[State] = durable(fold(apply_event, State(todos={}), events))
+138 | todos: Signal[State] = durable(fold(apply_event, State(todos={}), events))
     |                                     ^^^^^^^^^^^ performs {nondet}
     |
   --> t.beck:41:1

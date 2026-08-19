@@ -11,7 +11,6 @@
 
 pub mod app;
 pub mod awareness;
-pub mod css;
 pub mod dash;
 pub mod http;
 pub mod identity;

@@ -3,9 +3,9 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&edited(\"todos: Signal[State] = durable(fold(\",\n\"todos: Signal[State] = (fold(\"))"
 ---
 error[B0519]: `todos` is a non-durable fold, which is not built yet
-  --> t.beck:129:1
+  --> t.beck:138:1
     |
-129 | todos: Signal[State] = (fold(apply_event, State(todos={}), events))
+138 | todos: Signal[State] = (fold(apply_event, State(todos={}), events))
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a fold that is not `durable` has nowhere to keep its accumulator
     |
   = note: `docs/10` D1 provides for this — "high-churn ephemera get non-durable folds, same semantics, no log persistence" — and it is decided rather than built. What is missing is not the plumbing: an accumulator outside the log is not a function of the log, so what the state digest covers and what a replay has to reproduce are the questions in front of it (`DEFECTS.md::non-durable-fold`)

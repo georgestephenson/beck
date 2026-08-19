@@ -108,8 +108,9 @@ ui!(
 ui!(
     an_undeclared_effect,
     &edited(
-        "def done_class(t: Todo) -> Str:\n    return \"done\" if t.done else \"\"",
-        "def done_class(t: Todo) -> Str uses log:\n    return \"done\" if t.done else str(now())"
+        "-> Str:\n    return \"flex gap-2 items-baseline line-through\" if t.done \
+         else \"flex gap-2 items-baseline\"",
+        "-> Str uses log:\n    return \"done\" if t.done else str(now())"
     )
 );
 
@@ -285,7 +286,7 @@ ui!(
 ui!(
     an_event_the_client_does_not_listen_for,
     &edited(
-        "span(on_click=Toggle(id=t.id)): t.text",
+        "span(class=[\"flex-1\"], on_click=Toggle(id=t.id)): t.text",
         "span(on_keydown=Toggle(id=t.id)): t.text"
     )
 );
@@ -322,7 +323,10 @@ ui!(
 
 ui!(
     an_image_with_no_alt_text,
-    &edited("h1: \"todos\"", "img(src=\"/logo.png\")")
+    &edited(
+        "h1(class=[\"text-2xl\", \"font-bold\"]): \"todos\"",
+        "img(src=\"/logo.png\")"
+    )
 );
 
 // A button with no children and no `aria_label` — the icon-button mistake, which is the one shape
@@ -330,7 +334,7 @@ ui!(
 ui!(
     a_button_that_announces_nothing,
     &edited(
-        "span(on_click=Toggle(id=t.id)): t.text",
+        "span(class=[\"flex-1\"], on_click=Toggle(id=t.id)): t.text",
         "button(on_click=Toggle(id=t.id))"
     )
 );

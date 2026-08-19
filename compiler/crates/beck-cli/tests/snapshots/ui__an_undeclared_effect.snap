@@ -1,11 +1,11 @@
 ---
 source: crates/beck-cli/tests/ui.rs
-expression: "render(&edited(\"def done_class(t: Todo) -> Str:\\n    return \\\"done\\\" if t.done else \\\"\\\"\",\n\"def done_class(t: Todo) -> Str uses log:\\n    return \\\"done\\\" if t.done else str(now())\"))"
+expression: "render(&edited(\"-> Str:\\n    return \\\"flex gap-2 items-baseline line-through\\\" if t.done \\\n         else \\\"flex gap-2 items-baseline\\\"\",\n\"-> Str uses log:\\n    return \\\"done\\\" if t.done else str(now())\"))"
 ---
 error[B0370]: `done_class` performs more than its signature declares
-  --> t.beck:117:1
+  --> t.beck:126:1
     |
-117 | def done_class(t: Todo) -> Str uses log:
+126 | def done_class(t: Todo) -> Str uses log:
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undeclared: nondet
     |
   = note: a `uses` clause is the published bound, and widening it is a breaking API change — so the compiler will not widen it for you
