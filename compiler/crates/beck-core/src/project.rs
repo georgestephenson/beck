@@ -112,6 +112,9 @@ pub fn check_one_in(
     // linked program, and a module that holds `cap.session` while the wiring lives elsewhere is
     // the *correct* factoring, not a violation.
     crate::secure::check_boundaries(&program, diags);
+    // Per module, for the same reason: a class literal is written in the module that writes it,
+    // and the table it is held against is the compiler's rather than the program's.
+    crate::style::check_classes(&program, diags);
     let interface = Interface::of(&program);
     Checked { program, interface }
 }

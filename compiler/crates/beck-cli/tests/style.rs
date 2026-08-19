@@ -453,6 +453,176 @@ fn the_theme_is_tailwinds() {
     );
 }
 
+/// **A misspelled utility is a diagnostic, and a name of your own is not.**
+///
+/// §104.4: "a misspelling is a diagnostic. `rounded-ful` gets a `B0…` with a did-you-mean […]
+/// **this is the whole difference between Tailwind and a language that absorbed it**." Tailwind
+/// cannot say it, because a scanner reading bytes has no table to be wrong against; the compiler
+/// can, because it resolved the program and holds the table the sheet is emitted from.
+///
+/// **Both halves, and the second is the one that would be easy to lose.** The class vocabulary is
+/// **open** — `done`, `column`, `mine` are names of this tree's own programs and are legal — so a
+/// rule that fired on them would be worse than no rule at all. The threshold is one edit, or two
+/// from eight characters up, and this holds it against both populations rather than against the
+/// half it was written for.
+#[test]
+fn a_misspelled_utility_is_a_diagnostic() {
+    use beck_core::style::nearest_utility;
+
+    for (typo, meant) in [
+        ("rounded-ful", "rounded-full"),
+        ("bg-emerald-550", "bg-emerald-500"),
+        ("text-4xxl", "text-4xl"),
+        ("flexx", "flex"),
+        ("items-centre", "items-center"),
+        ("font-mediumm", "font-medium"),
+        ("justify-arround", "justify-around"),
+    ] {
+        assert_eq!(
+            nearest_utility(typo).map(|(_, n)| n),
+            Some(meant),
+            "`{typo}` is one slip from `{meant}` and the table did not say so"
+        );
+    }
+    // A tie broken the wrong way is still a wrong answer: `bg-emerald-550` is one edit from
+    // `bg-emerald-50` (a deletion) and from `bg-emerald-500` (a substitution), and only the second
+    // is a shade somebody meant.
+    assert_eq!(
+        nearest_utility("bg-emerald-550").map(|(_, n)| n),
+        Some("bg-emerald-500")
+    );
+
+    // The other population, asserted as a **margin** rather than as an outcome. "Nothing was said
+    // about `card`" passes on any threshold that happens to be below the distance; "`card` is three
+    // edits from anything" fails the moment a family lands near a name somebody chose, which is
+    // before their build starts warning about it rather than after.
+    for own in [
+        "done", "here", "mine", "theirs", "column", "columns", "card", "row-open",
+    ] {
+        let (d, near) = nearest_utility(own).expect("something is nearest");
+        let allowed = usize::from(own.len() >= 8) + 1;
+        assert!(
+            d > allowed,
+            "`{own}` is a class this tree writes and `{near}` is {d} edits from it, which is inside \
+             the threshold of {allowed} — so this program's author is now being asked whether they \
+             meant a utility"
+        );
+        assert!(
+            d >= allowed + 2,
+            "`{own}` is {d} edits from `{near}` and the rule allows {allowed}, so the margin is \
+             gone: the next family added to the table lands on it"
+        );
+    }
+
+    // End to end, through the compiler rather than through the table: the warning has the code,
+    // the name and the suggestion in it, and the program still compiles.
+    let src = page(r#"class="rounded-ful""#);
+    let (placed, diags, map) = beck_core::compile_str("typo.beck", &src);
+    let text = diags.render(&map);
+    assert!(placed.is_some(), "a misspelled class refused the program");
+    assert!(!diags.has_errors(), "{text}");
+    assert!(text.contains("warning[B0222]"), "{text}");
+    assert!(text.contains("`rounded-ful`"), "{text}");
+    assert!(text.contains("did you mean `rounded-full`?"), "{text}");
+
+    // A name of the program's own compiles with nothing said about it at all.
+    let (_, quiet, map) = beck_core::compile_str("own.beck", &page(r#"class="card""#));
+    assert!(quiet.render(&map).is_empty(), "{}", quiet.render(&map));
+}
+
+/// **The editor answers for a class from the same table the sheet comes from.**
+///
+/// §104.4's third consequence: "a checked class attribute makes `class="fl‸"` complete to `flex`,
+/// hover print the declarations […] that is the Tailwind IntelliSense extension, without an
+/// extension, because the answers come from the compiler."
+///
+/// The assertion that keeps it honest is the **negative** one. A class is a token inside a string,
+/// so the only thing standing between four thousand utility names and every completion in the file
+/// is the test for where the caret is — and a version of that test which always said yes would pass
+/// every positive assertion here.
+#[test]
+fn the_editor_completes_and_explains_a_class() {
+    // The page carries a class **and** a placeholder whose text looks exactly like one, because
+    // the negative assertions below are worthless against a caret whose prefix matches nothing:
+    // "no completions" would then be true for the wrong reason.
+    let src = page(r#"class="flex gap-2", placeholder="gap in the diary""#);
+    let editor = beck_core::editor::Editor::of("kit.beck", &src);
+
+    let caret = |needle: &str, into: usize| -> u32 {
+        (src.find(needle)
+            .unwrap_or_else(|| panic!("{needle} is in the page"))
+            + into) as u32
+    };
+
+    // Hover, in the middle of the second token.
+    let at = caret(r#""flex gap-2""#, 8);
+    assert_eq!(
+        editor.class_hover(at).as_deref(),
+        Some(".gap-2 { gap: calc(var(--spacing) * 2); }"),
+        "hovering a class prints the rule the sheet will carry"
+    );
+
+    // Completion, with two characters of the second token typed.
+    let at = caret(r#""flex gap-2""#, 8);
+    let labels: Vec<String> = editor
+        .class_completions(at)
+        .into_iter()
+        .map(|c| c.label)
+        .collect();
+    assert!(
+        labels.iter().any(|l| l == "gap-4") && labels.iter().any(|l| l == "gap-x-2"),
+        "completing `ga` offered {} labels and neither `gap-4` nor `gap-x-2`: {:?}",
+        labels.len(),
+        &labels[..labels.len().min(10)]
+    );
+    assert!(
+        !labels.iter().any(|l| l == "view"),
+        "a definition of this program was offered as a class"
+    );
+
+    // And nowhere else, which is the assertion the whole feature rests on. Two carets, because
+    // they fail differently: one is not in a string at all, and one **is** — a caret inside
+    // `placeholder="…"` is inside a string literal on a line with an attribute value, which is
+    // every part of the shape except the one that matters.
+    for (needle, into, what) in [
+        ("def view", 5, "a definition's name"),
+        // Three characters into `gap in the diary`, so the prefix is `gap` — which matches
+        // seventy utilities if the context test is wrong, and nothing if it is right.
+        ("\"gap in the diary\"", 4, "a string that is not a class"),
+    ] {
+        let at = caret(needle, into);
+        assert!(
+            editor.class_completions(at).is_empty(),
+            "the utility table reached a completion inside {what}"
+        );
+        assert!(
+            editor.class_hover(at).is_none(),
+            "a class rule was offered for {what}"
+        );
+    }
+    assert!(
+        !editor.completions(caret("def view", 5)).is_empty(),
+        "the ordinary completions stopped working, so the two are not independent"
+    );
+
+    // The **list** form, which is the shape §104.4 asks programs to write and the one the context
+    // test has a branch for: a caret in the second string of `class=["flex", "ga…"]` is still in
+    // the value, and the list's own punctuation is not something that closed it.
+    let listed = page(r#"class=["flex", "gap-2"]"#);
+    let editor = beck_core::editor::Editor::of("kit.beck", &listed);
+    let at = (listed.find(r#""gap-2""#).expect("the list is in the page") + 3) as u32;
+    let labels: Vec<String> = editor
+        .class_completions(at)
+        .into_iter()
+        .map(|c| c.label)
+        .collect();
+    assert!(
+        labels.iter().any(|l| l == "gap-4"),
+        "a caret inside a class **list** was not read as a class: {:?}",
+        &labels[..labels.len().min(6)]
+    );
+}
+
 /// **The sheet a program gets is the rules its classes need, and nothing else.**
 ///
 /// §104.4's first four words — *exact extraction* — as an assertion rather than a description. The

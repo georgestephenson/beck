@@ -268,6 +268,13 @@ fn hover(docs: &mut Documents, params: &Value) -> Value {
     let Some(editor) = docs.analyse(&uri) else {
         return Value::Null;
     };
+    // A class is not a name this document declares, so it is answered before the index is asked:
+    // what is under the caret is a token inside a string (`docs/104` §104.4).
+    if let Some(rule) = editor.class_hover(offset) {
+        return json!({
+            "contents": { "kind": "markdown", "value": format!("```css\n{rule}\n```") }
+        });
+    }
     let Some(symbol) = editor.hover(offset) else {
         return Value::Null;
     };
@@ -345,18 +352,24 @@ fn completion(docs: &mut Documents, params: &Value) -> Value {
     let Some(editor) = docs.analyse(&uri) else {
         return json!({ "isIncomplete": false, "items": [] });
     };
-    let items: Vec<Value> = editor
-        .completions(offset)
-        .into_iter()
-        .map(|c| {
-            json!({
-                "label": c.label,
-                "kind": c.kind.lsp(),
-                "detail": c.detail,
-                "documentation": c.doc,
-            })
+    // Inside a `class=` value the answer is the utility table and nothing else: a program's own
+    // definitions are not classes, and offering them there would bury the four thousand names that
+    // are (`docs/104` §104.4).
+    let classes = editor.class_completions(offset);
+    let items: Vec<Value> = match classes.is_empty() {
+        false => classes,
+        true => editor.completions(offset),
+    }
+    .into_iter()
+    .map(|c| {
+        json!({
+            "label": c.label,
+            "kind": c.kind.lsp(),
+            "detail": c.detail,
+            "documentation": c.doc,
         })
-        .collect();
+    })
+    .collect();
     json!({ "isIncomplete": false, "items": items })
 }
 

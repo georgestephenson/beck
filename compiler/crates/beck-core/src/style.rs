@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::sync::Arc;
 
-use beck_diag::Span;
+use beck_diag::{Diagnostic, Diagnostics, Span};
 
 use crate::check::{Def, Program};
 use crate::core::{children, Const, Core, CoreKind, Prim};
@@ -54,6 +54,23 @@ pub struct Styles {
     pub classes: BTreeSet<Arc<str>>,
     /// The `class=` sites whose value is not enumerable, in the order they were found.
     pub dynamic: Vec<Dynamic>,
+    /// Every literal that reaches a `class=`, with where it was written.
+    ///
+    /// [`Styles::classes`] is the set a sheet is emitted from and has no positions, because a name
+    /// written in three places is one rule. This is the other question — *where did this name come
+    /// from* — and it is what a diagnostic needs, so it keeps one entry per site rather than one
+    /// per name.
+    pub named: Vec<Named>,
+}
+
+/// One literal class token, where it was written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Named {
+    pub class: Arc<str>,
+    /// The definition the literal is in — which is not always the one the `class=` is in, because
+    /// the analysis follows a call.
+    pub in_def: Arc<str>,
+    pub span: Span,
 }
 
 /// One `class=` the analysis could not work out, and why.
@@ -121,7 +138,7 @@ fn sites(c: &Core, in_def: &Arc<str>, defs: &BTreeMap<Arc<str>, Def>, out: &mut 
     {
         if args.len() == 2 && is_class(&args[0]) {
             let mut seen = BTreeSet::new();
-            if let Err(because) = tokens(&args[1], defs, &mut seen, DEPTH, &mut out.classes) {
+            if let Err(because) = tokens(&args[1], defs, &mut seen, DEPTH, in_def, out) {
                 out.dynamic.push(Dynamic {
                     in_def: in_def.clone(),
                     span: args[1].span,
@@ -146,7 +163,8 @@ fn tokens(
     defs: &BTreeMap<Arc<str>, Def>,
     seen: &mut BTreeSet<Arc<str>>,
     depth: usize,
-    out: &mut BTreeSet<Arc<str>>,
+    in_def: &Arc<str>,
+    out: &mut Styles,
 ) -> Result<(), Because> {
     if depth == 0 {
         return Err(Because::NotFollowed);
@@ -156,7 +174,13 @@ fn tokens(
         // empty string is none rather than one empty one.
         CoreKind::Const(Const::Str(s)) => {
             for token in s.split_whitespace() {
-                out.insert(Arc::from(token));
+                let class: Arc<str> = Arc::from(token);
+                out.classes.insert(class.clone());
+                out.named.push(Named {
+                    class,
+                    in_def: in_def.clone(),
+                    span: c.span,
+                });
             }
             Ok(())
         }
@@ -164,25 +188,25 @@ fn tokens(
         CoreKind::Prim {
             op: Prim::StrJoin,
             args,
-        } if args.len() == 2 => tokens(&args[0], defs, seen, depth - 1, out),
+        } if args.len() == 2 => tokens(&args[0], defs, seen, depth - 1, in_def, out),
         CoreKind::ListLit(items) => items
             .iter()
-            .try_for_each(|i| tokens(i, defs, seen, depth - 1, out)),
+            .try_for_each(|i| tokens(i, defs, seen, depth - 1, in_def, out)),
         // Every branch can happen, so every branch contributes. The condition cannot reach the
         // attribute and is not looked at.
         CoreKind::If { then, alt, .. } => {
-            tokens(then, defs, seen, depth - 1, out)?;
-            tokens(alt, defs, seen, depth - 1, out)
+            tokens(then, defs, seen, depth - 1, in_def, out)?;
+            tokens(alt, defs, seen, depth - 1, in_def, out)
         }
         CoreKind::Match { arms, .. } => arms
             .iter()
-            .try_for_each(|a| tokens(&a.body, defs, seen, depth - 1, out)),
+            .try_for_each(|a| tokens(&a.body, defs, seen, depth - 1, in_def, out)),
         // A definition, whether it is named or called. The arguments are not followed: if the
         // answer depended on one, the body would read a parameter and this would refuse there.
         CoreKind::Global(name) => follow(name, defs, seen, depth, out),
         CoreKind::App { func, .. } => match &func.kind {
             CoreKind::Global(name) => follow(name, defs, seen, depth, out),
-            CoreKind::Lam { body, .. } => tokens(body, defs, seen, depth - 1, out),
+            CoreKind::Lam { body, .. } => tokens(body, defs, seen, depth - 1, in_def, out),
             _ => Err(Because::NotFollowed),
         },
         CoreKind::Prim {
@@ -209,7 +233,7 @@ fn follow(
     defs: &BTreeMap<Arc<str>, Def>,
     seen: &mut BTreeSet<Arc<str>>,
     depth: usize,
-    out: &mut BTreeSet<Arc<str>>,
+    out: &mut Styles,
 ) -> Result<(), Because> {
     if !seen.insert(name.clone()) {
         return Err(Because::NotFollowed);
@@ -222,10 +246,124 @@ fn follow(
         CoreKind::Lam { body, .. } => body,
         _ => &def.body,
     };
-    let answer = tokens(body, defs, seen, depth - 1, out);
+    // The literals are in *this* definition, whatever called it: a diagnostic that pointed at
+    // the caller would send a reader to a line with no class name on it.
+    let answer = tokens(body, defs, seen, depth - 1, name, out);
     seen.remove(name);
     answer
 }
+
+// -------------------------------------------------------------------------------------------
+// A misspelled utility
+// -------------------------------------------------------------------------------------------
+
+/// Warn about a class that is one slip away from a utility.
+///
+/// [`docs/104`](../../../../../docs/104-styling-and-the-component-library.md) §104.4: "a
+/// misspelling is a diagnostic. `rounded-ful` gets a `B0…` with a did-you-mean, because
+/// Levenshtein over a known table is what the compiler already does for field names. **This is the
+/// whole difference between Tailwind and a language that absorbed it.**"
+///
+/// # Why it is a warning and not an error
+///
+/// The class vocabulary is **open**, which is what makes this different from `B0217` and `B0218`
+/// one file over: every attribute must be an HTML attribute, and every event must be one the
+/// client listens for, so an unknown one is wrong. An unknown *class* is not wrong — it is the
+/// program's own name, and this tree has eight of them. So the compiler cannot say "this is a
+/// mistake"; it can only say "this is one edit from something that would have had a rule", which
+/// is a warning with a suggestion in it.
+///
+/// # The threshold, and the margin it has
+///
+/// Distance 1 always, and distance 2 from eight characters up. `rounded-ful`, `bg-emerald-550`,
+/// `text-4xxl`, `flexx`, `font-mediumm` and `justify-arround` are all one edit from a real utility
+/// and `items-centre` is two, so the misspellings are inside it. The other population is further
+/// away than the rule needs: the nearest utility to any class this tree's own programs write is
+/// **three** edits — `card` to `grid`, `here` to `h-px`, `mine` to `inline` — so the rule has a
+/// margin of one rather than sitting on the boundary.
+///
+/// `style.rs::a_misspelled_utility_is_a_diagnostic` asserts the **margin** rather than the
+/// outcome, which is the difference between a gate that can fail and one that cannot: a family
+/// added to the table that lands two edits from somebody's own class name turns it red before
+/// anybody's build starts warning about a name they chose.
+pub fn check_classes(program: &Program, diags: &mut Diagnostics) {
+    for site in &classes(program).named {
+        if is_utility(&site.class) {
+            continue;
+        }
+        let allowed = usize::from(site.class.len() >= 8) + 1;
+        let Some((_, near)) = nearest_utility(&site.class).filter(|(d, _)| *d <= allowed) else {
+            continue;
+        };
+        diags.push(
+            Diagnostic::warning(
+                "B0222",
+                format!(
+                    "`{}` is not a utility, and is one slip from one",
+                    site.class
+                ),
+                site.span,
+            )
+            .with_primary_label("no rule is emitted for this class")
+            .with_note(
+                "a class this compiler does not know is a class of your own and is left alone — \
+                 `beck explain style` lists which of a page's are which. This one is close enough \
+                 to a utility to be worth asking about",
+            )
+            .with_fix(format!("did you mean `{near}`?")),
+        );
+    }
+}
+
+/// The utility nearest a name, and how far away it is.
+///
+/// Over [`enumerate`]'s closed names, which is the whole table but for the open scales: `p-2.75` is
+/// a utility and no misspelling of it is close to a *name*, because the thing that went wrong there
+/// is a number.
+///
+/// It answers with the distance rather than applying the threshold, so a caller can ask **how far**
+/// — which is what turns [`check_classes`]'s gate from "did it warn" into "how much room does the
+/// rule have", and the second is the one that can fail before a user notices.
+pub fn nearest_utility(name: &str) -> Option<(usize, &'static str)> {
+    let mut best: Option<((usize, usize), &'static str)> = None;
+    for candidate in CLOSED.iter() {
+        let d = distance(name, candidate);
+        // Ties broken towards the candidate of the same length, because a substitution is a
+        // likelier slip than a deletion: `bg-emerald-550` is one edit from `bg-emerald-50` and
+        // from `bg-emerald-500`, and only the second is a shade somebody meant.
+        let rank = (d, name.len().abs_diff(candidate.len()));
+        if best.is_none_or(|(b, _)| rank < b) {
+            best = Some((rank, candidate));
+        }
+    }
+    best.map(|((d, _), name)| (d, name))
+}
+
+/// Levenshtein distance, iterative over one row.
+///
+/// The same measure `beck_macro::vocabulary` uses for attribute names and the checker for field
+/// names, written again here rather than shared because the two crates do not depend on each other
+/// in that direction and a distance function is six lines.
+fn distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, x) in a.chars().enumerate() {
+        let mut corner = row[0];
+        row[0] = i + 1;
+        for (j, y) in b.iter().enumerate() {
+            let next = (row[j] + 1)
+                .min(row[j + 1] + 1)
+                .min(corner + usize::from(x != *y));
+            corner = row[j + 1];
+            row[j + 1] = next;
+        }
+    }
+    row[b.len()]
+}
+
+/// Every closed name the table knows, built once.
+static CLOSED: std::sync::LazyLock<Vec<String>> =
+    std::sync::LazyLock::new(|| enumerate().0.into_iter().collect());
 
 // -------------------------------------------------------------------------------------------
 // Which names are utilities, and what they mean
@@ -966,22 +1104,41 @@ pub fn enumerate() -> (Vec<String>, Vec<&'static str>) {
             add(format!("{family}{value}"));
         }
     }
-    // The closed arguments of the open families: their keywords, and the round numbers a page
-    // actually carries. The scale itself is checked by the sample in `compiler/style/candidates.txt`.
+    // The closed arguments of the open families: their keywords, and **the scale Tailwind's own
+    // documentation lists**. The scale is multiplicative and therefore infinite, so this is a
+    // sample by construction — but it is the sample somebody typing `gap-` expects to be offered,
+    // which is why it is the documented steps rather than three round numbers. Every one of them is
+    // in `compiler/style/candidates.txt`, which is what
+    // `style.rs::every_name_the_table_accepts_was_asked_about` holds.
     for (family, _, _) in SIZED {
-        for value in [
-            "full", "auto", "screen", "min", "max", "fit", "px", "0", "1", "4",
-        ] {
+        for value in ["full", "auto", "screen", "min", "max", "fit", "px"] {
             add(format!("{family}{value}"));
+        }
+        for step in SCALE {
+            add(format!("{family}{step}"));
         }
     }
     for (family, _) in SPACED {
-        for value in ["px", "auto", "0", "1", "4"] {
+        for value in ["px", "auto"] {
             add(format!("{family}-{value}"));
+        }
+        for step in SCALE {
+            add(format!("{family}-{step}"));
         }
     }
     (names, VARIANTS.to_vec())
 }
+
+/// The steps of the spacing scale Tailwind's documentation lists.
+///
+/// Not the scale — that is `calc(var(--spacing) * n)` for any `n` and has no end — but the part of
+/// it a person browsing a completion list is looking for. [`rule`] accepts any number whether or
+/// not it is here.
+const SCALE: &[&str] = &[
+    "0", "0.5", "1", "1.5", "2", "2.5", "3", "3.5", "4", "5", "6", "7", "8", "9", "10", "11", "12",
+    "14", "16", "20", "24", "28", "32", "36", "40", "44", "48", "52", "56", "60", "64", "72", "80",
+    "96",
+];
 
 /// Every variant this knows, in front of any utility.
 const VARIANTS: &[&str] = &[

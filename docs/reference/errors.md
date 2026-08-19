@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **145 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **146 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -26,7 +26,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0121` | error | **nesting is too deep to read** — The source nests deeper than the front end follows — `beck_diag::depth::MAX_NESTING` levels of brackets, indentation or S-expression lists. The bound is a fixed count rather than a reading of the stack, so the same file is accepted or refused identically in every build; without it, deep enough input aborted the process with no span at all. |
 | `B0122` | error | **an expression chains more operators than the reader will follow** — A left-associative chain — `1 + 1 + 1 + …` — is flat in source and builds a left-leaning tree of the same depth, one level per operator. The Pratt loop that reads it does not recurse, so none of the parser's recursion counters sees the depth, and a long enough chain reached the end of the host stack in whatever walked the tree afterwards. The bound is `beck_diag::depth::MAX_BLOCK` — the same ceiling a block of sequential bindings takes, because it is the same axis: a flat run of things that costs one tree level each. |
 
-## Macro expansion — `B0200–B0221`
+## Macro expansion — `B0200–B0222`
 
 | Code | | Meaning |
 |---|---|---|
@@ -52,6 +52,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0219` | error | **image has no alt text** — A screen reader announces an `img` by its `alt` attribute; without one it announces the file name, or nothing. `alt=""` is HTML's own spelling for an image that carries no meaning and is accepted — the check is for the attribute, not for a value, because a compile-time check knows the shape of the tree and not the text in it. `a11y_exempt="…"` turns it off on one element, with the reason written down. |
 | `B0220` | error | **button has no accessible name** — A `button` is named by its own text. One with no children and no `aria_label`, `aria_labelledby` or `title` announces nothing at all, which is the icon-button mistake. Any child is accepted, because whether an expression renders to empty text is not a question this stage can answer. |
 | `B0221` | error | **form control has no label** — An `input`, `select` or `textarea` is named by `aria_label`, `aria_labelledby`, `title`, or a `label(for=…)` pointing at its `id`. A **placeholder is not a label** — it disappears as soon as somebody types, which is WCAG 3.3.2's commonest real failure. An `id` is accepted as evidence of a label elsewhere, because a `ui:` block composes out of functions and this check sees one element at a time. |
+| `B0222` | error | **class is one slip from a utility** — The class vocabulary is **open** — a name this compiler does not know is a name of your own, and is left alone — so this is a warning rather than a refusal. What it says is that the name is within one edit of a utility that would have had a rule, which is what `rounded-ful` is to `rounded-full`. `beck explain style` lists which of a page's classes are utilities and which are the program's own. |
 
 ## Names, types and effects — `B0300–B0399`
 

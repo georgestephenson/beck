@@ -97,7 +97,7 @@ ask in order:
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for three questions about that group, and you write all of them as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that asks `list_len`, `list_min` or `list_max` of that filter is answered without the group being built at all — the count from a tally the join keeps, the two ends from a `group_by` holding one multiset per group. All are maintained from both sides and `beck explain query` shows them. `sum` per group and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
-| "How do I make it look like anything?" | **With Tailwind's names and no Tailwind**, which is the row that moved. `beck build` writes `styles.css` and a running program serves the same bytes: one rule per class your pages can carry, worked out from the program rather than scanned for, with the theme tokens those rules read and nothing else ([`104`](104-styling-and-the-component-library.md) §104.4a). **3,474 of the 3,625 names Tailwind emits a rule for are rendered identically here**, held byte for byte against Tailwind's own compiler; the sketch's sheet is 2.3 KB and `beck-rt/src/css.rs` is deleted. What is still missing is a way to write a rule of *your own* — `css:` has no parser — so a class the compiler did not define gets no rule, and `beck explain style` says which of yours are which |
+| "How do I make it look like anything?" | **With Tailwind's names and no Tailwind**, which is the row that moved. `beck build` writes `styles.css` and a running program serves the same bytes: one rule per class your pages can carry, worked out from the program rather than scanned for, with the theme tokens those rules read and nothing else ([`104`](104-styling-and-the-component-library.md) §104.4a). **3,474 of the 3,625 names Tailwind emits a rule for are rendered identically here**, held byte for byte against Tailwind's own compiler; the sketch's sheet is 2.3 KB and `beck-rt/src/css.rs` is deleted. What is still missing is a way to write a rule of *your own* — `css:` has no parser — so a class the compiler did not define gets no rule, and `beck explain style` says which of yours are which. What the compiler *will* say is that `rounded-ful` is one edit from `rounded-full` (`B0222`), and your editor completes and explains a utility from the same table |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
 | "How do I get the compiler?" | One command ([`92`](92-supply-chain-and-release-report.md)) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 says in that order |
 
@@ -637,8 +637,13 @@ rows.
      **seventeen unsound acceptances** (`size-screen`, `max-w-auto`, fifteen `-auto` paddings) that
      had survived every green run because `candidates.txt` had never been asked about them. The
      table enumerates itself now, and a gate fails when it accepts a name the oracle never saw.
-     What is left of this item is the **`Class` type**, which did not land with the emitter. Lane B,
-     with the table generated into Lane A's tables.
+     Its last two consequences landed after the emitter: **`B0222`** warns about a class within one
+     edit of a utility — a warning rather than a refusal, because the class vocabulary is open and
+     `done`, `column` and `mine` are names this tree's own programs write — and the **editor**
+     completes `class="fl‸"` to `flex` and hovers `gap-2` to the rule the sheet will carry, from the
+     same table. §104.4b has the margin that threshold keeps and the two attempts its negative gate
+     took. The `Class` **type** is not built and is no longer owed: what it would have checked is
+     what `B0222` checks. Lane B, with the table generated into Lane A's tables.
   5. **The theme as a Beck value**, and a styled `beck new` (S): tokens as a record generating both
      the theme block and the accepted names, so renaming a brand colour is a rename. Lane B.
   6. **Where interface state lives** (F, and a **decision before an implementation**): a modal's

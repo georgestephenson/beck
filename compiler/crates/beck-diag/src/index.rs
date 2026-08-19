@@ -412,6 +412,16 @@ pub const INDEX: &[CodeEntry] = &[
          accepted as evidence of a label elsewhere, because a `ui:` block composes out of functions \
          and this check sees one element at a time.",
     ),
+    e(
+        "B0222",
+        Stage::Macros,
+        "class is one slip from a utility",
+        "The class vocabulary is **open** — a name this compiler does not know is a name of your \
+         own, and is left alone — so this is a warning rather than a refusal. What it says is that \
+         the name is within one edit of a utility that would have had a rule, which is what \
+         `rounded-ful` is to `rounded-full`. `beck explain style` lists which of a page's classes \
+         are utilities and which are the program's own.",
+    ),
     // ------------------------------------------------------- B03xx: names, types and effects
     e(
         "B0300",

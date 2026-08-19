@@ -182,11 +182,13 @@ Concretely, four things fall out and none of them is a language feature:
    token), no false negatives across a module boundary, and no configuration.
 2. **A misspelling is a diagnostic.** `rounded-ful` gets a `B0…` with a did-you-mean, because
    Levenshtein over a known table is what the compiler already does for field names. This is the
-   whole difference between Tailwind and a language that absorbed it.
+   whole difference between Tailwind and a language that absorbed it. **Built** — `B0222`, and
+   §104.4b is what it took.
 3. **The editor is free.** [`65`](65-the-editor-report.md) has completion, hover and rename served
-   from `beck_core`. A checked class attribute makes `class="fl‸"` complete to `flex`, hover print
-   the declarations, and go-to-definition on a *token* land on the theme — that is the Tailwind
-   IntelliSense extension, without an extension, because the answers come from the compiler.
+   from `beck_core`. A checked class attribute makes `class="fl‸"` complete to `flex` and hover
+   print the declarations — that is the Tailwind IntelliSense extension, without an extension,
+   because the answers come from the compiler. **Built**, both of those; go-to-definition on a
+   token waits on item 5's theme being a thing a program can land on.
 4. **A class the compiler cannot enumerate is refused**, not silently dropped.
    `"text-" + kind + "-700"` is exactly as invisible to Beck as it is to Tailwind, and the
    difference is that Beck can *say so*. The shape a program should write instead is the shape
@@ -300,6 +302,52 @@ absence is visible rather than silent.
 [`08`](08-roadmap.md) §8.3 item 8 asks that a choice the compiler makes unbidden be switchable and
 that the switched-off path be *run*, so `style.rs::the_stylesheet_has_an_off_switch_and_both_settings_run`
 starts the runtime twice and reads what `/beck.css` would serve.
+
+## 104.4b A misspelling, and the editor
+
+`B0222` is §104.4's second consequence: a class that is not a utility **and is within one edit of
+one** — two, from eight characters up — is a warning with a did-you-mean in it.
+
+**It is a warning rather than a refusal, and that is the whole design.** `B0217` and `B0218` one
+file over are errors because their vocabularies are *closed*: every attribute must be an HTML
+attribute and every event must be one the client listens for, so an unknown one is wrong. A class is
+not. `done`, `here`, `mine`, `theirs`, `column`, `columns`, `card` and `row-open` are names this
+tree's own programs write, and a compiler that refused them would be refusing the escape hatch it
+has not built yet — Beck still has no way to write a rule of your own (§104.1). So the strongest
+thing that can honestly be said is "this is one slip from something that would have had a rule".
+
+**The threshold has a margin, and the gate asserts the margin rather than the outcome.** Every
+misspelling in `compiler/style/candidates.txt` is one edit from a real utility — `rounded-ful`,
+`bg-emerald-550`, `text-4xxl`, `flexx`, `font-mediumm`, `justify-arround` — and `items-centre` is
+two. Every class this tree's own programs write is **three or more** edits from anything in the
+table: `card` to `grid`, `here` to `h-px`, `mine` to `inline`. So the rule sits one edit clear of
+the population it must not touch, and `style.rs::a_misspelled_utility_is_a_diagnostic` asserts *that
+distance* rather than asserting that nothing was said — the second passes on any threshold that
+happens to be below it, and the first goes red when a family added to the table lands near a name
+somebody chose, which is before their build starts warning about it rather than after.
+
+A tie is broken towards the candidate of the same **length**, because a substitution is a likelier
+slip than a deletion: `bg-emerald-550` is one edit from `bg-emerald-50` and from `bg-emerald-500`,
+and only the second is a shade somebody meant.
+
+### The editor, from the same table
+
+`class="fl‸"` completes to `flex` and hovering `gap-2` prints `.gap-2 { gap: calc(var(--spacing) *
+2); }` — the rule the sheet will actually carry, because it comes from the function that emits it.
+The completion offers the closed part of the table plus the scale Tailwind's documentation lists,
+which is what somebody typing `gap-` is looking for; the scale itself is open and `rule` accepts any
+number whether or not it was offered.
+
+**What holds it is a negative assertion, and getting that assertion right took two attempts.** A
+class is a token inside a string, so the only thing between four thousand utility names and every
+completion in the file is the test for where the caret is. The first version of that gate put a
+caret in a string reading `"hello"` and asserted no completions came back — which passed for the
+wrong reason, because no utility begins with `hel`. Pointed instead at a `placeholder="gap in the
+diary"`, whose prefix matches seventy utilities, it went red immediately: `class=` was to the left
+on the same line and the caret was inside *a* string, which was all the context test had been
+checking. It now requires the text between `class=` and the caret's own string to be the value
+itself — nothing, or a list's opening and the strings already in it — which is what tells
+`class=["flex", "ga‸"]` from `class="flex", placeholder="ga‸"`.
 
 ## 104.5 Why Tailwind cannot be a dependency, and should still be the default look
 
@@ -826,8 +874,10 @@ schedule:
   the first is the finding: a table that only said *which names are utilities* could not be the
   thing a sheet is emitted from, so `is_utility` is now defined as "there is a rule for it" and the
   oracle records what Tailwind **emits** rather than whether it emits. Asking that question found
-  seventeen unsound acceptances the previous gate could not see. **The `Class` type is still owed**
-  and is the one part of item 4 that did not land with the emitter.
+  seventeen unsound acceptances the previous gate could not see. Its last two consequences landed
+  after it: **`B0222`** warns about a class one edit from a utility, and the **editor** completes
+  and explains one from the same table (§104.4b). The `Class` **type** is not built and is no
+  longer owed — what it would have checked is what `B0222` checks.
 - **The last three are behind a decision, not behind effort.** Where interface state lives (Wall 1)
   determines what a combobox, a menu and a custom date picker even look like, so building the kit
   before that decision would be building the part of it that does not depend on the answer and
@@ -849,6 +899,11 @@ written when a program wants a keyframe rather than because it is now affordable
 - **This document established nothing built**, and four of its eight items have since been. Every
   measurement in it is of the tree as it stands or of third-party tools run against it; §104.11
   records which items have landed and [`08`](08-roadmap.md) §8.5.4 holds the order.
+- **`Class` is not a type.** §104.7's `def card_box() -> Class` is what the component half assumes
+  and it does not compile: a class is a `Str` today. What that type was scheduled *for* — checking a
+  name against the table — is built as a check instead (§104.4b), so nothing is waiting on it; what
+  it would still buy is a signature that says what a function returns, which is a readability
+  argument rather than a correctness one.
 - **The Tailwind numbers are one page and 71 files at one version** (4.3.3). The false-positive
   count is a property of that corpus and that extractor and will differ for another; what the
   measurement establishes is the *shape* — a scanner reads bytes and a compiler reads a program —
