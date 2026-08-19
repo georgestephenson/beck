@@ -344,16 +344,17 @@ Set §99.9's order of work beside the pandas core API:
 
 | §99.9 item | pandas | polars | LINQ |
 |---|---|---|---|
-| 3. `arrange_by` | `set_index` | index | — |
-| 4. `join` | `merge` | `.join()` | `Join` |
-| 5. recognise loop-plus-lookup | — | — | — |
+| 3. `arrange_by` — **built** | `set_index` | index | — |
+| 4. `join` — **built** | `merge` | `.join()` | `Join` |
+| 5. recognise loop-plus-lookup — **built** | — | — | — |
 | 6. `group by`, `count`/`sum`/`min`/`max` | `groupby().agg()` | `.group_by().agg()` | `GroupBy`, `Sum` |
 | 7. `distinct`, difference | `drop_duplicates` | `.unique()` | `Distinct`, `Except` |
 | built | `apply`, masks, `sort_values` | `.select()`, `.filter()`, `.sort()` | `Select`, `Where`, `OrderBy` |
 
 Three ecosystems independently converged on the same dozen verbs, which is a strong hint that they
-are the actual means of combination for tabular data rather than one library's taste. Beck has six
-of them.
+are the actual means of combination for tabular data rather than one library's taste. Beck has the
+unary ones, the join and both of its indexes; what it does not have is the grouping row and the
+aggregates under it.
 
 So **finishing the algebra is the shortest path to pandas' functionality, not a detour around it** —
 and the result is better than a port for a structural reason: these operators are *maintained
@@ -363,13 +364,13 @@ incremental engine, which is the defect class [`AGENTS.md`](../AGENTS.md) names 
 
 §99.3 showed the cost was already being paid: `corpus/27-review.beck` contained a nested-loop join,
 reapplied to every element on every event, and `beck explain cost` printed the defect without
-counting it. **The join half is built** ([`99`](99-the-data-tier-means-of-combination.md) §99.6):
-that program and two others compile to a maintained equi-join with no edit to any of them, and the
-tally counts what it prints. `group by` and the aggregates — which is where the dataframe verbs
-actually live — are not.
+counting it. **The join half is built, over both of its indexes**
+([`99`](99-the-data-tier-means-of-combination.md) §99.6): that program and three others compile to a
+maintained equi-join with no edit to any of them, and the tally counts what it prints. `group by` and
+the aggregates — which is where the dataframe verbs actually live — are not.
 
-**Verdict: build, as the missing half of the language, in §99.9's order.** That order is now
-`arrange_by`, then `group by` and the aggregates.
+**Verdict: build, as the missing half of the language, in §99.9's order.** What is left of that order
+is `group by` and the aggregates; items 3, 4 and 5 have landed.
 
 ## 105.8 NumPy is a notation over a link
 

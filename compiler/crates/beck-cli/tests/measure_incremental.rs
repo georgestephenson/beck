@@ -651,3 +651,241 @@ fn what_the_arrangement_lifecycle_gives_back() {
          a lag of 70 retains 64 and that subscriber rebuilds instead."
     );
 }
+
+/// What the index under a filtered loop is worth, in a clock the counters cannot supply.
+///
+/// `docs/99` §99.9 item 3. `scaling.rs::a_group_a_loop_filters_for_costs_the_group_and_not_the_collection`
+/// holds the *shape*, in `Work::steps` — the group is paid for and the collection is not, against a
+/// refused plan whose cost grows with the collection. This is the table that says what the
+/// difference costs in **time**, which is a rate and therefore printed rather than thresholded
+/// (§13.7); the counters are printed beside it because a table about what an operator saved should
+/// show that its two instruments agree.
+///
+/// Two workloads, because they are the two ends of what the operator can be worth: `spread` puts
+/// the cards across the columns, which is what a board looks like, and `one column` puts every card
+/// in one, where the group *is* the collection and the index has nothing left to exclude.
+#[test]
+fn what_a_grouped_join_is_worth() {
+    use beck_core::plan::Relate;
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/board.beck");
+    let src = std::fs::read_to_string(&path).expect("the board example is readable");
+    let (placed, diags, map) = beck_core::compile_str("board.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("the board example compiles");
+
+    let event = |variant: &str, i: usize, column: i64| {
+        let mut fields = beck_core::core::Fields::new();
+        fields.insert(Arc::from("id"), Value::str_(format!("c{i:06}")));
+        if variant == "Added" {
+            fields.insert(Arc::from("text"), Value::str_(format!("card {i}")));
+        } else {
+            fields.insert(Arc::from("column"), Value::Int(column));
+        }
+        Value::data(Arc::from("Event"), Some(Arc::from(variant)), fields)
+    };
+
+    // The clock, and the counters beside it. `Work::steps` is what the backend executed, so the
+    // two now tell the same story in different units — which is the check worth having in a table
+    // whose whole subject is what an operator saved.
+    let once = |relate: Relate, n: usize, spread: bool| -> (u128, beck_core::engine::Work) {
+        let backend = beck_eval::backend(&placed);
+        let plan = Arc::new(Plan::compile_with(&placed, relate));
+        let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("prepares"));
+        let runtime = Runtime::new(placed.clone(), backend).expect("prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let mut seq = 0u64;
+        let mut state = runtime.initial_state().expect("initial");
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: At(seq as i64),
+                actor: "ana".to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("fold")
+        };
+        for i in 0..n {
+            seq += 1;
+            state = fold(&state, event("Added", i, 0), seq);
+            if spread {
+                seq += 1;
+                state = fold(&state, event("Moved", i, 1 + (i as i64 % 2)), seq);
+            }
+        }
+        engine.render(&state, &session, &here).expect("warm");
+        seq += 1;
+        let next = fold(&state, event("Added", n + 1, 0), seq);
+        let t = Instant::now();
+        engine.render(&next, &session, &here).expect("step");
+        (t.elapsed().as_micros(), engine.work())
+    };
+
+    // The first thing measured in a process pays for warm-up, and this suite has been caught by
+    // that before (CHANGELOG 2026-08-17).
+    let _ = once(Relate::Recognise, 200, true);
+
+    println!(
+        "\n{:>8}  {:>7}  {:>13} {:>11} {:>7}  {:>22} {:>22}",
+        "cards",
+        "layout",
+        "arrange_by µs",
+        "refused µs",
+        "ratio",
+        "arrange_by a/t/m/r",
+        "refused a/t/m/r"
+    );
+    let counted = |w: beck_core::engine::Work| {
+        format!(
+            "{}/{}/{}/{} +{}",
+            w.applications, w.touched, w.materialised, w.recomputed, w.steps
+        )
+    };
+    for spread in [true, false] {
+        for n in [200usize, 1_600] {
+            let runs = |relate: Relate| {
+                let mut out: Vec<(u128, beck_core::engine::Work)> =
+                    (0..3).map(|_| once(relate, n, spread)).collect();
+                out.sort_by_key(|(t, _)| *t);
+                out.remove(0)
+            };
+            let (with, with_work) = runs(Relate::Recognise);
+            let (without, without_work) = runs(Relate::Refuse);
+            println!(
+                "{n:>8}  {:>7}  {with:>13} {without:>11} {:>6.1}×  {:>22} {:>22}",
+                if spread { "spread" } else { "one col" },
+                without as f64 / with.max(1) as f64,
+                counted(with_work),
+                counted(without_work)
+            );
+        }
+    }
+    println!(
+        "\n  spread  — the cards across the three columns, which is what a board looks like.\n\
+         \x20 one col — every card in the column the last event touches, so the group is the\n\
+         \x20           whole collection and the index has nothing left to exclude. That row is\n\
+         \x20           the honest ceiling on this operator: it removes the scan, not the group\n\
+         \x20           (docs/99 §99.9 item 6 is what removes the group).\n\
+         \x20 a/t/m/r — applications, entries touched, entries materialised, operators\n\
+         \x20           recomputed, and `steps` is what the backend executed inside all of\n\
+         \x20           them. The refused column's first four are the same at both sizes,\n\
+         \x20           because it rebuilds the page inside one per-element function and one\n\
+         \x20           application is one application; its `steps` and its clock both move\n\
+         \x20           with the collection, which is the work those four cannot see."
+    );
+}
+
+/// What answering a group's size from a count rather than from the group saves, in a clock.
+///
+/// `docs/99` §99.9 item 6. `scaling.rs::counting_a_group_does_not_build_it` holds the shape — one
+/// entry copied at any pile size against a number that grows — and this is the rate, which is
+/// printed rather than thresholded (§13.7).
+///
+/// The contrast here is **not** `Relate::Refuse`, and that is a scoping choice rather than a
+/// limitation: the refused plan has item 3's scan in it too, so comparing against it would credit
+/// this change with the previous one's win. The variant instead writes the same count as
+/// `list_len(sort_by(filter_list(…), …))`, which prints the same page and is no longer an aggregate
+/// the recogniser can see — item 3's index, item 6's aggregate withheld. `scaling.rs` is where the
+/// off switch itself is measured.
+#[test]
+fn what_counting_a_group_saves() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/35-workload.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let compiled = |name: &str, text: &str| {
+        let (placed, diags, map) = beck_core::compile_str(name, text);
+        assert!(!diags.has_errors(), "{}", diags.render(&map));
+        placed.expect("it compiles")
+    };
+    let counted = compiled("35-workload.beck", &src);
+    let grouped = compiled(
+        "35-workload-built.beck",
+        &src.replace(
+            "return list_len(filter_list(map_values(s.issues), lambda i: i.assignee == who))",
+            "return list_len(sort_by(filter_list(map_values(s.issues), lambda i: i.assignee == \
+             who), lambda i: i.title))",
+        ),
+    );
+
+    let event = |variant: &str, fields: &[(&str, &str)]| {
+        let mut f = beck_core::core::Fields::new();
+        for (k, v) in fields {
+            f.insert(Arc::from(*k), Value::str_(*v));
+        }
+        Value::data(Arc::from("Event"), Some(Arc::from(variant)), f)
+    };
+
+    let once = |subject: &beck_core::Placed, n: usize| -> u128 {
+        let backend = beck_eval::backend(subject);
+        let prepared = Arc::new(
+            Prepared::new(Arc::new(Plan::compile(subject)), backend.as_ref()).expect("prepares"),
+        );
+        let runtime = Runtime::new(subject.clone(), backend).expect("prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let mut seq = 0u64;
+        let mut state = runtime.initial_state().expect("initial");
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: At(seq as i64),
+                actor: "ana".to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("fold")
+        };
+        seq += 1;
+        state = fold(
+            &state,
+            event("Hired", &[("id", "p1"), ("name", "Ada")]),
+            seq,
+        );
+        for i in 0..n {
+            seq += 1;
+            let id = format!("i{i:06}");
+            state = fold(
+                &state,
+                event("Filed", &[("id", &id), ("title", &id), ("assignee", "p1")]),
+                seq,
+            );
+        }
+        engine.render(&state, &session, &here).expect("warm");
+        seq += 1;
+        let id = format!("i{n:06}");
+        let next = fold(
+            &state,
+            event("Filed", &[("id", &id), ("title", &id), ("assignee", "p1")]),
+            seq,
+        );
+        let t = Instant::now();
+        engine.render(&next, &session, &here).expect("step");
+        t.elapsed().as_micros()
+    };
+
+    // The first thing measured in a process pays for warm-up (CHANGELOG 2026-08-17).
+    let _ = once(&counted, 200);
+
+    println!(
+        "\n{:>8}  {:>12} {:>12} {:>7}",
+        "issues", "counted µs", "grouped µs", "ratio"
+    );
+    for n in [200usize, 1_600] {
+        let with = (0..3).map(|_| once(&counted, n)).min().expect("three runs");
+        let without = (0..3).map(|_| once(&grouped, n)).min().expect("three runs");
+        println!(
+            "{n:>8}  {with:>12} {without:>12} {:>6.1}×",
+            without as f64 / with.max(1) as f64
+        );
+    }
+    println!(
+        "\n  Both render the same page. `counted` answers each person's pile from a tally the\n\
+         \x20 join keeps; `grouped` builds the pile and measures it, which is what item 3 left\n\
+         \x20 behind and what this closes. The ratio grows with the pile because one side is\n\
+         \x20 constant in it and the other is linear."
+    );
+}

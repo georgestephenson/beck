@@ -365,9 +365,9 @@ The shape was a join written as a loop with a lookup inside it, and there is now
 compile it to ([`99`](99-the-data-tier-means-of-combination.md) §99.6): `27-review` compiles to a
 `Join`, its `flat_map` captures nothing, and the two commands agree about it. §99.3 has the
 transcripts and the sweep that found three such sites in the tree among fifteen benign ones the same
-line reported identically — **three of four are closed, and the one left (`board`) is a grouping
-rather than a lookup and waits on `arrange_by`**. Four rather than three because a fourth site
-arrived with `awareness(f)` after that sweep was run and nothing re-ran it. What the episode leaves behind is the lesson rather than
+line reported identically — **all four are now closed**, the last of them (`board`) being a grouping
+rather than a lookup, which took the `arrange_by` §99.9 item 3 schedules. Four rather than three
+because a fourth site arrived with `awareness(f)` after that sweep was run and nothing re-ran it. What the episode leaves behind is the lesson rather than
 the case: two commands that are each true about one operator, and no reader who would run both.
 
 ## 23.9 One shared dataflow: the three choices
@@ -941,7 +941,9 @@ against, and dropped only when the pair they name actually fuses.
   was kept *for it*; §23.11's frontier-zero case; and both sides of the release policy, so neither is
   folklore.
 - **`fusion.rs`** — the fused plan against the unfused plan over the same generated log, warm, two
-  subscribers, every event: **more than 2,000 pages across 34 programs**, so a failure names the
+  subscribers, every event: **more than 2,000 pages**, over every program in `corpus/` plus the
+  todo sketch, the board and the fixtures written for the rules and operators the corpus does not
+  reach, so a failure names the
   rewrite rather than the engine. Plus set equality on the rule list and the operator list, and both
   refusal conditions asserted on programs built to make each bite — they are *pessimisations* when
   dropped rather than errors, so nothing else would see them. The differential runs **recompute as a
@@ -988,7 +990,7 @@ itself.
 | Partial state and upqueries | **Not built.** [`38`](38-literature-survey.md) §38.2's **borrow** verdict on Noria — evicted arrangements refilled on demand — is the finer-grained version of the lifecycle. What is built is all-or-nothing per dataflow |
 | Per-operator lifecycle | **Not built.** An operator no *connected* subscriber reads is still maintained if any operator does |
 | A gate on any of the exported numbers | **Not built.** A subscription over a thousand rows is 5.4 MB and nothing covers that case |
-| Joins, subqueries, `group by`, aggregates other than `count(*)`, `distinct` | **Not built in this surface**, and the reason is below the SQL rather than in it. The plan now **has a join** ([`99`](99-the-data-tier-means-of-combination.md) §99.6, `Op::Join`), inferred from a loop that looks something up rather than written as one; what the read-model SQL still lacks is the compilation *into* it, which is §99.9 item 9. Grouping and the aggregates are missing from the plan itself, so for those there is still nothing to compile into. The view algebra's combining forms were all unary until the join — every other operator takes one collection, and `concat_lists`, the one that takes several, unions same-typed streams rather than relating them. [`99`](99-the-data-tier-means-of-combination.md) is the design that closes it, and §99.2 argues the absence is an oversight rather than a decision. When the plan has them, this surface grows by compiling *into* it rather than by growing a second interpreter |
+| Joins, subqueries, `group by`, aggregates other than `count(*)`, `distinct` | **Not built in this surface**, and the reason is below the SQL rather than in it. The plan now **has a join** ([`99`](99-the-data-tier-means-of-combination.md) §99.6, `Op::Join`), inferred from a loop that looks something up or filters another collection by an equality rather than written as one, over either a unique index or an `arrange_by`; what the read-model SQL still lacks is the compilation *into* it, which is §99.9 item 9. Grouping and the aggregates are missing from the plan itself, so for those there is still nothing to compile into. The view algebra's combining forms were all unary until the join — every other operator takes one collection, and `concat_lists`, the one that takes several, unions same-typed streams rather than relating them. [`99`](99-the-data-tier-means-of-combination.md) is the design that closes it, and §99.2 argues the absence is an oversight rather than a decision. When the plan has them, this surface grows by compiling *into* it rather than by growing a second interpreter |
 | `count(*)` without scanning | **Built, ungrouped.** `select count(*) from t`, with nothing narrowing it, is answered from the collection's own size: a maintained arrangement is a `BTreeMap` and a `Map` in the accumulator knows its length, and neither was being asked — the query cloned every value and built a `Cell` per column of every one to answer with an integer. `read::Rows::count` is the seam and it defaults to "not without a scan", so a reader that does not implement it is exactly as correct and exactly as slow as it was. Gated by `read_models.rs::a_bare_count_is_answered_without_building_a_row`, whose instrument is a reader that knows the size and **refuses to produce a row** — a query that scanned cannot be answered by it at all. `a_count_that_narrows_anything_still_scans` says where the fast path stops. The *grouped* form is not a SQL question at all but the missing aggregation half of [`99`](99-the-data-tier-means-of-combination.md) §99.4 |
 | `pg_catalog`, and therefore `psql`'s `\d` | **Not built.** `select * from beck_columns` is the substitute, and it is a table this project invented rather than what any tool expects. The correct long-run answer is a small read-only emulation of `pg_class` and friends — which needs joins, so the two are the same item |
 | TLS and authentication on the read-model port | **Not built**, and the port is loopback-only and off by default because of it |

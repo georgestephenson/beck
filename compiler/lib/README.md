@@ -32,11 +32,15 @@ Two consequences worth knowing before writing a file here:
 | Kind | Where it lives | Why |
 |---|---|---|
 | A host's table or grammar | a primitive declared in `beck-core/src/prelude.rs` and implemented in `beck-prim` | `str_upper` is a Unicode table, `json_parse` is somebody else's grammar, `time_format` is the civil calendar. Writing any of them over a `list[Str]` in Beck would be a slower, less correct copy of what the host already has — and implementing one *twice* on the host would be the same mistake one layer down, which is why the implementations live in the runtime library both the evaluator and a compiled program link ([`93`](../../docs/93-the-native-backends-report.md)) |
+| A combining form the view engine has to **see** | a primitive, as above | `sort_by`, `filter_list`, `map_list`, `concat_lists`, `list_len`, `list_min`, `list_max`. Every one of these is expressible in Beck and none of them is a host's table — a sort is a sort and a minimum is a fold. They are primitives because [`docs/23`](../../docs/23-incremental-views-report.md)'s engine maintains **what it can recognise**, and an aggregate written as a fold is one opaque operator recomputed in full on every event. This row is what the two above never explained: `sort_by` has always been a primitive and has never been a host's grammar |
 | Composition | a file here | lines, words, padding, an amount of money, a split that adds back up. There is nothing to ask the host for, so asking would be an admission |
 
-The line is not "what is fast" — it is **what has a definition in the language**. `money.beck` is
-integer arithmetic with a scale and a rounding rule; every part of that is expressible, so it is
-expressed.
+The line is not "what is fast" — it is **what has a definition in the language**, *unless the
+compiler has to recognise it*. `money.beck` is integer arithmetic with a scale and a rounding rule;
+every part of that is expressible and none of it is a combining form of the view algebra, so it is
+expressed. `list_min` is equally expressible — `lib/collections.beck` expressed it, as a full sort
+and a head — and it is a primitive anyway, because a view that takes the smallest of a group can only
+be maintained by an engine that can tell that is what it is asking for.
 
 ## What is here
 

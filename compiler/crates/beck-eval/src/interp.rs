@@ -703,6 +703,16 @@ impl<'h> Interp<'h> {
         self.fuel.set(DEFAULT_FUEL);
     }
 
+    /// What is left of this interpreter's budget.
+    ///
+    /// The budget is spent per node and, for a primitive whose work is proportional to a length the
+    /// caller chose, per element — so what a caller subtracts from the
+    /// budget it started with is the honest measure of what an evaluation *did*, which is what
+    /// [`beck_core::backend::Steps`] publishes.
+    pub fn fuel_left(&self) -> u64 {
+        self.fuel.get()
+    }
+
     /// This interpreter's cancellation, as a question a host can ask while it is blocked.
     ///
     /// [`beck_core::net::Stop::never`] when there is no enclosing scope, which is the ordinary
@@ -1981,6 +1991,20 @@ impl<'h> Interp<'h> {
                 v.as_list()
                     .map(|xs| Value::Int(xs.len() as i64))
                     .ok_or_else(|| EvalError::new("`list_len` expects a list", span))
+            }
+            Prim::ListMin | Prim::ListMax => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let xs = as_list(&v, op.name(), span)?;
+                // One pass and no allocation, which is the point of it being a primitive rather
+                // than `sorted(xs)` and the head: a caller asking for the smallest of a list should
+                // not pay for the other n-1 being put in order.
+                self.burn_work(xs.len(), span)?;
+                let found = match op {
+                    Prim::ListMin => xs.iter().min(),
+                    _ => xs.iter().max(),
+                };
+                Ok(found.cloned().map(Value::some).unwrap_or_else(Value::none))
             }
             Prim::ListIsEmpty => {
                 want(1)?;

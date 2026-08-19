@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **941 definitions compiled against 137 refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **968 definitions compiled against 137 refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -95,9 +95,9 @@ ask in order:
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
-| "Can I relate two collections?" | **Yes for a lookup, and you write it as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index, maintained from both sides, and `beck explain query` shows it. `group by`, the aggregates and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
+| "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for that group's size, and you write all three as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that only asks `list_len` of that filter is answered from a maintained count with no group built. All are maintained from both sides and `beck explain query` shows them. `sum`, `min` and `max` per group and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
-| "How do I make it look like anything?" | **Badly, and this is the newest row.** The stylesheet a running application serves is eight rules hard-coded in `beck-rt/src/css.rs`; `css:` appears in the tour and has no parser. Tailwind styles a Beck page with no configuration today, and its scanner cannot survive a package manager ([`104`](104-styling-and-the-component-library.md) §104.3), so the answer until §8.5.4's styling cluster lands is "bring npm" — which for a project whose product is one static binary is the wrong answer, not a smaller one |
+| "How do I make it look like anything?" | **Badly, and this is the newest row.** The stylesheet a running application serves is eight rules hard-coded in `beck-rt/src/css.rs`; `css:` appears in the tour and has no parser. `class=` takes a list now and `beck explain style` will tell you every class your pages can carry — but nothing emits a stylesheet from that set yet, so the answer to the question as asked is unchanged. Tailwind styles a Beck page with no configuration today, and its scanner cannot survive a package manager ([`104`](104-styling-and-the-component-library.md) §104.3), so the answer until §8.5.4's styling cluster lands is "bring npm" — which for a project whose product is one static binary is the wrong answer, not a smaller one |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
 | "How do I get the compiler?" | One command ([`92`](92-supply-chain-and-release-report.md)) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 says in that order |
 
@@ -434,21 +434,28 @@ rows.
 
 - **The data tier's means of combination** (F, and still the **largest item left** —
   [`99`](99-the-data-tier-means-of-combination.md) §99.7 lists five already-written-down items it
-  closes). **The join has landed**: §99.9's gate (item 1), the `Join` operator with the bilinear
-  delta rule (item 4) and the recognition that emits it for a loop nobody wrote as a join (item 5).
-  `27-review.beck` gets it with no edit, and the gate reports **19 units of maintenance at 200 rows
-  and at 1,600, against 415 and 3,215 with the operator switched off**. What is left, in §99.9's
-  order: **`arrange_by`** (item 3, which moved *behind* the join rather than in front of it — the
-  join in the tree indexes a `Map` whose `map_values` arrangement is already keyed by the join key,
-  so building `arrange_by` first would have been an operator with no program; its program is
-  `examples/board.beck`), then **`group by` and the aggregates**, then `distinct` and difference,
-  fusion for the new operators, and the read-model SQL compiling into the plan. This was a Phase 4
-  bullet from the day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in
-  *this* list, which is the same defect §8.5 opens by describing one level down — a phase is not a
-  position. It lives in **Lane B** (`engine.rs`, `plan.rs`, `relate.rs`) and contends with nothing
-  in Lane A. §99.8's convergence rungs interleave with it rather than following it, and rungs 0–1
-  did not come due with the join because a join against an index has one plan and therefore no
-  choice to make.
+  closes). **The join has landed, and both of its indexes**: §99.9's gate (item 1), the `Join`
+  operator with the bilinear delta rule (item 4), the recognition that emits it for a loop nobody
+  wrote as a join (item 5), and **`arrange_by`** (item 3), which moved *behind* the join rather than
+  in front of it because the first join's right side is a `Map` whose `map_values` arrangement was
+  already keyed by the join key. `27-review.beck` gets the first with no edit, and its gate reports
+  **19 units of maintenance at 200 rows and at 1,600, against 415 and 3,215 with the operator
+  switched off**; `examples/board.beck` gets the second with no edit, and it is **4.5–4.9× less work
+  per event** with its cards spread over the columns — but **1.1×** with all of them in one, because
+  `arrange_by` removes the scan and leaves the group, which is what `group by` takes — **and its first
+  aggregate has taken it**: `list_len` over the same filter is answered from a tally the join keeps,
+  so `corpus/35-workload.beck` shows every person's open-issue count while copying **one** entry out
+  of an arrangement at 200 issues and at 1,600. What is left, in §99.9's order: **`sum`, `min` and
+  `max` per group**, each waiting on a surface rather than on a delta rule (§99.9 item 6 has the
+  design for `min`/`max` and the `Int`-versus-`Float` decision `sum` needs), then `distinct` and
+  difference, fusion for the new operators, and the read-model SQL compiling into the plan. This was a Phase 4 bullet from the
+  day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list,
+  which is the same defect §8.5 opens by describing one level down — a phase is not a position. It
+  lives in **Lane B** (`engine.rs`, `plan.rs`, `relate.rs`) and contends with nothing in Lane A.
+  §99.8's convergence rungs interleave with it rather than following it, and **rungs 0–1 have now
+  failed to come due twice**: a join inferred from a loop has the loop's order to preserve, which
+  fixes which side is the left before any cost is consulted. An inferred surface postpones the
+  solver, and §99.8's ladder says so now rather than predicting otherwise.
 - **A columnar value, and Arrow** (F, after the aggregates): the second representation
   [`105`](105-the-ecosystem-answer.md) §105.10 argues for — `Value::List(Arc<Vec<Value>>)` is 16
   boxed bytes an element, which is right for a keyed arrangement and wrong for a million doubles.
@@ -597,12 +604,26 @@ rows.
      user-written `ui:` has to be held to the same names. Lane C, with a `beck-macro` half.
   3. **`class=` takes a list, and `Class` is a type** (F): the prerequisite for everything else in
      the styling half, and what makes the editor's existing completion, hover and rename answer for
-     utilities without an extension ([`65`](65-the-editor-report.md)). Lane A.
+     utilities without an extension ([`65`](65-the-editor-report.md)). **The list and the analysis
+     are done; the type is not.** A list where HTML defines a space-separated value is joined in the
+     `ui:` lowering, so every backend agrees by construction and the seam learned nothing, and
+     `beck_core::style` enumerates every class that can reach a `class=` — through a call and through
+     both arms of an `if`, which is how every dynamic class in this tree is already written.
+     `beck explain style` prints the set and, beside it, every site where a class is *built* rather
+     than named, with which of three reasons it was. A `Class` **type** had nothing to be checked
+     against until item 4's table existed, so it moved behind it rather than in front: a type whose
+     checking is empty is a scaffold. Lanes A and C.
   4. **The utility table and the sheet emitter** (S): exact extraction over the typed tree,
      `beck build` writing the stylesheet, `styles = none` turning all of it off, and the
      differential gate that holds the accepted table against Tailwind's own compiler
      ([`104`](104-styling-and-the-component-library.md) §104.4). This is what retires
-     `beck-rt/src/css.rs`. **Both paths gated**, per §8.3 — the switched-off program is compiled and
+     `beck-rt/src/css.rs`. **The table and its oracle are built**: `beck_core::style::is_utility`
+     knows 631 of 782 candidate names with no unsound acceptance, held against Tailwind 4.3.3's own
+     answer, committed under `compiler/style/expected/` so no gate needs a package registry. Two
+     things a person writing the table down would have got wrong were caught by asking it — the
+     spacing scale is multiplicative rather than a list of steps, and the first generator matched
+     `.rounded-ful` against `.rounded-full`. **The emitter is not built**: nothing writes CSS,
+     `styles = none` does not exist, and `css.rs` still serves its eight rules. **Both paths gated**, per §8.3 — the switched-off program is compiled and
      run beside the switched-on one, because a default nobody has run is a claim. Lane B, with the
      table generated into Lane A's tables.
   5. **The theme as a Beck value**, and a styled `beck new` (S): tokens as a record generating both

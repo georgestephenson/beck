@@ -33,7 +33,7 @@ What a user's type may implement to join something the language already has. `Nu
 
 ## Names
 
-102 of them.
+104 of them.
 
 | Name | Type |
 |---|---|
@@ -88,6 +88,8 @@ What a user's type may implement to join something the language already has. `Nu
 | `list_index_of` | `(list[a], a) -> Option[Int]` |
 | `list_is_empty` | `(list[a]) -> Bool` |
 | `list_len` | `(list[a]) -> Int` |
+| `list_max` | `(list[a]) -> Option[a]` |
+| `list_min` | `(list[a]) -> Option[a]` |
 | `list_reverse` | `(list[a]) -> list[a]` |
 | `list_slice` | `(list[a], Int, Int) -> list[a]` |
 | `list_take` | `(list[a], Int) -> list[a]` |

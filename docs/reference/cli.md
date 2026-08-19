@@ -145,6 +145,17 @@ Nothing executes this DDL. There is no table to create — a read model is the c
 | `<FILE>` | FILE |  |
 
 
+## `beck explain style`
+
+Every class the program's pages can carry, and every place one is built rather than named (`docs/104` §104.4).
+
+The compiler resolved the program, so it knows the strings that can reach a `class=` — across a module boundary, and without a scanner or a safelist. What it prints is that set, and the sites where a class is assembled at run time instead, which are the ones a stylesheet emitted from this could not cover.
+
+| Argument | | |
+|---|---|---|
+| `<FILE>` | FILE |  |
+
+
 ## `beck explain deploy`
 
 The infrastructure the program's effects imply (§6.5)

@@ -52,7 +52,7 @@ use beck_diag::Span;
 
 use crate::backend::{Backend, Callable, ExecError};
 use crate::core::Value;
-use crate::plan::{Fun, Op, OpId, Plan};
+use crate::plan::{Fun, Matching, Op, OpId, Plan};
 use crate::pmap::PMap;
 use crate::split::Placed;
 
@@ -151,6 +151,14 @@ struct Cell {
     /// it a right row that moved would have to ask every left row whether it cared, which is the
     /// nested loop this operator exists to remove — arrived at from the other side.
     back: BTreeMap<Value, BTreeSet<Key>>,
+    /// `join`, for [`Matching::Count`]: how many index entries each join key currently holds.
+    ///
+    /// Kept by the join rather than by the index because an operator reads its inputs' *values* and
+    /// their changes, never their private state — an index in the shared dataflow is not this
+    /// engine's cell at all ([`SharedDataflow`]). The change stream carries everything a count
+    /// needs: an entry that arrived is `+1` and one that left is `-1`, and the two are the same
+    /// arithmetic whatever operator produced them.
+    tally: BTreeMap<Value, u64>,
 }
 
 /// What one [`Engine::render`] cost, in units that do not depend on the machine.
@@ -167,6 +175,19 @@ pub struct Work {
     pub materialised: u64,
     /// Pointwise operators re-evaluated.
     pub recomputed: u64,
+    /// What the **backend** executed inside all of those, if it counts
+    /// ([`crate::backend::Steps`]); `0` when it does not, which is not the same as no work.
+    ///
+    /// The other four are what the engine did *to* its arrangements, and they stop at the boundary
+    /// of a call: one application is one application whether the function it ran read a field or
+    /// rebuilt a page. This is the inside of those calls, and it is what makes a plan that hides its
+    /// work in one opaque operator visible beside one that decomposed.
+    ///
+    /// **Not in [`Work::total`]**, deliberately. The other four are commensurable — entries and
+    /// applications, all `O(1)` each — and this is a different unit by two or three orders of
+    /// magnitude, so adding it would drown every gate that reads the total. A gate that wants it
+    /// asks for it by name.
+    pub steps: u64,
 }
 
 impl Work {
@@ -190,6 +211,12 @@ pub struct Prepared {
     funs: Vec<Option<Callable>>,
     /// Constants, evaluated once here and never recomputed.
     consts: Vec<Option<Value>>,
+    /// The backend's step counter, taken once at prepare time — see [`crate::backend::Steps`].
+    ///
+    /// Held here rather than passed to [`Engine::render`] because it is a property of the executor
+    /// the plan was prepared against, and an engine that was handed a different one would report
+    /// somebody else's arithmetic.
+    steps: Option<Arc<dyn crate::backend::Steps>>,
 }
 
 impl Prepared {
@@ -216,6 +243,7 @@ impl Prepared {
             code,
             funs,
             consts,
+            steps: backend.steps(),
         })
     }
 
@@ -414,10 +442,14 @@ impl Engine {
         aware: &Value,
     ) -> Result<Value, ExecError> {
         self.work = Work::default();
-        match self
+        let before = self.steps_now();
+        let out = self
             .tick(up, state, session, presence, aware)
-            .and_then(|()| self.materialise(up, self.prepared.plan.root))
-        {
+            .and_then(|()| self.materialise(up, self.prepared.plan.root));
+        // Charged even when the render failed, and before `reset` throws the arrangements away: a
+        // render that ran out of fuel is the one whose cost a reader most wants to see.
+        self.work.steps = self.steps_now().saturating_sub(before);
+        match out {
             Ok(v) => {
                 self.warm = true;
                 Ok(v)
@@ -431,15 +463,23 @@ impl Engine {
         }
     }
 
+    /// What the backend has executed so far, or zero when it does not count.
+    fn steps_now(&self) -> u64 {
+        self.prepared.steps.as_ref().map_or(0, |s| s.taken())
+    }
+
     /// Advance the operators this engine owns, without assembling a page from them.
     ///
     /// This is the shared half of [`SharedDataflow`]: the root of the plan is per-session and this
     /// engine does not own it, so there is nothing at the top to materialise.
     fn advance(&mut self, state: &Value) -> Result<(), ExecError> {
         self.work = Work::default();
+        let before = self.steps_now();
         // The shared half owns no `Op::Presence` and no `Op::Awareness` — everything downstream of
         // one is per-subscriber — so the values it would be given are never read.
-        match self.tick(None, state, &Value::Unit, &Value::Unit, &Value::Unit) {
+        let out = self.tick(None, state, &Value::Unit, &Value::Unit, &Value::Unit);
+        self.work.steps = self.steps_now().saturating_sub(before);
+        match out {
             Ok(()) => {
                 self.warm = true;
                 Ok(())
@@ -515,13 +555,17 @@ impl Engine {
                 Op::MapValues => self.map_values(up, id, cold)?,
                 Op::MapList { f } => self.map_list(up, id, f, cold)?,
                 Op::FilterList { f } => self.filter_list(up, id, f, cold)?,
-                Op::SortBy { f } => self.sort_by(up, id, f, cold)?,
+                // One function for the two, because the arrangement is the same one: `f(x)`
+                // followed by the input's key. What differs is who reads it — `sort_by`'s consumer
+                // iterates it, `arrange_by`'s probes it — and `Op::ArrangeBy`'s own documentation
+                // says why that is still two operators.
+                Op::SortBy { f } | Op::ArrangeBy { key: f } => self.sort_by(up, id, f, cold)?,
                 Op::Concat => self.concat(up, id, cold)?,
                 Op::Flatten => self.flatten(up, id, None, cold)?,
                 Op::FlatMap { f } => self.flatten(up, id, Some(f), cold)?,
                 Op::Count => self.aggregate(up, id, cold, false)?,
                 Op::IsEmpty => self.aggregate(up, id, cold, true)?,
-                Op::Join { key } => self.join(up, id, key, cold)?,
+                Op::Join { key, matched } => self.join(up, id, key, *matched, cold)?,
             }
         }
         Ok(())
@@ -938,13 +982,19 @@ impl Engine {
     /// index has advanced before this operator runs — the plan's nodes are in dependency order — so
     /// a left row re-looked-up in the first pass already has the answer the second would give it.
     ///
-    /// The output holds one row per left row, matched or not, because that is what the `map_get`
-    /// this replaced returned: an `Option`, never an absence.
+    /// The output holds one row per left row, matched or not, because that is what the expression
+    /// this replaced returned: `map_get`'s `Option`, or `filter_list`'s list — never an absence.
+    ///
+    /// [`Matching::Group`] differs in one place and it is the right-hand pass: a group is answered
+    /// by the *range* under its key, so a key that moved rebuilds the whole group rather than
+    /// substituting the row that moved. That is the honest half of §99.9 item 3 — the scan over the
+    /// collection is gone, the group's own size is not, and `group by` is what takes it.
     fn join(
         &mut self,
         up: Option<Upstream<'_>>,
         id: OpId,
         key: &Fun,
+        matching: Matching,
         cold: bool,
     ) -> Result<(), ExecError> {
         let plan = self.prepared.plan.clone();
@@ -979,6 +1029,40 @@ impl Engine {
             self.cells[id].positions.clear();
             self.cells[id].back.clear();
         }
+        // The count per key, brought up to date **before** either pass, because the index has
+        // already advanced and both passes are about to ask it questions. A rebuild counts the
+        // index once, which is what a rebuild is; otherwise it is ±1 per entry that moved.
+        let mut tally = std::mem::take(&mut self.cells[id].tally);
+        if matching == Matching::Count {
+            if rebuild {
+                tally.clear();
+                if let Out::Arr(a) = self.out_of(up, index)? {
+                    for k in a.entries.keys() {
+                        if let Some(jk) = k.first() {
+                            *tally.entry(jk.clone()).or_default() += 1;
+                        }
+                    }
+                }
+            } else {
+                for c in &right_changes {
+                    let Some(jk) = c.key.first() else { continue };
+                    match (c.old.is_some(), c.new.is_some()) {
+                        (false, true) => *tally.entry(jk.clone()).or_default() += 1,
+                        // Saturating, and the saturation is unreachable rather than defensive: an
+                        // entry cannot leave an index it never entered. It is written this way
+                        // because the alternative is a panic in a render.
+                        (true, false) => {
+                            let left = tally.entry(jk.clone()).or_default();
+                            *left = left.saturating_sub(1);
+                            if *left == 0 {
+                                tally.remove(jk);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
         // `positions` holds the join key each left row currently waits on — the same role it plays
         // for `sort_by`, which is where a row currently sits.
         let mut positions = std::mem::take(&mut self.cells[id].positions);
@@ -1002,8 +1086,8 @@ impl Engine {
             args.push(lv.clone());
             let jk = call(args)?;
             self.work.applications += 1;
-            let matched = self.matched(up, index, &jk)?;
-            let row = joined(lv, matched);
+            let answer = self.answer(up, index, &jk, matching, &tally)?;
+            let row = joined(lv, answer);
             arr.entries.insert(c.key.clone(), row.clone());
             positions.insert(c.key.clone(), Arc::from(vec![jk.clone()]));
             back.entry(jk).or_default().insert(c.key.clone());
@@ -1015,13 +1099,20 @@ impl Engine {
             });
         }
 
-        for c in right_changes {
-            // The index's key is the join key: that is what makes it an index rather than an
-            // arrangement that happens to be beside this operator.
-            let Some(jk) = c.key.first() else { continue };
-            let Some(waiting) = back.get(jk) else {
+        // The index's key is the join key: that is what makes it an index rather than an
+        // arrangement that happens to be beside this operator. Several changes may share one — a
+        // group's are all under it — so the keys that moved are collected before anything is
+        // answered, and each is answered once however many of its rows moved.
+        let moved: BTreeSet<Value> = right_changes
+            .iter()
+            .filter_map(|c| c.key.first().cloned())
+            .collect();
+        for jk in moved {
+            if !back.contains_key(&jk) {
                 continue;
-            };
+            }
+            let answer = self.answer(up, index, &jk, matching, &tally)?;
+            let waiting = back.get(&jk).expect("checked just above");
             for lk in waiting.iter() {
                 if touched.contains(lk) {
                     continue;
@@ -1032,7 +1123,7 @@ impl Engine {
                 let Some(lv) = old.field(crate::relate::LEFT).cloned() else {
                     continue;
                 };
-                let row = joined(lv, c.new.clone());
+                let row = joined(lv, answer.clone());
                 let old = arr.entries.insert(lk.clone(), row.clone());
                 changes.push(Change {
                     key: lk.clone(),
@@ -1044,22 +1135,57 @@ impl Engine {
 
         self.cells[id].positions = positions;
         self.cells[id].back = back;
+        self.cells[id].tally = tally;
         self.publish(id, arr, changes, rebuild);
         Ok(())
     }
 
-    /// What the index holds under a join key, whichever shape the index arrived in.
-    fn matched(
-        &self,
+    /// What one probe of the index returns, as the value the joined row's right half holds.
+    ///
+    /// The two [`Matching`]s read the same arrangement differently and that is the whole
+    /// difference between them: a unique index is a point lookup and a group index is the range
+    /// under one key. A range works because the `arrange_by` key's first component *is* the join
+    /// key and a `BTreeMap`'s order is `Value`'s — which is also what `==` compares, so the range
+    /// holds exactly the rows the predicate would have kept, in the order the collection held them.
+    fn answer(
+        &mut self,
         up: Option<Upstream<'_>>,
         index: OpId,
         jk: &Value,
-    ) -> Result<Option<Value>, ExecError> {
-        Ok(match self.out_of(up, index)? {
-            Out::Arr(a) => a.entries.get(&key_of(jk)).cloned(),
-            Out::Val(Value::Map(m)) => m.get(jk).cloned(),
-            Out::Val(_) => None,
-        })
+        matching: Matching,
+        tally: &BTreeMap<Value, u64>,
+    ) -> Result<Value, ExecError> {
+        // The whole of §99.9 item 6's first aggregate: a question about a group that the group does
+        // not have to exist to answer.
+        if matching == Matching::Count {
+            return Ok(Value::Int(tally.get(jk).copied().unwrap_or(0) as i64));
+        }
+        if matching == Matching::Unique {
+            let found = match self.out_of(up, index)? {
+                Out::Arr(a) => a.entries.get(&key_of(jk)).cloned(),
+                Out::Val(Value::Map(m)) => m.get(jk).cloned(),
+                Out::Val(_) => None,
+            };
+            return Ok(found.map(Value::some).unwrap_or_else(Value::none));
+        }
+        let mut rows = Vec::new();
+        // Only an arrangement can be probed by a range. The decomposition builds an `arrange_by`
+        // here and that is one, so this is the correct-for-a-plan-nobody-writes path rather than
+        // one the corpus takes — the same case the `indexed` test above covers.
+        if let Out::Arr(a) = self.out_of(up, index)? {
+            for (k, v) in a.entries.range(key_of(jk)..) {
+                if k.first() != Some(jk) {
+                    break;
+                }
+                rows.push(v.clone());
+            }
+        }
+        // A group is entries copied out of an arrangement to hand a consumer a `Value::List`,
+        // which is what `Work::materialised` counts — so it is counted there, and the scaling
+        // gates that exclude `materialised` keep excluding assembly rather than starting to
+        // include it.
+        self.work.materialised += rows.len() as u64;
+        Ok(Value::List(Arc::new(rows)))
     }
 
     /// `list_len` and `list_is_empty`: read the arrangement's size.
@@ -1941,27 +2067,24 @@ fn inner_key(outer: &Key, i: usize) -> Key {
     Arc::from(k)
 }
 
-/// A join key, as the index's key: one component, because the index is keyed by exactly it.
+/// A join key, as a key of the index.
+///
+/// One component, which is the whole of a unique index's key and the **prefix** of a grouped one's
+/// — so the same value is a point lookup in the first and the start of a range in the second.
 fn key_of(jk: &Value) -> Key {
     Arc::from(vec![jk.clone()])
 }
 
 /// One joined row: the left value, and what it matched.
 ///
-/// The right half is an `Option` rather than the value or nothing, because the expression this
-/// operator replaced was a `map_get` and its callers `match` on one. A join that dropped unmatched
-/// rows would be a different operator and a different page.
-fn joined(left: Value, right: Option<Value>) -> Value {
+/// The right half is whatever the expression this operator replaced evaluated to — an `Option` for
+/// a `map_get`, a `list` for a `filter_list` — which [`Engine::answer`] has already built. A join
+/// that dropped unmatched rows would be a different operator and a different page.
+fn joined(left: Value, right: Value) -> Value {
     Value::record(
         crate::relate::ROW,
         None,
-        [
-            (crate::relate::LEFT, left),
-            (
-                crate::relate::RIGHT,
-                right.map(Value::some).unwrap_or_else(Value::none),
-            ),
-        ],
+        [(crate::relate::LEFT, left), (crate::relate::RIGHT, right)],
     )
 }
 

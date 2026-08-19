@@ -20,7 +20,8 @@
 //! Two kinds, and the distinction is the whole design:
 //!
 //! * A **delta operator** ([`Op::MapValues`], [`Op::MapList`], [`Op::FilterList`], [`Op::SortBy`],
-//!   [`Op::Concat`], [`Op::Flatten`], [`Op::FlatMap`], [`Op::Count`], [`Op::IsEmpty`]) holds an
+//!   [`Op::Concat`], [`Op::Flatten`], [`Op::FlatMap`], [`Op::Count`], [`Op::IsEmpty`],
+//!   [`Op::Join`], [`Op::ArrangeBy`]) holds an
 //!   ordered *arrangement* — its output as
 //!   a keyed collection — and updates it from the changes at its input. Work is proportional to the
 //!   change, not to the collection.
@@ -48,6 +49,8 @@
 //! | `sort_by(xs, k)` | `k(x)` followed by the input's key — a stable sort, expressed as an order |
 //! | `concat_lists([a, b])` | the input's position, followed by that input's key |
 //! | `flatten`, `flat_map` | the input's key, followed by the position inside that element's list |
+//! | `join` | the left input's key — a lookup answers one left row, so nothing of the right's is needed to separate two |
+//! | `arrange_by(xs, k)` | `k(x)` followed by the input's key — `sort_by`'s arrangement, probed by prefix instead of iterated |
 //!
 //! # What this is not
 //!
@@ -186,7 +189,52 @@ pub enum Op {
         /// [`crate::relate`] refuses the shape otherwise — which is what makes the operator's own
         /// work `O(δ)` rather than `O(n)`.
         key: Fun,
+        /// What one probe of the right side returns, which is decided by which index is on it.
+        matched: Matching,
     },
+    /// A second index over a collection, keyed by something other than what orders it — §99.5
+    /// decision 4's `arrange_by`, and [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md)
+    /// §99.9 item 3.
+    ///
+    /// It is the right side of a [`Op::Join`] whose left side asked for a *group*: the collection
+    /// the program wrote `filter_list(xs, lambda y: by(y) == …)` over, arranged so that the
+    /// equality is a range rather than a scan.
+    ///
+    /// **Its arrangement is [`Op::SortBy`]'s, and that is worth saying rather than hiding.** Both
+    /// key an element by `f(x)` followed by the input's key, so both are one `BTreeMap` in which
+    /// equal keys keep the order they arrived in. A sort is that arrangement *iterated*; an index
+    /// is that arrangement *probed*. The engine runs one function for the two, and what differs is
+    /// the consumer — which is why they are two operators rather than one with a flag: nothing may
+    /// fuse a probe the way it fuses a sort, and `beck explain query` should not tell a reader
+    /// their program sorts when it does not.
+    ArrangeBy {
+        /// What to key by, as a function of one element. It captures nothing, for
+        /// [`Op::Join`]'s reason.
+        key: Fun,
+    },
+}
+
+/// What one probe of a join's right side returns.
+///
+/// The two are not a detail of the index: they are what the expression the join replaced evaluated
+/// to, so a join that returned the wrong one would render a different page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Matching {
+    /// An [`Op::MapValues`] index, whose keys are unique. `Some(row)` or `None` — which is what
+    /// `map_get` returned and what its callers `match` on.
+    Unique,
+    /// An [`Op::ArrangeBy`] index, whose keys are not. The whole group, in the indexed
+    /// collection's own order, as a `list` — which is what the `filter_list` returned.
+    Group,
+    /// The same index, asked **how many** rather than which — `list_len` over the same
+    /// `filter_list`, whose answer is an `Int`.
+    ///
+    /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's
+    /// first aggregate, and the one the language already had a spelling for. The join keeps a count
+    /// per key beside its reverse index and moves it by ±1 as the index moves, so the answer costs
+    /// nothing and **no group is built**. That is the whole difference from [`Matching::Group`],
+    /// which pays the group's size on every event that touches it.
+    Count,
 }
 
 /// Every operator the engine implements, by name.
@@ -211,6 +259,7 @@ pub const OPERATORS: &[&str] = &[
     "list_len",
     "list_is_empty",
     "join",
+    "arrange_by",
 ];
 
 impl Op {
@@ -232,6 +281,7 @@ impl Op {
             Op::Count => "list_len",
             Op::IsEmpty => "list_is_empty",
             Op::Join { .. } => "join",
+            Op::ArrangeBy { .. } => "arrange_by",
         }
     }
 
@@ -249,6 +299,7 @@ impl Op {
                 | Op::Count
                 | Op::IsEmpty
                 | Op::Join { .. }
+                | Op::ArrangeBy { .. }
         )
     }
 
@@ -280,6 +331,12 @@ impl Op {
             // this are the same rule: iteration is left-order-major, which is what a `for` over the
             // left side already means.
             Op::Join { .. } => "the left input's key — left-order-major, as the loop was",
+            // The same two components `sort_by` has, and the second is load-bearing for a
+            // different reason: it is what makes a group come back in the order the collection
+            // held it, which is the order the `filter_list` this replaced returned.
+            Op::ArrangeBy { .. } => {
+                "the key it indexes by, then the input's key — one range per key"
+            }
         }
     }
 
@@ -295,6 +352,7 @@ impl Op {
                 | Op::Flatten
                 | Op::FlatMap { .. }
                 | Op::Join { .. }
+                | Op::ArrangeBy { .. }
         )
     }
 
@@ -309,7 +367,8 @@ impl Op {
             | Op::FilterList { f }
             | Op::SortBy { f }
             | Op::FlatMap { f }
-            | Op::Join { key: f } => Some(f),
+            | Op::Join { key: f, .. }
+            | Op::ArrangeBy { key: f } => Some(f),
             _ => None,
         }
     }
@@ -321,7 +380,8 @@ impl Op {
             | Op::FilterList { f }
             | Op::SortBy { f }
             | Op::FlatMap { f }
-            | Op::Join { key: f } => Some(f),
+            | Op::Join { key: f, .. }
+            | Op::ArrangeBy { key: f } => Some(f),
             _ => None,
         }
     }
@@ -703,8 +763,29 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
         Op::Count | Op::IsEmpty => "O(1)  —  the arrangement's size, never a recount".to_string(),
         // Both halves of §99.5's bilinear rule, in one line, because a reader who only sees the
         // first would think an index answers a question and never receives one.
-        Op::Join { .. } => "δ keys applied on the left, and on the right the rows each moved \
-                            index entry answers  —  neither is n"
+        Op::Join {
+            matched: Matching::Unique,
+            ..
+        } => "δ keys applied on the left, and on the right the rows each moved \
+              index entry answers  —  neither is n"
+            .to_string(),
+        // The honest half of §99.9 item 3, at the operator that pays it: the scan is gone and the
+        // group is not. A left row whose group moved is rebuilt whole, because the expression this
+        // replaced evaluated to a `list`.
+        Op::Join {
+            matched: Matching::Group,
+            ..
+        } => "δ keys applied on the left, and on the right one group rebuilt per key that \
+              moved  —  the group, never the collection"
+            .to_string(),
+        Op::Join {
+            matched: Matching::Count,
+            ..
+        } => "δ keys applied on the left, and on the right ±1 per moved index entry  —  the \
+              group is counted, never built"
+            .to_string(),
+        Op::ArrangeBy { .. } => "δ applications, at most 2δ touched — a move is a remove and an \
+                                 insert. The probe is the join's cost, not this one's"
             .to_string(),
     }
 }
@@ -942,7 +1023,9 @@ pub fn cost_report(plan: &Plan) -> String {
         out,
         "\n  These are the plan's arithmetic rather than a measurement: `Work` is what\n\
          \x20 `Engine::render` counts, so `measure_incremental` checks this arithmetic against the\n\
-         \x20 count rather than against a clock."
+         \x20 count rather than against a clock. What an operator does *inside* a per-element\n\
+         \x20 function is not in these lines and is in `Work::steps`, which is what the backend\n\
+         \x20 executed — the number that tells an opaque operator's cost from its arity."
     );
     out
 }
@@ -1523,9 +1606,12 @@ impl Builder<'_> {
     /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.6: the loop is
     /// not edited and no syntax is added — the operators are emitted for the program that was
     /// already there. Per lookup, two nodes: the index — a `map_values` the plan may already have,
-    /// so two joins on one collection share one index by the hash-consing that already exists
-    /// (§99.5 decision 4) — and the join, taking the previous join's rows on its left. Then one loop
-    /// over the last one's rows.
+    /// or an `arrange_by` built for the purpose — and the join, taking the previous join's rows on
+    /// its left. Then one loop over the last one's rows.
+    ///
+    /// Both indexes are [`Builder::shared`], so two joins that want the same one get the same node
+    /// (§99.5 decision 4). For `arrange_by` that needs the key function to be part of the sharing
+    /// key, and [`crate::relate::fingerprint`] is what makes an expression into one.
     ///
     /// `Err` carries the reason nothing was rewritten, which the caller hangs on the operator that
     /// pays for it; `Err(None)` is the ordinary case of a loop that relates nothing.
@@ -1552,13 +1638,37 @@ impl Builder<'_> {
 
         let mut left = xs;
         for lookup in found.lookups {
-            let m = self.expr(&lookup.map, scope);
-            let index = self.shared(format!("map_values/{m}"), Op::MapValues, vec![m], None);
+            let over = self.expr(&lookup.over, scope);
+            let (index, matched) = match lookup.index {
+                crate::relate::Index::Unique => (
+                    self.shared(
+                        format!("map_values/{over}"),
+                        Op::MapValues,
+                        vec![over],
+                        None,
+                    ),
+                    Matching::Unique,
+                ),
+                crate::relate::Index::Grouped { by, param, answers } => {
+                    let name = format!("arrange_by/{over}/{}", crate::relate::fingerprint(&by));
+                    let key = Fun {
+                        code: lam(vec![param], by),
+                        captures: Vec::new(),
+                    };
+                    (
+                        self.shared(name, Op::ArrangeBy { key }, vec![over], None),
+                        match answers {
+                            crate::relate::Answers::Rows => Matching::Group,
+                            crate::relate::Answers::Count => Matching::Count,
+                        },
+                    )
+                }
+            };
             let key = Fun {
                 code: lam(vec![lookup.param], lookup.key),
                 captures: Vec::new(),
             };
-            left = self.push(Op::Join { key }, vec![left, index], None);
+            left = self.push(Op::Join { key, matched }, vec![left, index], None);
         }
         let join = left;
 

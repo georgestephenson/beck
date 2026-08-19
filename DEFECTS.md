@@ -116,3 +116,43 @@ runs with the driver still in force and passes for the wrong reason — [`docs/8
 §82.10's pattern, arrived at from the other direction. Checked both ways while this entry was
 written: two branches each prepending a bullet conflict with the file absent and merge clean with it
 present, so the gate goes red today and green on a fix.
+
+---
+
+## `corpus-wide-counts-drift` — adding a program silently falsifies six documents
+
+**What is wrong.** Several documents quote a number derived from *the whole corpus*: how many
+definitions the native backends compile and refuse
+([`docs/93`](docs/93-the-native-backends-report.md), [`docs/08`](docs/08-roadmap.md) and
+[`docs/README`](docs/README.md) — "941 definitions compiled against 137 refused"), how many the
+WebAssembly emitter is measured against ([`docs/103`](docs/103-the-wasm-emitter-report.md),
+`docs/README` — "0 of the corpus's 195 definitions"), and how the corpus places
+([`docs/20`](docs/20-phase-2-report.md) — "353 placed definitions and signals", with a tier table).
+**Adding one program to `compiler/corpus/` changes every one of them, and nothing says so.**
+
+**It has already happened.** Those three figures were re-derived while `corpus/35-workload.beck` was
+being added and came back **963/137**, **208** and **362** *before* the new program — so 941, 195 and
+353 had been wrong since the corpus program before this one, in six places, through a merge. They now
+read 968, 213 and 362, which is this tree.
+
+**Why it is a defect rather than untidiness.** The numbers are the evidence for claims a reader acts
+on: 941-of-1078 is what "the heap is whole" is worth, and the tier table is Phase 2's exit
+measurement. A reader has no way to tell a figure that is current from one that is two corpus
+programs old, and the failure is silent in the direction that flatters — a stale count is always the
+smaller, older one. This is [`docs/82`](docs/82-the-edge-report.md) §82.10's shape in a document
+rather than in a gate.
+
+**Why it survives.** Every one of these numbers is printed by a **release-only measurement suite**
+(`measure_phase2`, `measure_native`, `wasm_backend`), and those are run by a person who remembers to.
+`docs.rs` gates that a link resolves, that a shell command runs and that every diagnostic the
+vulnerability matrix names exists — it does not gate a number.
+
+**The gate a fix owes**, and the hard part is not the assertion. It is that **a count has to be
+findable in prose**: a test cannot grep for `941` and know which document meant which quantity. So
+the fix is a marker convention — a quantity named where it is quoted, in a form a test can parse —
+plus a `docs.rs` test that re-derives each named quantity and asserts the documents agree. The
+re-derivation is cheap and needs no release build: compiled-versus-refused, corpus definitions and
+the placement tier table are all compile-time facts about the corpus, which is why this is worth
+gating rather than accepting. The gate goes red today only if it is written *before* the numbers
+above are corrected; written after, it needs the marker convention to be exercised by at least two
+documents quoting the same quantity, which the native count already does three times over.

@@ -116,7 +116,21 @@ fn corpus() -> Vec<(String, Placed)> {
         .filter(|p| p.extension().is_some_and(|e| e == "beck"))
         .collect();
     paths.sort();
-    let mut out = vec![("examples/todo.beck".to_string(), support::todo_program())];
+    // The board is here rather than only in the browser suite because it is the one program in
+    // the tree that compiles to `arrange_by` and to a join that answers with a *group* (docs/99
+    // §99.9 item 3). An operator the differential never runs is an engine arm nobody checks
+    // against recompute, and this is the harness that says so.
+    let board = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/board.beck");
+    let mut out = vec![
+        ("examples/todo.beck".to_string(), support::todo_program()),
+        (
+            "examples/board.beck".to_string(),
+            compile(
+                "board.beck",
+                &std::fs::read_to_string(&board).expect("the board example is readable"),
+            ),
+        ),
+    ];
     for path in paths {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let src = std::fs::read_to_string(&path).expect("a readable corpus program");

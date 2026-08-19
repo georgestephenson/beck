@@ -17,6 +17,189 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-19 — `h2` taken to 0.4.16, which is what RUSTSEC-2026-0258 asks for.**
+  `cargo deny`'s advisories check went red on `h2 0.4.15` — unbounded empty DATA frames, reachable
+  through `hyper` — in the `licences` job, with `bans`, `licenses` and `sources` all still green. The
+  advisory is new rather than newly noticed: nothing in this repository moved, and the same lockfile
+  fails on any branch that has it. The fix is the one the advisory names, `cargo update -p h2`, and
+  it is taken rather than muted: [`deny.toml`](compiler/deny.toml)'s `ignore` list is empty on
+  purpose and says why — an advisory is fixed at the root, not silenced beside it.
+
+- **2026-08-18 — The utility table, with Tailwind's own compiler as its oracle.**
+  [`docs/104`](docs/104-styling-and-the-component-library.md) §104.4's half of styling cluster item
+  4: take Tailwind's design system, refuse its delivery mechanism, and hold the accepted names
+  against Tailwind itself rather than against a table somebody typed in.
+  `beck_core::style::is_utility` knows **631 of 782** candidate names — layout, spacing, colour,
+  type, borders, flex and grid, with the variants in front of them — with **no unsound acceptance**
+  and every name Tailwind refuses refused here. The gate has three buckets and only two are
+  failures: a name Beck accepts that Tailwind refuses is a page missing a rule with every gate
+  green, a name Tailwind refuses that Beck accepts is the same error read the other way, and a
+  *gap* is counted and printed so a documented subset cannot quietly become the claim. The candidate
+  list is deliberately wider than the table, because a list written from the table would make the
+  row a restatement rather than a measurement.
+  **The oracle is committed, not run.** `compiler/style/generate.sh` asks Tailwind 4.3.3 about every
+  candidate and `compiler/style/expected/` holds the answer — [`clbg/`](compiler/clbg/README.md)'s
+  pattern, and for its reason: a gate that installs from a package registry fails when somebody
+  else's server does.
+  **Two things asking it caught that writing it down would not.** Tailwind 4's spacing scale is
+  multiplicative — `calc(var(--spacing) * n)` — so `p-2.75` and `gap-13.5` are rules and a table of
+  steps would have refused both; §104.4 named `p-[13px]` as the arbitrary case and did not say the
+  numeric scale is open too. And the **first generator was wrong**: it asked `grep -F ".rounded-ful"`
+  of Tailwind's output and got a hit from `.rounded-full`, so the exact misspelling §104.4 chose to
+  illustrate the point came back as a utility. It compares selectors as a set now. A generator that
+  reads its oracle wrongly is worse than no oracle, because the answer looks authoritative.
+  `beck explain style` now says of every class a page carries whether it is a utility or the
+  program's own, and a gate holds that this tree's semantic names — `done`, `mine`, `column` — are
+  **not** read as utilities, because a program's own names are the program's own. What is still not
+  built is the emitter: nothing writes CSS, `styles = none` does not exist, and `beck-rt/src/css.rs`
+  still serves its eight hard-coded rules, so the exit-table row this cluster exists to move is
+  unmoved.
+
+- **2026-08-18 — `class=` takes a list, and the compiler says which classes a page can carry.**
+  [`docs/08`](docs/08-roadmap.md) §8.5.4's styling cluster item 3 — the **F** everything else in that
+  half is behind ([`docs/104`](docs/104-styling-and-the-component-library.md) §104.4). A list where
+  HTML defines a space-separated value — `class`, `rel`, and the two ARIA id-list relationships — is
+  joined in the **`ui:` lowering** rather than at the seam, so what reaches the checker is one
+  `str_join` and no emitter had to learn anything; the three backends agree by construction. An
+  existing `class="a b"` is untouched and renders the characters it always did.
+  The surface is not decoration: `class=["btn", "primary" if hot else "plain"]` is what a program
+  writes instead of `"btn " + variant`, and the difference is that a list of alternatives can be
+  **enumerated** where a concatenation cannot — by Beck or by Tailwind's own scanner, which §104.3
+  measured over this tree reading English prose out of comments and missing a real utility behind a
+  module boundary. So `beck_core::style` enumerates every class that can reach a `class=`, following
+  a call and taking both arms of an `if`, which is the shape every dynamic class in this tree is
+  already written in: `examples/routed.beck` is `{done, here}`, `corpus/02-chat.beck` is
+  `{mine, theirs}`, and neither program was edited. `beck explain style` prints that set and, beside
+  it, every site where a class is *built* rather than named, with which of three reasons — a
+  concatenation, a value, or a shape the analysis does not enter — because a reader does something
+  different about each. Nothing is rejected: the report is what makes the set honest, and the escape
+  hatch a stylesheet emitter will need is a decision for the item that emits one.
+  `style.rs` is the harness, and it holds both directions of the lowering's table (a list in `class`
+  joins, a list in `title` does not) and that one computed class does not hide the ten beside it.
+  **What item 3 still owes is the `Class` type**, and it moved *behind* item 4 rather than in front:
+  a class name has nothing to be checked against until the utility table exists, and a type whose
+  checking is empty is a scaffold. §8.5.4 and §104.11 both say so now.
+
+- **2026-08-18 — The language gets a minimum, and the library stops sorting to find one.**
+  [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 6 named the blocker on `min`
+  and `max` per group as a **surface** rather than a delta rule: neither had a spelling the view
+  engine could recognise, because `lib/collections.beck`'s `min_of` was `list_get(sorted(xs), 0)` — a
+  sort and a copy of the whole list to answer a question about one element of it. `list_min` and
+  `list_max` are primitives now, one pass and no allocation, and the library's two are one line over
+  each. Neither takes a comparator, for `sort_by`'s reason one level down: ordering is the runtime's
+  structural one ([`docs/54`](docs/54-ordering.md)), so the smallest of a list needs nothing from the
+  caller, and `Option` says an empty list has no answer rather than raising. Over 64,000 elements the
+  library's minimum went from **151 ms of work above the baseline to 33 ms**
+  (`beck test` over a generated list, at 16,000 and 64,000).
+  `stdlib.rs::the_smallest_and_largest_are_the_runtimes_order_and_an_empty_list_has_neither` holds
+  the three decisions; `lib/collections.beck`'s own tests are unchanged and still pass, which is what
+  makes this a reimplementation rather than a new function.
+  **[`compiler/lib/README.md`](compiler/lib/README.md)'s division gains the row that was always
+  missing.** It admitted a primitive only for a host's table or grammar, and that never explained
+  `sort_by`, `filter_list` or `list_len` — every one of which is expressible in Beck and is a
+  primitive anyway. The third row says why: the incremental engine maintains what it can
+  **recognise**, and an aggregate written as a fold is one opaque operator recomputed in full.
+  §46.16's set-cost row is corrected to the amended rule, and a set operation is still neither.
+  §99.9's own design claim is corrected in the same change: the `arrange_by` keyed by `(group, value)`
+  makes a group's **minimum** the first entry of its range and `O(log n)`, and does **not** do the
+  same for its maximum — a `BTreeMap` prefix range is entered from its start and not its end, there
+  is no successor of an arbitrary `Value` to bound with, and Beck has no descending order to key by.
+  So `max` per group is a walk of the group or a maintained extreme with an `O(g)` repair, which is
+  the decision §99.9 opened by calling a genuine one, now known to bite one of the two rather than
+  both. Neither is built.
+
+- **2026-08-18 — The engine's counters can see inside an application, and two gates stopped looking
+  away.** [`DEFECTS.md`](DEFECTS.md)'s `work-cannot-see-inside-an-application`, opened earlier today
+  and closed here. `Work` counted what the engine did *to* its arrangements and stopped at the
+  boundary of a call, so `examples/board.beck` with the join refused reported the identical four
+  numbers at 200 cards and at 1,600 while its clock moved tenfold — and both of this session's shape
+  gates had to be written against something other than their own off switch, because the off switch
+  was invisible. `Backend` now carries a defaulted `steps()` in the shape `intercepting` and
+  `stack_bytes` already established: the tree-walker publishes what its calls spent of their own
+  evaluation budget, a compiling backend answers `None`, and `Prepared` takes the counter at prepare
+  time so `Engine::render` can subtract. `Work::steps` is that difference, deliberately **not** in
+  `Work::total` — it is a different unit by three orders of magnitude and would drown every gate that
+  reads the total.
+  `scaling.rs::the_work_a_render_reports_includes_what_happened_inside_it` asserts the blindness from
+  both ends: the four counters identical at either size, `steps` growing with the collection. Both
+  operator gates now measure `Relate::Refuse` directly, which is what §8.3 item 8 asks of an off
+  switch: **98 steps at 200 cards and at 1,600 against 12,830 and 101,030** for the join's index, and
+  **44 against 1,253 and 9,653** for the group's count. The variant-program contrast the aggregate
+  gate needed is gone; `measure_incremental` prints `steps` beside the clock, where the two now agree
+  about shape.
+
+- **2026-08-18 — A group's size is answered without building the group.**
+  [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's first aggregate, and the
+  leftover item 3 handed it: `arrange_by` turned the scan into an index probe and then materialised
+  the group in order to count it, so an event still cost the size of the pile it landed on. A
+  `list_len` over the same `filter_list` is now recognised as an aggregate rather than as a group —
+  `Matching::Count` — and the join keeps a tally per key beside its reverse index, moved by ±1 as the
+  index moves. `corpus/35-workload.beck` is the program it exists for: every person, and how many
+  issues name them, with the set of people coming from the data rather than written out. It copies
+  **one** entry out of an arrangement at 200 issues and at 1,600, against **202 and 1,602** for the
+  same page whose count is wrapped so the recogniser reads it as a group — same characters rendered,
+  one plan that builds the pile to measure it and one that does not; 2.8× then 4.9× on a clock
+  (`measure_incremental::what_counting_a_group_saves`).
+  `scaling.rs::counting_a_group_does_not_build_it` is the shape gate and carries that contrast in the
+  same run. The tally lives on the **join** rather than on the index, which is the finding worth
+  keeping: an operator reads its inputs' values and changes and never their private state, because an
+  index in the shared dataflow is not the reading engine's cell at all.
+  `incremental_engine.rs::a_maintained_count_per_group_survives_the_events_that_take_it_down` folds a
+  written log rather than a generated one, because whether a generated `Closed` names an issue that
+  exists is the seed's business and not the test's — deleting the decrement turns both red, which was
+  checked rather than assumed. §99.9 now also records that `min`/`max` per group are an `arrange_by`
+  keyed by `(group, value)` and therefore the **cheap** ones rather than the hard ones it first
+  called them, and that `sum` owes a decision per numeric type before an operator: a `Float` sum
+  cannot be maintained by subtraction at all, and an `Int` one can be arithmetically but passes
+  through different intermediate values from a recompute, which `checked_add` can turn into a
+  disagreement about whether the program failed.
+
+- **2026-08-18 — Six documents' corpus-wide counts were two programs out of date.**
+  `corpus/35-workload.beck` is the 35th corpus program, and adding one moves every figure derived
+  from the whole corpus. Re-deriving them found that three were already wrong *before* it:
+  the native backends compile **968** definitions against 137 refused, not 941
+  ([`docs/93`](docs/93-the-native-backends-report.md), [`docs/08`](docs/08-roadmap.md),
+  [`docs/README`](docs/README.md)); the WebAssembly emitter is measured against **213** corpus
+  definitions, not 195 ([`docs/103`](docs/103-the-wasm-emitter-report.md), `docs/README`); and the
+  corpus places **362** definitions and signals, not 353, with the tier table moved with it
+  ([`docs/20`](docs/20-phase-2-report.md)). All corrected in place, and
+  [`DEFECTS.md`](DEFECTS.md)'s `corpus-wide-counts-drift` records why it recurred — every one of
+  these numbers is printed by a release-only suite and gated by nobody — with the marker convention a
+  fix needs before a test can check prose against a measurement.
+
+- **2026-08-18 — `arrange_by`, and the join a filter already was.**
+  [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 3, and the program it named:
+  `examples/board.beck` renders three columns out of one map of cards, and each is
+  `filter_list(map_values(b.cards), lambda c: c.column == n)` inside a loop over the columns — a
+  many-to-one equi-join over an index nobody built, so the loop's function captured the accumulator
+  and every event re-scanned every card once per column. The recogniser now reads a `filter_list`'s
+  **predicate** the way it already read a `map_get`: an equality with one side over the filtered
+  element and one over the loop's is a key and a probe. `Op::ArrangeBy` builds the index — the same
+  arrangement `sort_by` builds, iterated there and probed here — and the join answers with the group,
+  which is the rows the predicate would have kept in the order the collection held them, because `==`
+  is the `Value` order the arrangement is a `BTreeMap` in. **4.5–4.9× less work per event at 200
+  cards and at 1,600** with the cards spread over the columns, **1.1×** with every card in the one
+  column the event touches: it removes the scan and leaves the group, which is §99.9 item 6's.
+  `scaling.rs::a_group_a_loop_filters_for_costs_the_group_and_not_the_collection` is the shape gate —
+  the group's size is paid and the collection's is not, at two sizes, with the growing case beside it
+  as the gate's own evidence it can fail — and the board joins `fusion.rs` and
+  `incremental_engine.rs`'s differentials, which is where a wrong group would show as a wrong page.
+  Rungs 0–1 of §99.8's ladder still did not come due, and §99.8 now says why rather than predicting
+  otherwise: a join inferred from a loop has the loop's order to preserve, so which side is the left
+  is fixed before any cost is consulted.
+
+- **2026-08-18 — The engine's counters cannot see inside an application, recorded as a defect.**
+  Found while measuring the above: with the join refused, `examples/board.beck` reports the *same*
+  `Work` — 3 applications, 3 touched, 3 materialised, 3 recomputed — at 200 cards and at 1,600, while
+  the clock over the same two renders goes from 2.3 ms to 21 ms, because the whole page is rebuilt
+  inside one per-element function and the engine counts one application for it. `beck explain cost`
+  is right about that plan and the counter is not, which makes every `scaling.rs` gate over an opaque
+  operator blind to exactly what an opaque operator can hide.
+  `measure_incremental::what_a_grouped_join_is_worth` prints the counters beside the clock so the two
+  disagree in public, and [`DEFECTS.md`](DEFECTS.md)'s `work-cannot-see-inside-an-application` names
+  the gate a fix owes — two plans that do the same work must report the same `Work` — and why it is a
+  `Backend` change rather than a line in the operator that found it.
+
 - **2026-08-17 — A red CI gate root-caused to its own denominator.**
   `measure_native.rs::what_an_appended_accumulator_costs_against_the_tree_walker` failed on CI for
   three runs and passed everywhere else, reporting "the ratio collapsed, which is what an append

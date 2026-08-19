@@ -27,15 +27,39 @@
 //! inlined before it is searched — but the *limit* is real and moved rather than removed, and
 //! [`Refusal`] is where it is named.
 //!
-//! # Why the index is `map_values` and not an `arrange_by`
+//! # The second shape: a filter that is a lookup into an index nobody built
 //!
-//! §99.9 item 3 schedules `arrange_by` — a second index over a collection, keyed by something other
-//! than its ordering key — before the join. The shape that actually occurs in the tree does not
-//! need one: the right side is a `Map` field of the accumulator, and
-//! [`crate::plan::Op::MapValues`]'s arrangement is *already* keyed by the map's key, which is the
-//! join key. So the index here is an operator that existed, and `arrange_by` lands with the first
-//! program whose right side is a list. Building it now would put an operator with a delta rule and
-//! no program into the engine, which is the hole [`crate::plan::OPERATORS`] exists to refuse.
+//! One `filter_list(xs, lambda y: g(y) == k(x))` inside the loop's body, where
+//!
+//! * `xs` reads only what the function **captured**, as above;
+//! * `g` reads only the **filtered** element, so it is a key the collection can be arranged by; and
+//! * `k` reads only the **loop's** element, so the probe is a function of the left row alone.
+//!
+//! That is the same equi-join with a different right side. `map_get`'s collection is a `Map` whose
+//! own key *is* the join key, so [`crate::plan::Op::MapValues`]'s arrangement already answers it and
+//! at most one row comes back. A filter's collection is keyed by something else entirely, so the
+//! index has to be built — [`crate::plan::Op::ArrangeBy`], §99.9 item 3 — and several rows share a
+//! key, so what comes back is the **group**.
+//!
+//! The group is the rows the predicate would have kept, in the order the collection held them,
+//! because the index's key is `g(y)` followed by the collection's own key and the probe takes the
+//! range under `g(y)`. That the two agree at all is a fact about `Prim::Eq` rather than a
+//! convention: `==` is [`crate::Value`]'s own total order compared for equality, which is the order
+//! the arrangement is a `BTreeMap` in.
+//!
+//! **What this does not do, stated here because the operator's name promises more.** The group is a
+//! `list`, because the expression it replaced was one and its consumer loops over it. So a row
+//! added to a group rebuilds *that group's* list and no other — the scan over the whole collection
+//! is gone and the capture with it, but the group's own size is still paid. Removing that is
+//! `group by` (§99.9 item 6), which is why item 6 follows this one rather than standing beside it.
+//!
+//! # The third shape, which is the second one asked a different question
+//!
+//! `list_len(filter_list(xs, lambda y: g(y) == k(x)))` is the same equi-join again, and what differs
+//! is only what a probe returns: a number rather than the rows. Nothing about the index changes, so
+//! this is a field of the grouped shape ([`Answers`]) rather than a shape of its own — and it is the
+//! first of §99.9 item 6's aggregates, the one the language already had a spelling for. A group that
+//! is only ever counted is never built, which is what [`crate::plan::Matching::Count`] is for.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -60,13 +84,50 @@ pub const ROW: &str = "Join";
 
 /// One lookup, as the join that answers it.
 pub struct Lookup {
-    /// The collection to index, in the caller's variables: the first argument of the `map_get`.
-    pub map: Core,
+    /// The collection to index, in the caller's variables: the first argument of the `map_get` or
+    /// of the `filter_list`.
+    pub over: Core,
     /// The join key, over the row the *previous* join in the chain produced — over the element
     /// itself for the first. This is the `Fun` body of [`crate::plan::Op::Join`].
     pub key: Core,
     /// The parameter `key` is written over.
     pub param: VarId,
+    /// Which index answers it, and therefore what one probe returns.
+    pub index: Index,
+}
+
+/// The index a lookup is answered from — the one difference between the two shapes recognised.
+#[derive(Clone, Debug)]
+pub enum Index {
+    /// `map_get(m, k(x))`: the collection is a `Map` whose own key is the join key, so the index is
+    /// the [`crate::plan::Op::MapValues`] arrangement that already exists and hash-consing shares
+    /// it with every other reader of the same collection. At most one row answers.
+    Unique,
+    /// `filter_list(xs, lambda y: by(y) == k(x))`: nothing keys `xs` by `by`, so the index is an
+    /// [`crate::plan::Op::ArrangeBy`] built for the purpose. Several rows share a key and the group
+    /// answers — either its rows or a question about them.
+    Grouped {
+        /// What the collection is arranged by, as a function of one of its own elements.
+        by: Core,
+        /// The parameter `by` is written over — the filtered element, not the loop's.
+        param: VarId,
+        /// What the body asked the group for.
+        answers: Answers,
+    },
+}
+
+/// What a body wanted from a group, which decides whether the group has to be built at all.
+///
+/// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6: an
+/// aggregate that builds the collection in order to measure it has done the work the question was
+/// avoiding. The two are recognised from the same `filter_list` — one wrapped in `list_len` and one
+/// not — which is why they are a field of one variant rather than two shapes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answers {
+    /// The rows. `filter_list(…)` on its own, whose value is a `list`.
+    Rows,
+    /// How many rows. `list_len(filter_list(…))`, whose value is an `Int` — and no list is built.
+    Count,
 }
 
 /// A loop whose body looked things up, taken apart.
@@ -103,12 +164,15 @@ pub struct Recognised {
 /// operator that pays for it rather than leaving a reader to guess which of the conditions failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refusal {
-    /// No `map_get` anywhere in the body: this loop relates nothing.
+    /// Nothing in the body that could relate: no `map_get` and no `filter_list`.
     NoLookup,
     /// The collection looked up in is derived per element, so there is nothing to index once.
-    MapReadsTheElement,
+    CollectionReadsTheElement,
     /// The key reads something other than the element, so it is not an equi-join on the left row.
     KeyReadsMoreThanTheElement,
+    /// The filter's predicate is not an equality with one side over each element, so there is no
+    /// key to arrange the collection by.
+    PredicateIsNotAnEquality,
     /// Recognising it would not remove the capture that costs the rebuild, so it buys nothing.
     NothingSaved,
 }
@@ -118,7 +182,7 @@ impl Refusal {
     pub fn because(&self) -> String {
         match self {
             Refusal::NoLookup => "its body relates nothing to the collection it loops over".into(),
-            Refusal::MapReadsTheElement => {
+            Refusal::CollectionReadsTheElement => {
                 "the collection it looks up in is derived from the element, so there is nothing to \
                  index once"
                     .into()
@@ -126,6 +190,11 @@ impl Refusal {
             Refusal::KeyReadsMoreThanTheElement => {
                 "the key it looks up by reads more than the element, so it is not an equi-join on \
                  the left row"
+                    .into()
+            }
+            Refusal::PredicateIsNotAnEquality => {
+                "the predicate it filters by is not an equality between a function of the row and \
+                 a function of the element, so there is no key to arrange the collection by"
                     .into()
             }
             Refusal::NothingSaved => {
@@ -170,7 +239,7 @@ pub fn recognise(
 
     // Each site tested on its own, and the first failure kept only in case *none* qualifies: a body
     // with one lookup this can index and one it cannot is still worth indexing once.
-    let mut chosen: Vec<(Vec<usize>, Core, Core)> = Vec::new();
+    let mut chosen: Vec<(Vec<usize>, Core, Core, Index)> = Vec::new();
     let mut why = Refusal::NoLookup;
     for site in &sites {
         // A lookup inside another one's arguments cannot qualify — its enclosing key would then read
@@ -182,31 +251,10 @@ pub fn recognise(
         {
             continue;
         }
-        let (map, key) = {
-            let at = follow(&body, site);
-            let CoreKind::Prim { args, .. } = &at.kind else {
-                unreachable!("a site is where a `map_get` is")
-            };
-            (args[0].clone(), args[1].clone())
-        };
-        // Resolved against the `let`s the inliner left, because an argument that was not cheap
-        // enough to substitute is bound rather than copied — so the map may be a variable standing
-        // for one.
-        let mut lets = BTreeMap::new();
-        collect_lets(&body, site, &mut lets);
-        let map = resolve(&map, &lets, DEPTH);
-        let key = resolve(&key, &lets, DEPTH);
-
-        let reads_map = reads(&map);
-        if reads_map.contains(&elem) || !reads_map.is_subset(captured) {
-            why = Refusal::MapReadsTheElement;
-            continue;
+        match qualify(&body, site, elem, defs, captured) {
+            Ok((over, key, index)) => chosen.push((site.clone(), over, key, index)),
+            Err(refused) => why = refused,
         }
-        if !reads(&key).is_subset(&BTreeSet::from([elem])) {
-            why = Refusal::KeyReadsMoreThanTheElement;
-            continue;
-        }
-        chosen.push((site.clone(), map, key));
     }
     if chosen.is_empty() {
         return Err(why);
@@ -219,7 +267,7 @@ pub fn recognise(
     let n = chosen.len();
     let answers: Vec<VarId> = (0..n as VarId).map(|k| fresh + 1 + k).collect();
     let mut rewritten = body;
-    for ((site, _, _), &answer) in chosen.iter().zip(&answers) {
+    for ((site, _, _, _), &answer) in chosen.iter().zip(&answers) {
         // Replacing a node with a variable changes no ancestor's arity and no sibling's path, and
         // the descendants that would have been invalidated were skipped above — so the order these
         // are applied in does not matter.
@@ -237,16 +285,17 @@ pub fn recognise(
     let lookups: Vec<Lookup> = chosen
         .into_iter()
         .enumerate()
-        .map(|(i, (_, map, key))| {
+        .map(|(i, (_, over, key, index))| {
             let param = fresh + 1 + n as VarId + i as VarId;
             let mut key = key;
             if i > 0 {
                 substitute(&mut key, elem, &spine(param, i));
             }
             Lookup {
-                map,
+                over,
                 key,
                 param: if i == 0 { elem } else { param },
+                index,
             }
         })
         .collect();
@@ -257,6 +306,113 @@ pub fn recognise(
         body,
         row,
     })
+}
+
+/// One site, as the index that answers it — or the condition that failed.
+///
+/// The two shapes differ only in where the join key on the right comes from, which is why they are
+/// one function: `map_get` is told the key by the collection it reads, and `filter_list` has to be
+/// read out of an equality. Everything else — that the collection is something the plan already
+/// holds, that the probe is a function of the loop's element alone — is the same condition twice.
+fn qualify(
+    body: &Core,
+    site: &[usize],
+    elem: VarId,
+    defs: &BTreeMap<Arc<str>, Def>,
+    captured: &BTreeSet<VarId>,
+) -> Result<(Core, Core, Index), Refusal> {
+    let at = follow(body, site);
+    // A `list_len` site is the `filter_list` under it, asked a different question. Everything below
+    // reads the filter, and only the answer differs.
+    let (at, answers) = match counts_a_filter(at) {
+        true => (
+            match &at.kind {
+                CoreKind::Prim { args, .. } => &args[0],
+                _ => unreachable!("`counts_a_filter` matched a `Prim`"),
+            },
+            Answers::Count,
+        ),
+        false => (at, Answers::Rows),
+    };
+    let CoreKind::Prim { op, args } = &at.kind else {
+        unreachable!("a site is where a `map_get` or a `filter_list` is")
+    };
+    // Resolved against the `let`s the inliner left, because an argument that was not cheap enough
+    // to substitute is bound rather than copied — so the collection may be a variable standing for
+    // one.
+    let mut lets = BTreeMap::new();
+    collect_lets(body, site, &mut lets);
+
+    let over = resolve(&args[0], &lets, DEPTH);
+    let reads_over = reads(&over);
+    if reads_over.contains(&elem) || !reads_over.is_subset(captured) {
+        return Err(Refusal::CollectionReadsTheElement);
+    }
+    let only = |c: &Core, v: VarId| {
+        let r = reads(c);
+        r.contains(&v) && r.is_subset(&BTreeSet::from([v]))
+    };
+
+    if *op == Prim::MapGet {
+        let key = resolve(&args[1], &lets, DEPTH);
+        if !reads(&key).is_subset(&BTreeSet::from([elem])) {
+            return Err(Refusal::KeyReadsMoreThanTheElement);
+        }
+        return Ok((over, key, Index::Unique));
+    }
+
+    let Some((y, pred)) = lambda(&args[1], defs) else {
+        return Err(Refusal::PredicateIsNotAnEquality);
+    };
+    // A parameter that is also the loop's would make the two sides of the equality
+    // indistinguishable. `Core`'s variables are numbered per definition and the inliner renames
+    // above everything in sight, so this cannot happen — and a rewrite that is wrong about which
+    // element it read would be wrong silently, which is what makes it worth a line.
+    if y == elem {
+        return Err(Refusal::PredicateIsNotAnEquality);
+    }
+    // The predicate's own bindings join the ones in scope at the site: an equality written through
+    // a name is still an equality.
+    let mut inner = lets;
+    let pred = peel(&pred, &mut inner);
+    let CoreKind::Prim {
+        op: Prim::Eq,
+        args: sides,
+    } = &pred.kind
+    else {
+        return Err(Refusal::PredicateIsNotAnEquality);
+    };
+    let left = resolve(&sides[0], &inner, DEPTH);
+    let right = resolve(&sides[1], &inner, DEPTH);
+    // `==` is symmetric and a program may write it either way round, so which side is the index key
+    // is read from what each side *reads* rather than from its position.
+    let (by, key) = if only(&left, y) && only(&right, elem) {
+        (left, right)
+    } else if only(&right, y) && only(&left, elem) {
+        (right, left)
+    } else {
+        return Err(Refusal::PredicateIsNotAnEquality);
+    };
+    Ok((
+        over,
+        key,
+        Index::Grouped {
+            by,
+            param: y,
+            answers,
+        },
+    ))
+}
+
+/// An expression with its leading `let`s taken off and remembered.
+fn peel(c: &Core, lets: &mut BTreeMap<VarId, Core>) -> Core {
+    match &c.kind {
+        CoreKind::Let { var, value, body } => {
+            lets.insert(*var, (**value).clone());
+            peel(body, lets)
+        }
+        _ => c.clone(),
+    }
 }
 
 // -------------------------------------------------------------------------------------------
@@ -277,18 +433,31 @@ fn lambda(f: &Core, defs: &BTreeMap<Arc<str>, Def>) -> Option<(VarId, Core)> {
     }
 }
 
-/// Every `map_get` in an expression, as the path of child indices that reaches it.
+/// Every `map_get` and every `filter_list` in an expression, as the path of child indices that
+/// reaches it.
 ///
 /// A path rather than a pointer because the rewrite happens afterwards and has to reach the same
 /// node in a `&mut` walk; `Core` is a tree of boxes, so there is no id to hold on to.
+///
+/// A site inside a nested `lambda` is not found, because [`children`] does not enter one: a lookup
+/// there is a lookup per *call* of that function rather than per element.
+///
+/// A `list_len` counts as a site only when its argument is *syntactically* the `filter_list` it
+/// would otherwise be measuring. That is not a shortcut, it is what keeps the aggregate from
+/// swallowing the group: a site inside another one is skipped, so admitting every `list_len` would
+/// hide the `filter_list` under it behind an outer site that could not qualify. Written this way,
+/// the outer site exists exactly when the inner one would have qualified too. What it costs is a
+/// count written through a `let` — `g = filter_list(…)` then `list_len(g)` — which is recognised as
+/// the group rather than as the count, and is slower rather than wrong.
 fn lookups(c: &Core, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
     if matches!(
         &c.kind,
         CoreKind::Prim {
-            op: Prim::MapGet,
+            op: Prim::MapGet | Prim::FilterList,
             args
         } if args.len() == 2
-    ) {
+    ) || counts_a_filter(c)
+    {
         out.push(path.clone());
     }
     for (i, child) in children(c).into_iter().enumerate() {
@@ -296,6 +465,22 @@ fn lookups(c: &Core, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
         lookups(child, path, out);
         path.pop();
     }
+}
+
+/// Whether this node is `list_len(filter_list(xs, p))` — the count of a group, written out.
+fn counts_a_filter(c: &Core) -> bool {
+    let CoreKind::Prim {
+        op: Prim::ListLen,
+        args,
+    } = &c.kind
+    else {
+        return false;
+    };
+    args.len() == 1
+        && matches!(
+            &args[0].kind,
+            CoreKind::Prim { op: Prim::FilterList, args } if args.len() == 2
+        )
 }
 
 /// The `let` bindings that are in scope at a path, so an expression under it can be resolved.
@@ -513,6 +698,72 @@ fn substitute(c: &mut Core, v: VarId, to: &Core) {
     for child in children_mut(c) {
         substitute(child, v, to);
     }
+}
+
+/// An expression's shape as a string, so two that are the same expression share one index.
+///
+/// The plan's hash-consing keys on a string, and the collection alone is not enough for
+/// `arrange_by`: two joins over one collection by *different* keys are two indexes, and two by the
+/// same key are one. `Core` is not `Eq`, and the parts of it that are not the expression — spans,
+/// and the annotations [`crate::liveness`], [`crate::fields`] and [`crate::frames`] leave — would
+/// make two identical expressions look different, so this writes down what a reader would call the
+/// expression and nothing else.
+///
+/// Being wrong in the safe direction costs an index rather than an answer: two fingerprints that
+/// differ where the expressions agree build two indexes that hold the same thing.
+pub fn fingerprint(c: &Core) -> String {
+    let mut out = String::new();
+    write_fingerprint(c, &mut out);
+    out
+}
+
+fn write_fingerprint(c: &Core, out: &mut String) {
+    use std::fmt::Write;
+    match &c.kind {
+        CoreKind::Const(v) => {
+            let _ = write!(out, "c{v:?}");
+        }
+        CoreKind::Var(v) => {
+            let _ = write!(out, "v{v}");
+        }
+        CoreKind::Global(n) => {
+            let _ = write!(out, "g{n}");
+        }
+        CoreKind::Prim { op, .. } => {
+            let _ = write!(out, "p{}", op.name());
+        }
+        CoreKind::Field { name, .. } => {
+            let _ = write!(out, "f{name}");
+        }
+        CoreKind::Make { ty, variant, .. } => {
+            let _ = write!(out, "m{ty}.{}", variant.as_deref().unwrap_or(""));
+        }
+        CoreKind::Lam { params, body } => {
+            let _ = write!(out, "l{params:?}");
+            write_fingerprint(body, out);
+        }
+        CoreKind::Let { var, .. } => {
+            let _ = write!(out, "b{var}");
+        }
+        CoreKind::App { .. } => out.push('a'),
+        CoreKind::If { .. } => out.push('i'),
+        CoreKind::Match { .. } => out.push('s'),
+        CoreKind::With { fields, .. } => {
+            let _ = write!(
+                out,
+                "w{:?}",
+                fields.iter().map(|(n, _)| n).collect::<Vec<_>>()
+            );
+        }
+        CoreKind::ListLit(_) => out.push('['),
+        CoreKind::MapLit(_) => out.push('{'),
+    }
+    out.push('(');
+    for child in children(c) {
+        write_fingerprint(child, out);
+        out.push(',');
+    }
+    out.push(')');
 }
 
 // -------------------------------------------------------------------------------------------

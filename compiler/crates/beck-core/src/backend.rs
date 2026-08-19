@@ -80,6 +80,34 @@ pub trait Interceptor: Send + Sync {
     fn intercept(&self, name: &str, args: &[Value]) -> Option<Value>;
 }
 
+/// A backend's running count of what it has executed, if it keeps one.
+///
+/// # Why the seam carries this at all
+///
+/// [`crate::engine::Work`] counts what the *engine* does — functions applied, arrangement entries
+/// moved, pointwise operators re-evaluated — and one application is one application whatever that
+/// application goes on to do. When a plan's per-element function is a whole page, the counters say
+/// three and the clock says tenfold, and the failure is silent and flatters the plan that hides the
+/// most: every shape gate over an opaque operator was blind to exactly the pessimisation an opaque
+/// operator can hide.
+///
+/// The count has to come from whatever executed the code, so it comes through here. It is a
+/// **count**, not a duration, for the reason every other number a gate asserts on is:
+/// [`docs/13`](../../../../../docs/13-testing.md) §13.7 says a shared runner cannot hold a timing
+/// gate honestly.
+///
+/// # What a step is, and what it is not
+///
+/// Deliberately unspecified across backends. The tree-walker's is its own evaluation budget — a
+/// node, plus a charge per element for a primitive whose work is proportional to a length the
+/// caller chose — so it is *comparable between two runs of the same backend* and means nothing
+/// between two backends. A gate that reads it is asking "did this plan do more work than that
+/// one", never "how long did it take".
+pub trait Steps: Send + Sync {
+    /// Steps this backend has executed since it was created, monotonically.
+    fn taken(&self) -> u64;
+}
+
 /// A way to execute `Core`.
 pub trait Backend: Send + Sync {
     /// What to call this in a diagnostic or on a dashboard. Two backends running differentially
@@ -117,5 +145,15 @@ pub trait Backend: Send + Sync {
     /// it was handed is how it finds out without one.
     fn stack_bytes(&self) -> usize {
         0
+    }
+
+    /// This backend's step counter, if it keeps one — see [`Steps`].
+    ///
+    /// `None` — the default — is the honest answer for a backend that compiles to machine code and
+    /// has nothing to count without instrumenting what it emitted. A caller that needs the number
+    /// says so by refusing rather than by reading a zero as "no work", which is the failure this
+    /// exists to end.
+    fn steps(&self) -> Option<Arc<dyn Steps>> {
+        None
     }
 }

@@ -10,7 +10,7 @@
 <header><a href="../index.html">beck</a><span> / module <code>collections</code></span></header>
 <main>
 <h1>Module <code>collections</code></h1>
-<p class="muted">Interface digest <code>7085352daccdfe513d777dd72b71f0e1</code> · 12/30 published names documented</p>
+<p class="muted">Interface digest <code>7085352daccdfe513d777dd72b71f0e1</code> · 13/30 published names documented</p>
 <h2>Types</h2>
 <h3 id="set">Set</h3>
 <pre><code>type Set = newtype[Map[?1000000, Bool]]</code></pre>
@@ -105,6 +105,14 @@ same id is the one that is true. A caller who wants the first reverses the list.
 <h3 id="min_of">min_of</h3>
 <pre><code>min_of[T](xs: list[T]) -&gt; Option[T]</code></pre>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>
+<p>The smallest and largest, in one pass.</p>
+<p>These were `list_get(sorted(xs), 0)` and its mirror, which is `n log n` and a copy of the whole
+list to answer a question about one element of it. `list_min` and `list_max` are primitives for
+the reason the rest of the collection algebra is: the incremental view engine maintains what it
+can see, and an aggregate written as a sort is a sort (`docs/99` §99.9 item 6).</p>
+<p>Neither takes a comparator, for `sort_by`'s reason one level down: a caller who wants the
+smallest *by* something has a key, and `sort_by` plus a head is that. What these answer is the
+smallest, which `Value`'s own total order already decides.</p>
 <h3 id="no_ints">no_ints</h3>
 <pre><code>no_ints() -&gt; list[Int]</code></pre>
 <p><span class="tag">def</span><span class="tag">on any</span><span class="muted">no effects</span></p>

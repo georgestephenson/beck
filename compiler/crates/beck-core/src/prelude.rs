@@ -640,6 +640,25 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
             Prim::ListIsEmpty,
             poly(&[A], fun(vec![Ty::list(v(A))], bool_.clone())),
         ),
+        // The two aggregates that have no comparator, for the same reason `sort_by` takes a *key*
+        // rather than one: [`crate::Value`]'s order is total over every value a program can build
+        // ([`docs/54`](../../../../../docs/54-ordering.md)), so the smallest of a list is a
+        // question that needs nothing from the caller. A caller that wants the smallest *by*
+        // something sorts by that key and takes the head, which is what `lib/collections.beck`
+        // offers over these.
+        //
+        // `Option` rather than a failure: an empty list has no smallest element and that is an
+        // ordinary answer rather than an error, which is `list_get`'s decision one line up.
+        (
+            "list_min",
+            Prim::ListMin,
+            poly(&[A], fun(vec![Ty::list(v(A))], Ty::option(v(A)))),
+        ),
+        (
+            "list_max",
+            Prim::ListMax,
+            poly(&[A], fun(vec![Ty::list(v(A))], Ty::option(v(A)))),
+        ),
         // §3.2, verbatim: `map : (list[a], (a -> b ! e)) -> list[b] ! e`. Mapping a function that
         // touches the dom over a list touches the dom; mapping a pure one does not.
         (

@@ -585,6 +585,14 @@ enum Explain {
     /// fold already holds and the arrangement the view engine already maintains, projected — so
     /// this is the shape of the relations `beck run --pgwire` serves rather than a migration.
     Sql { file: PathBuf },
+    /// Every class the program's pages can carry, and every place one is built rather than named
+    /// (`docs/104` §104.4).
+    ///
+    /// The compiler resolved the program, so it knows the strings that can reach a `class=` —
+    /// across a module boundary, and without a scanner or a safelist. What it prints is that set,
+    /// and the sites where a class is assembled at run time instead, which are the ones a
+    /// stylesheet emitted from this could not cover.
+    Style { file: PathBuf },
     /// The infrastructure the program's effects imply (§6.5).
     Deploy { file: PathBuf },
     /// What a diagnostic code means — `beck explain error B0341`.
@@ -1697,6 +1705,14 @@ fn explain(what: Explain) -> Result<()> {
             print!("{}", schema.ddl());
             Ok(())
         }
+        Explain::Style { file } => {
+            let placed = compiled(&file)?;
+            print!(
+                "{}",
+                explain_style(&beck_core::style::classes(&placed.program))
+            );
+            Ok(())
+        }
         Explain::Deploy { file } => {
             let placed = compiled(&file)?;
             print!("{}", beck_infra::graph(&placed).explain());
@@ -1704,6 +1720,64 @@ fn explain(what: Explain) -> Result<()> {
         }
         Explain::Error { code } => docs::explain_error(&code),
     }
+}
+
+/// What `beck explain style` prints.
+///
+/// Two halves and the second is the one worth reading: a set of names is what a stylesheet needs,
+/// and a list of places the set is incomplete is what stops the first from being a claim
+/// (`docs/104` §104.4).
+fn explain_style(styles: &beck_core::style::Styles) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "every class this program's pages can carry (§104.4), worked out from the program\nrather than scanned for.\n"
+    );
+    if styles.classes.is_empty() {
+        let _ = writeln!(out, "  none — no `class=` reaches a page");
+    }
+    let mut utilities = 0usize;
+    for class in &styles.classes {
+        let known = beck_core::style::is_utility(class);
+        utilities += usize::from(known);
+        let _ = writeln!(
+            out,
+            "  {class:<28} {}",
+            if known {
+                "a utility"
+            } else {
+                "this program's own"
+            }
+        );
+    }
+    let _ = writeln!(
+        out,
+        "\n  {} class{}, from every `class=` in the program and everything it calls.\n  {utilities} of them are utilities this compiler knows the name of; the rest are yours,\n  and a stylesheet for those is a stylesheet you write (§104.4).",
+        styles.classes.len(),
+        if styles.classes.len() == 1 { "" } else { "es" }
+    );
+    if styles.dynamic.is_empty() {
+        let _ = writeln!(
+            out,
+            "  Nothing is assembled at run time, so a stylesheet emitted from this set is\n  complete."
+        );
+        return out;
+    }
+    let _ = writeln!(
+        out,
+        "\nbuilt rather than named, so this set does not cover them"
+    );
+    for d in &styles.dynamic {
+        let _ = writeln!(out, "  in `{}`: {}", d.in_def, d.because.because());
+    }
+    let _ = writeln!(
+        out,
+        "\n  {} such site{}. A stylesheet emitted from the set above would be missing whatever\n  these evaluate to — which is the failure a scanner makes silently and this does not.",
+        styles.dynamic.len(),
+        if styles.dynamic.len() == 1 { "" } else { "s" }
+    );
+    out
 }
 
 /// `beck run`, on a runtime whose worker threads have the evaluator's stack.

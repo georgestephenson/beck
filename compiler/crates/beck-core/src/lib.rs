@@ -51,6 +51,7 @@ pub mod secure;
 pub mod signal;
 pub mod split;
 pub mod stdlib;
+pub mod style;
 pub mod testing;
 pub mod ty;
 

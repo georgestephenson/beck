@@ -325,6 +325,33 @@ fn sorting_is_stable_and_a_compound_value_orders_structurally() {
     );
 }
 
+/// `list_min` and `list_max` answer over the runtime's own order, and an empty list has no answer.
+///
+/// They are primitives rather than a file here, which is the third row of
+/// [`lib/README.md`](../../../lib/README.md)'s division: a combining form the view engine has to
+/// recognise. That makes their *behaviour* the library's business anyway, because
+/// `lib/collections.beck`'s `min_of` and `max_of` are one line over each and were a full sort
+/// before.
+///
+/// Three things, and each is a decision somebody could have taken differently: an empty list is
+/// `None` rather than a failure (`list_get`'s decision); neither takes a comparator, so what they
+/// answer is decided by [`54`](../../../../docs/54-ordering.md)'s structural order and not by the
+/// caller; and that order reaches every value a program can build, so a list of records or of
+/// `Option`s has a smallest element for the same reason a list of `Int`s does.
+#[test]
+fn the_smallest_and_largest_are_the_runtimes_order_and_an_empty_list_has_neither() {
+    expect_beck(
+        "    expect list_min([3, 1, 2]) == Some(value=1)\n\
+         \x20   expect list_max([3, 1, 2]) == Some(value=3)\n\
+         \x20   expect list_min(list_take([1], 0)) == None\n\
+         \x20   expect list_max(list_take([1], 0)) == None\n\
+         \x20   expect list_min([\"bb\", \"a\", \"cc\"]) == Some(value=\"a\")\n\
+         \x20   expect list_min([Some(value=2), None]) == Some(value=None)\n\
+         \x20   expect list_min([1]) == Some(value=1)",
+        "extremes",
+    );
+}
+
 /// And a record orders by its field **names**, not by the order they were declared in.
 ///
 /// A value carries its fields and not its declaration, so there is nothing else at runtime to sort

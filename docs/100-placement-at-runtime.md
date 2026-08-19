@@ -325,7 +325,7 @@ model Measurement:
     fold_p95_us: Int         # beck_rt::telemetry already records each of these
     view_p95_us: Int
     diff_p95_us: Int
-    work: Work               # applications, touched, materialised, recomputed
+    work: Work               # applications, touched, materialised, recomputed, steps
     entries: Int             # the arrangements' own sizes — exact, per §99.8
 ```
 
@@ -413,9 +413,12 @@ aspirations:**
 > The controller's fold cost must stay under **1%** of the application's, at two window sizes so the
 > shape is visible rather than one point, and asserted in `Work` rather than in nanoseconds.
 
-The unit matters: `Work { applications, touched, materialised, recomputed }` is an integer the engine
-already counts, so the ratio is deterministic and reproducible on any machine, where a wall-clock
-assertion on a shared runner is the flaky gate [`13`](13-testing.md) §13.7 warns against. The
+The unit matters: `Work { applications, touched, materialised, recomputed, steps }` is an integer the
+engine already counts, so the ratio is deterministic and reproducible on any machine, where a
+wall-clock assertion on a shared runner is the flaky gate [`13`](13-testing.md) §13.7 warns against.
+The last field is the one to assert a *controller's* cost in: the first four are what the engine did
+to its arrangements and a controller's fold is one call, so a budget written against them would be
+satisfied by anything that ran inside one. The
 nanoseconds above size the budget; they are not the thing asserted — the same division of labour
 [`99`](99-the-data-tier-means-of-combination.md) §99.8 makes between a number that ranks candidates
 and a number that decides between them.

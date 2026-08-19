@@ -23,9 +23,10 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`DEFECTS.md`](DEFECTS.md) | **What is wrong right now.** Something that behaves wrongly — silent, misleading, or contrary to what a document says. An entry is deleted by the change that fixes it, so the file is always the current list; something merely *absent* is a line in [`docs/08`](docs/08-roadmap.md) §8.5 instead |
 | [`compiler/`](compiler/) | The compiler, the runtime, and the standard library. Where new work goes |
 | [`compiler/lib/`](compiler/lib/README.md) | The standard library's Beck half |
-| [`compiler/corpus/`](compiler/corpus/) | 34 programs carrying **no placement annotations** — Phase 2's exit measurement |
+| [`compiler/corpus/`](compiler/corpus/) | 35 programs carrying **no placement annotations** — Phase 2's exit measurement |
 | [`compiler/sicp/`](compiler/sicp/) | The expressiveness benchmark ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5) |
 | [`compiler/awfy/`](compiler/awfy/README.md), [`compiler/clbg/`](compiler/clbg/README.md) | The performance benchmarks — somebody else's programs, verified against somebody else's constants |
+| [`compiler/style/`](compiler/style/README.md) | The utility table's oracle — Tailwind's own verdict on a candidate list, committed rather than re-run ([`docs/104`](docs/104-styling-and-the-component-library.md) §104.4) |
 | [`compiler/xlang/`](compiler/xlang/README.md) | One program in six languages — the only place a Beck number sits beside another language's ([`docs/93`](docs/93-the-native-backends-report.md) §93.5) |
 | [`phase0/`](phase0/) | **History.** The output the compiler now generates, hand-written in Rust once so the architecture could be measured. Do not edit it to track the compiler |
 | [`release/`](release/README.md), [`install.sh`](install.sh) | The parts of a release a person can execute, kept out of `.github/workflows/release.yml` on purpose — a tag-triggered workflow is the one artefact that cannot be run before it is used ([`docs/92`](docs/92-supply-chain-and-release-report.md) §92.8) |
@@ -188,7 +189,7 @@ different claims.**
 the differential, replay-determinism, backend-seam, scaling, frames, security, pending-security,
 corpus, placement-property, patterns, general-slicer, incremental-analysis, incremental-engine,
 fusion,
-shared-arrangement, subscription, view-metrics, read-model, SICP, Are We Fast Yet, Benchmarks Game,
+shared-arrangement, subscription, view-metrics, read-model, style, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
 mode-B, browser, client, playground, identity, OIDC, presence, cranelift, wasm-backend, release and

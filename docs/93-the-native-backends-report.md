@@ -13,7 +13,7 @@ out of date rather than made true again by §93.12: `validate` reaches none of t
 that section is about. **All thirty-four** corpus programs compile their `apply_event` — the step
 function of a `durable` fold — and **twenty-four of thirty-four** compile their `view`
 (`BECK_REQUIRE_LLVM=1 cargo test --release --test native -- --nocapture`, re-read 2026-08-17; the
-figures this replaces were 941, nine and twenty-one of thirty-two, and both the numerator and the
+figures this replaces were 968, nine and twenty-one of thirty-two, and both the numerator and the
 corpus have grown since).
 
 This chapter is the whole of Lane E. It arrived in fifteen pieces over as many changes, and for
@@ -450,7 +450,7 @@ Each row is one change. "Compiled" is the total of `beck native <file>`'s own tw
 | 12 | **A generic definition**, once per type it is used at | 870 † | A bounded search that gives up should give up on the **whole thing** — sixty-four individually true refusals said nothing together (§93.10) |
 | 13 | **The four primitives that ask the host** — `now()`, `uuid()`, `secret_env`, `http_fetch` | 889 | The lane row was one item and the work was two: `secret[T]` had no layout, which is what had made `HttpRequest` unlayoutable too. And a limit on compiled *time* is not a limit on a *call* (§93.11) |
 | 14 | **A list pattern**, `case [first, *rest]` — the last pattern form either emitter refused | 905 | The refusal it replaced had been false for three reports, and the gate written for exactly this class **could not fire**, because the sentence named no type (§93.9) |
-| 15 | **The runtime library.** Fifteen primitives that are a table, a grammar or somebody else's parser, linked rather than emitted or asked for (§93.12) | **941** | An emitter's `Bool` arm that had never executed, because none of row 13's four primitives answers one |
+| 15 | **The runtime library.** Fifteen primitives that are a table, a grammar or somebody else's parser, linked rather than emitted or asked for (§93.12) | **968** | An emitter's `Bool` arm that had never executed, because none of row 13's four primitives answers one |
 
 † Rows 11–13 are counted over a different file set from row 10 and from each other, as the refusal
 profile was re-measured; the delta within each row is a delta between two runs of one command, which
@@ -1150,7 +1150,7 @@ anything but a benchmark uses this backend, and it is the first thing a second v
 opposite direction from the WebAssembly a browser needs — Wasmtime uses Cranelift to compile wasm, not to
 produce it — so it is a **third** emitter against a wasm target, and it is written. What it shares with
 this chapter is the monomorphiser, the trap codes, the layout module and these fixtures; what it does not
-share is the heap, which it does not lay out, so it compiles **0 of the corpus's 195 definitions**.
+share is the heap, which it does not lay out, so it compiles **0 of the corpus's 213 definitions**.
 [`94`](94-the-client-report.md) §94.12's measurement still says what a finished one would buy: a code
 generator divides the constant and leaves the growth.
 
