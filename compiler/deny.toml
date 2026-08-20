@@ -41,10 +41,32 @@ deny = []
 
 [advisories]
 yanked = "deny"
-# Empty, and it should stay that way: an advisory is fixed at the root — by dropping the feature
-# or the dependency that pulls it in — rather than muted here. `postcard`'s default features were
-# removed for exactly this reason (RUSTSEC-2023-0089 via heapless → atomic-polyfill).
-ignore = []
+# An allowance that has outlived its reason is the failure mode a one-entry `ignore` list invites:
+# the crate moves on, nobody deletes the line, and the next yank of the same crate is waved through
+# by a permission granted for something else. `cargo-deny` notices — it reports `yanked-not-detected`
+# when an ignore entry matches nothing — but as a warning, which no CI job reads. This makes it a
+# denial, so the entry below stops the build the day it stops being needed.
+unused-ignored-advisory = "deny"
+# An advisory is fixed at the root — by dropping the feature or the dependency that pulls it in —
+# rather than muted here. `postcard`'s default features were removed for exactly this reason
+# (RUSTSEC-2023-0089 via heapless → atomic-polyfill). This list was empty until the entry below,
+# which is a *yank*, not an advisory, and is the one case where fixing at the root is the unsafe
+# move.
+#
+# `arrayref 0.3.9` was yanked from crates.io on 2026-08-20 and this gate went red the same day. The
+# fix `cargo-deny` itself suggests — `cargo update -p arrayref` — resolves to **0.3.10, which is
+# malicious**: it adds a normal dependency on `proc-macro1`, a name one character from
+# `proc-macro2`, published at `proc-macro2`'s own latest version numbers (1.0.106 and 1.0.107 are
+# the only two it has ever had) and copying its feature set exactly. That crate declares `ureq`,
+# `rustls` and `base64` as **build** dependencies, so an HTTP client and a TLS stack run inside a
+# build script during compilation. `arrayref` is two hundred lines of macros for taking array
+# references and 0.3.9 has no runtime dependencies at all.
+#
+# So the yanked version is the safe one and the current one is the attack. We hold 0.3.9 — reached
+# through `blake3` — and this entry is what lets the gate stay `deny` for everything else.
+# `DEFECTS.md::arrayref-is-pinned-to-a-yanked-version` is the reminder to delete it, and names what
+# has to be true first.
+ignore = [{ crate = "arrayref@0.3.9", reason = "0.3.10 depends on the proc-macro1 typosquat, which runs ureq in a build script; 0.3.9 is the last clean release" }]
 
 [sources]
 unknown-registry = "deny"

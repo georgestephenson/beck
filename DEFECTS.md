@@ -120,6 +120,47 @@ the all-literal case is folded. The second is the smaller change and covers the 
 
 ---
 
+## `arrayref-is-pinned-to-a-yanked-version` — the safe version of a dependency is the withdrawn one
+
+**What is wrong.** `compiler/Cargo.lock` holds `arrayref 0.3.9`, which crates.io **yanked** on
+2026-08-20, and [`deny.toml`](compiler/deny.toml) carries the only entry in its `advisories.ignore`
+list to keep the `licences` job green. A yanked dependency is a dependency nobody upstream is
+maintaining, and holding one deliberately is a state to leave, not to settle in.
+
+**Why it is not simply updated**, which is the whole entry. `cargo-deny`'s own suggested fix —
+`cargo update -p arrayref` — resolves to **0.3.10, which is malicious**. From the registry index:
+
+| version | yanked | dependencies |
+|---|---|---|
+| `0.3.9` | yes | none at runtime (`quickcheck`, dev only) |
+| `0.3.10` | no | **`proc-macro1 ^1.0.107`**, a normal dependency |
+
+`proc-macro1` is one character from `proc-macro2`. It has exactly two published versions, 1.0.106
+and 1.0.107, which are `proc-macro2`'s own latest two; it copies `proc-macro2`'s feature set
+(`proc-macro`, `nightly`, `span-locations`) and its single normal dependency (`unicode-ident`); and
+it declares `base64`, `rustls` and **`ureq`** as *build* dependencies, so an HTTP client and a TLS
+stack are linked into a build script that runs at compile time. `arrayref` is about two hundred
+lines of macros for taking a reference to a sub-array. It reaches this tree through `blake3`.
+
+Running the suggested fix here produced a lock file 283 lines larger, pulling in `ureq`, `url`,
+`webpki-roots` and the whole ICU stack, which is what made it obvious. **Nothing was built with it**
+and the `.crate` for 0.3.10 was never downloaded.
+
+**The gate, which exists.** What has to go red is the ignore entry **outliving its reason** — the
+crate moves on, nobody deletes the line, and the next yank of the same crate is waved through by a
+permission granted for something else. `cargo-deny` reports `yanked-not-detected` when an ignore
+entry matches nothing, but as a *warning*, which no CI job reads; `deny.toml` now sets
+`unused-ignored-advisory = "deny"`, so it fails the build instead. Verified by pointing the entry at
+a crate that is not in the graph: `error[yanked-not-detected]` and `advisories FAILED`. So the day
+`arrayref@0.3.9` leaves this lock file, the `licences` job stops until somebody deletes the entry —
+which is this defect's own removal, enforced rather than remembered.
+
+**What has to be true to delete this.** Any one of: crates.io yanks 0.3.10; `arrayref` publishes a
+0.3.11 without the `proc-macro1` dependency; or `blake3` moves to something else. Until then the
+withdrawn version is the safe one, and that inversion is the reason this entry is long.
+
+---
+
 ## `union-merge-is-local-only` — every pull request that touches `CHANGELOG.md` reads as conflicting
 
 **What is wrong.** [`.gitattributes`](.gitattributes) sets `merge=union` on
