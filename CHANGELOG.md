@@ -17,29 +17,29 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
-- **2026-08-20 — `arrayref` is pinned to a yanked version, because the current one is malicious.**
-  The `licences` job went red on a yank, not an advisory: crates.io withdrew `arrayref 0.3.9`, which
-  reaches this tree through `blake3`. **The fix `cargo-deny` suggests is the attack.**
-  `cargo update -p arrayref` resolves to `0.3.10`, which adds a normal dependency on
+- **2026-08-20 — A malicious `arrayref` release, and the gate that saw the pin for it expire.**
+  The `licences` job went red on a yank rather than an advisory: crates.io withdrew `arrayref 0.3.9`,
+  which reaches this tree through `blake3`. **The fix `cargo-deny` suggests was the attack.**
+  `cargo update -p arrayref` resolved to `0.3.10`, which added a normal dependency on
   **`proc-macro1`** — one character from `proc-macro2`, with exactly two published versions (1.0.106
   and 1.0.107, `proc-macro2`'s own latest two), copying its feature set and its single normal
   dependency, and declaring `base64`, `rustls` and **`ureq` as build dependencies**: an HTTP client
   and a TLS stack running inside a build script at compile time. `arrayref` is two hundred lines of
   macros for taking a reference to a sub-array; 0.3.9 has no runtime dependencies at all.
-  What made it visible was the disproportion — the suggested one-crate update produced a lock file
-  **283 lines larger**, pulling in `ureq`, `url`, `webpki-roots` and the whole ICU stack. Nothing was
-  built with it and `arrayref-0.3.10.crate` was never downloaded.
-  So `deny.toml` holds `arrayref@0.3.9` as the only entry in `advisories.ignore`, with the reasoning
-  written where the next person meets it, and the comment claiming that list is "empty, and it should
-  stay that way" is corrected rather than left to contradict the file it is in.
-  `DEFECTS.md::arrayref-is-pinned-to-a-yanked-version` says what has to become true to delete the
-  entry: crates.io yanking 0.3.10, an `arrayref` without the dependency, or `blake3` moving off it.
-  **And the allowance cannot outlive its reason.** `cargo-deny` reports `yanked-not-detected` when an
-  ignore entry matches nothing, but as a warning no CI job reads, so `deny.toml` now sets
-  `unused-ignored-advisory = "deny"` — verified by pointing the entry at a crate that is not in the
-  graph, which turns `advisories` red. The day `arrayref@0.3.9` leaves the lock file the `licences`
-  job stops until somebody deletes the line, so the pin's removal is enforced rather than
-  remembered.
+  What made it visible was the disproportion — that one-crate update produced a lock file **283 lines
+  larger**, pulling in `ureq`, `url`, `webpki-roots` and the whole ICU stack. Nothing was built with
+  it and `arrayref-0.3.10.crate` was never downloaded; the version facts were read from the registry
+  index.
+  So `arrayref@0.3.9` was held in `deny.toml`'s `advisories.ignore` — the yanked version being the
+  safe one and the current one the attack. **crates.io removed 0.3.10 and un-yanked 0.3.9 hours
+  later**, so the list is empty again and the lock file never moved: it holds the same `0.3.9` it
+  held before any of this.
+  **What is left is the gate.** `unused-ignored-advisory = "deny"` was added alongside the pin
+  because `cargo-deny` reports `yanked-not-detected` only as a warning, which no CI job reads. It
+  failed the build the moment the pin stopped being needed — which is how the entry came out the same
+  day rather than sitting there until the next yank of the same crate was waved through by a
+  permission granted for something else. A gate whose first firing is a true positive, on its first
+  day, is the argument for writing it at the same time as the thing it guards.
 
 - **2026-08-20 — Nine CI gates could not fail, and the sketch's restyle is what found them.**
   CI went red on the styling change: the workflow asserted `grep -q '<footer>0 remaining</footer>'`
