@@ -2006,6 +2006,27 @@ impl<'h> Interp<'h> {
                 };
                 Ok(found.cloned().map(Value::some).unwrap_or_else(Value::none))
             }
+            // The exact sum, which is a different function from folding `+` over the list and is
+            // meant to be: `+` raises on a partial total that does not fit even when the answer
+            // does, and this raises on the answer alone (`prelude::prims`). The accumulator is
+            // therefore wider than the answer, and `checked_add` on it rather than `+` because a
+            // sum this operator cannot reach is still not one it may wrap.
+            Prim::ListSum => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let xs = as_list(&v, op.name(), span)?;
+                self.burn_work(xs.len(), span)?;
+                let mut total: i128 = 0;
+                for x in xs.iter() {
+                    let n = as_int(x, op.name(), span)?;
+                    total = total
+                        .checked_add(i128::from(n))
+                        .ok_or_else(|| EvalError::new("`list_sum` overflowed", span))?;
+                }
+                i64::try_from(total)
+                    .map(Value::Int)
+                    .map_err(|_| EvalError::new("`list_sum` overflowed", span))
+            }
             Prim::ListIsEmpty => {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
@@ -2425,6 +2446,46 @@ mod tests {
         assert!(run(&prim(Prim::Neg, vec![int(i64::MIN)])).is_err());
         // …and the ordinary case still answers.
         assert_eq!(run(&prim(Prim::Neg, vec![int(7)])).unwrap(), Value::Int(-7));
+    }
+
+    /// **`list_sum` is the sum, and folding `+` is the fold** — which is the decision
+    /// `docs/99` §99.9 item 6 owed before a maintained `sum` could exist, gated where the two
+    /// functions are actually written.
+    ///
+    /// The middle assertion is the whole of it. `Int_MAX + Int_MAX` has no answer and `+` says so,
+    /// so a left fold over `[MAX, MAX, -MAX]` raises on its way to a total that fits perfectly
+    /// well. `list_sum` of the same list answers, because it is a function of the numbers and not
+    /// of the order they are added in — and *that* is what lets the view engine maintain a total by
+    /// adding what arrived and subtracting what left and still be held to the recomputed answer.
+    ///
+    /// So this is a conservative extension of `+` rather than a rival to it: strictly more lists
+    /// have an answer, and no list has a different one. The two outer assertions are that half —
+    /// the ordinary sum agrees, and a total that genuinely does not fit still raises.
+    #[test]
+    fn a_sum_is_its_answer_and_not_the_order_it_was_added_in() {
+        let list = |ns: &[i64]| {
+            Core::new(
+                CoreKind::ListLit(ns.iter().map(|&n| int(n)).collect()),
+                Ty::list(Ty::int()),
+                Span::NONE,
+            )
+        };
+        let sum = |ns: &[i64]| run(&prim(Prim::ListSum, vec![list(ns)]));
+
+        assert_eq!(sum(&[2, 3, 4]).unwrap(), Value::Int(9));
+        assert_eq!(sum(&[]).unwrap(), Value::Int(0), "the sum of no numbers");
+
+        // The list a left fold cannot survive and this answers.
+        assert!(run(&prim(Prim::Add, vec![int(i64::MAX), int(i64::MAX)])).is_err());
+        assert_eq!(
+            sum(&[i64::MAX, i64::MAX, -i64::MAX]).unwrap(),
+            Value::Int(i64::MAX)
+        );
+
+        // And a total no `Int` holds is still a failure, whatever order it is reached in.
+        assert!(sum(&[i64::MAX, 1]).is_err());
+        assert!(sum(&[1, i64::MAX]).is_err());
+        assert!(sum(&[i64::MIN, -1]).is_err());
     }
 
     /// A slice is charged what it **takes**, and never what the caller asked for.

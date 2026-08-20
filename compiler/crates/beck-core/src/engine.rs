@@ -169,6 +169,18 @@ struct Cell {
     /// when the last of them has left. The size is the group's *distinct* values, which is at most
     /// its rows and is usually far fewer.
     groups: BTreeMap<Value, BTreeMap<Value, u64>>,
+    /// `group_by`, for [`Agg::Sum`]: per group, its running total and how many rows carry it.
+    ///
+    /// Not [`Cell::groups`], and the difference is the operator's whole cost argument. A sum does
+    /// not care which distinct values its group holds, so keeping them would be memory and a tree
+    /// walk spent on a question nobody asked; a total moves by `+n` and `-n` and is read in `O(1)`.
+    /// The row count rides along because a total of `0` and *no rows at all* are different answers
+    /// — the first is a group, the second is a key the arrangement must not hold.
+    ///
+    /// Wider than the answer, for `list_sum`'s reason: the sum is exact and the failure is a
+    /// property of the total rather than of the order it was reached in, so the accumulator must be
+    /// able to hold what the answer cannot.
+    totals: BTreeMap<Value, (i128, u64)>,
 }
 
 /// What one [`Engine::render`] cost, in units that do not depend on the machine.
@@ -1174,13 +1186,26 @@ impl Engine {
         if matching == Matching::Count {
             return Ok(Value::Int(tally.get(jk).copied().unwrap_or(0) as i64));
         }
-        if matching == Matching::Unique {
+        if matching == Matching::Unique || matching == Matching::Total {
             let found = match self.out_of(up, index)? {
                 Out::Arr(a) => a.entries.get(&key_of(jk)).cloned(),
                 Out::Val(Value::Map(m)) => m.get(jk).cloned(),
                 Out::Val(_) => None,
             };
-            return Ok(found.map(Value::some).unwrap_or_else(Value::none));
+            if matching == Matching::Unique {
+                return Ok(found.map(Value::some).unwrap_or_else(Value::none));
+            }
+            return match found {
+                // The sum of no numbers, which is the one place this probe differs from the one
+                // above it: `list_min` of an empty group is `None` and `list_sum` of it is `0`.
+                None => Ok(Value::Int(0)),
+                Some(v) if v.as_int().is_some() => Ok(v),
+                // A group whose total no `Int` holds. [`Op::GroupBy`] published that instead of
+                // raising it so that a group nobody asks about cannot fail a render, which leaves
+                // the raise here — at the site that asked, where the recompute's own `list_sum`
+                // raises it, with the same words.
+                Some(_) => Err(sum_overflowed()),
+            };
         }
         let mut rows = Vec::new();
         // Only an arrangement can be probed by a range. The decomposition builds an `arrange_by`
@@ -1206,16 +1231,19 @@ impl Engine {
     /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's
     /// other two aggregates.
     ///
-    /// Per group, a multiset of what its rows projected to ([`Cell::groups`]); the aggregate is one
-    /// end of it. A row that arrived is one insert and one row that left is one removal, so the
-    /// operator costs `2δ` applications and `O(δ log n)` on the trees — the group is never
-    /// assembled and the collection is never scanned.
+    /// Per group, whatever its aggregate needs and no more: a multiset of what its rows projected
+    /// to for an extreme ([`Cell::groups`]), a running total for a sum ([`Cell::totals`]). A row
+    /// that arrived is one insert and one row that left is one removal, so the operator costs `2δ`
+    /// applications and `O(δ log n)` on the trees — the group is never assembled and the collection
+    /// is never scanned.
     ///
     /// **What it publishes is the change in the answer, not the change in the group.** A row added
     /// behind the extreme moves the multiset and not the aggregate, so no change is emitted and
     /// nothing downstream of this operator runs at all. That is the difference between an aggregate
     /// and a `filter_list` a consumer measures: the second reports every event that touched the
-    /// group, whether or not it changed the answer.
+    /// group, whether or not it changed the answer. [`Agg::Sum`] is the aggregate for which the
+    /// two coincide — a row that joins a group moves its total — so it is the one that never takes
+    /// that discount, and the operator's cost is the same either way.
     ///
     /// **`min` and `max` cost the same**, which §99.9 item 6 expected not to be true. The
     /// asymmetry it forecast is real of a *prefix range of somebody else's arrangement* — bounding
@@ -1256,8 +1284,10 @@ impl Engine {
         let mut arr = self.take_arrangement(id, rebuild);
         if rebuild {
             self.cells[id].groups.clear();
+            self.cells[id].totals.clear();
         }
         let mut groups = std::mem::take(&mut self.cells[id].groups);
+        let mut totals = std::mem::take(&mut self.cells[id].totals);
         let mut positions = std::mem::take(&mut self.cells[id].positions);
         // The groups whose multiset moved, so each is answered once however many of its rows did.
         let mut moved: BTreeSet<Value> = BTreeSet::new();
@@ -1265,7 +1295,18 @@ impl Engine {
         for c in incoming {
             if let Some(was) = positions.remove(&c.key) {
                 let (g, contributed) = (was[0].clone(), &was[1]);
-                if let Some(multiset) = groups.get_mut(&g) {
+                if agg == Agg::Sum {
+                    if let Some((total, rows)) = totals.get_mut(&g) {
+                        *total = total
+                            .checked_sub(contribution(contributed)?)
+                            .ok_or_else(sum_overflowed)?;
+                        // Saturating for the reason the multiset's decrement is, one arm down.
+                        *rows = rows.saturating_sub(1);
+                        if *rows == 0 {
+                            totals.remove(&g);
+                        }
+                    }
+                } else if let Some(multiset) = groups.get_mut(&g) {
                     if let Some(n) = multiset.get_mut(contributed) {
                         // Saturating for `Engine::join`'s reason: a row cannot leave a group it
                         // never joined, so the saturation is unreachable rather than defensive, and
@@ -1292,21 +1333,39 @@ impl Engine {
             args.push(v);
             let contributed = project(args)?;
             self.work.applications += 2;
-            *groups
-                .entry(g.clone())
-                .or_default()
-                .entry(contributed.clone())
-                .or_default() += 1;
+            if agg == Agg::Sum {
+                let entry = totals.entry(g.clone()).or_insert((0, 0));
+                entry.0 = entry
+                    .0
+                    .checked_add(contribution(&contributed)?)
+                    .ok_or_else(sum_overflowed)?;
+                entry.1 += 1;
+            } else {
+                *groups
+                    .entry(g.clone())
+                    .or_default()
+                    .entry(contributed.clone())
+                    .or_default() += 1;
+            }
             positions.insert(c.key, Arc::from(vec![g.clone(), contributed]));
             moved.insert(g);
         }
 
         let mut changes = Vec::new();
         for g in moved {
-            let now = groups.get(&g).and_then(|multiset| match agg {
-                Agg::Min => multiset.keys().next().cloned(),
-                Agg::Max => multiset.keys().next_back().cloned(),
-            });
+            let now = match agg {
+                Agg::Min => groups.get(&g).and_then(|m| m.keys().next().cloned()),
+                Agg::Max => groups.get(&g).and_then(|m| m.keys().next_back().cloned()),
+                // A total no `Int` holds is **published rather than raised**: this operator
+                // maintains every group and the recompute only ever sums the groups the loop
+                // reaches, so failing here would fail renders that never asked. The entry is not
+                // an `Int`, and [`Matching::Total`]'s probe is where that raises.
+                Agg::Sum => totals.get(&g).map(|&(total, _)| {
+                    i64::try_from(total)
+                        .map(Value::Int)
+                        .unwrap_or_else(|_| Value::none())
+                }),
+            };
             let out_key: Key = Arc::from(vec![g]);
             match now {
                 Some(v) => {
@@ -1335,6 +1394,7 @@ impl Engine {
         }
 
         self.cells[id].groups = groups;
+        self.cells[id].totals = totals;
         self.cells[id].positions = positions;
         if changes.is_empty() && !rebuild {
             self.cells[id].out = Out::Arr(arr);
@@ -2229,6 +2289,30 @@ fn inner_key(outer: &Key, i: usize) -> Key {
     let mut k: Vec<Value> = outer.to_vec();
     k.push(Value::Int(i as i64));
     Arc::from(k)
+}
+
+/// What one row contributes to its group's total, as the accumulator holds it.
+///
+/// An `Int` by typing rather than by check — [`Agg::Sum`] is only ever built from a `list_sum`,
+/// whose argument is a `list[Int]` — so this is a seam a wrong plan would come through, and it
+/// answers with the failure the site would have raised rather than with a panic inside a render.
+fn contribution(v: &Value) -> Result<i128, ExecError> {
+    v.as_int()
+        .map(i128::from)
+        .ok_or_else(|| ExecError::new("`list_sum` expects a list of Ints", Span::NONE))
+}
+
+/// What `list_sum` raises, in the words the interpreter's own `list_sum` uses, because the
+/// maintained plan and the recompute are held to the same failure and not merely to the same
+/// answer.
+///
+/// The accumulator overflowing is a different event from the answer not fitting, and it is
+/// unreachable rather than defensive: a group would have to hold about `2^64` rows for a sum of
+/// `Int`s to leave `i128`. It is written as a failure anyway because the alternative is `+=`, which
+/// **panics in a debug build and wraps in a release one** — `docs/93` §93.3's defect, whose whole
+/// point was that which programs run must not depend on how the compiler was built.
+fn sum_overflowed() -> ExecError {
+    ExecError::new("`list_sum` overflowed", Span::NONE)
 }
 
 /// A join key, as a key of the index.

@@ -61,19 +61,23 @@
 //! first of §99.9 item 6's aggregates, the one the language already had a spelling for. A group that
 //! is only ever counted is never built, which is what [`crate::plan::Matching::Count`] is for.
 //!
-//! # The fourth shape: one end of the group
+//! # The fourth shape: a number the group's rows decide
 //!
-//! `list_min(filter_list(…))` and `list_max(…)`, bare or over a `map_list` of the same filter, are
-//! the same question once more — §99.9 item 6's other two aggregates. What differs from the count
-//! is that the answer is a function of the rows rather than only of how many there are, so
-//! something has to hold what the rows contribute: [`crate::plan::Op::GroupBy`], keyed by the
-//! group and holding a multiset of the projection, whose two ends are the two aggregates.
+//! `list_min(filter_list(…))`, `list_max(…)` and `list_sum(…)`, bare or over a `map_list` of the
+//! same filter, are the same question once more — §99.9 item 6's other three aggregates. What
+//! differs from the count is that the answer is a function of what the rows *say* rather than only
+//! of how many there are, so something has to hold what they contribute:
+//! [`crate::plan::Op::GroupBy`], keyed by the group and holding per group whatever its aggregate
+//! needs — a multiset of the projection, whose two ends are `min` and `max`, or a running total,
+//! which is `sum`.
 //!
 //! It is the one shape whose *index* is not an index. The other three probe an arrangement of the
-//! collection; this probes an arrangement of the **groups**, one entry each, which is why the join
-//! above it is a [`crate::plan::Matching::Unique`] — the same probe a `map_get` gets, answering
-//! `Some` for a group with rows and `None` for one without, which is what `list_min` returns of a
-//! list and of an empty one.
+//! collection; this probes an arrangement of the **groups**, one entry each. For the extremes the
+//! join above it is a [`crate::plan::Matching::Unique`] — the same probe a `map_get` gets, `Some`
+//! for a group with rows and `None` for one without, which is what `list_min` returns of a list and
+//! of an empty one. For a total it is a [`crate::plan::Matching::Total`], and the difference is
+//! what a *missing* entry means: `list_sum` of no rows is `0`, so the probe answers with a value
+//! where the extremes answer with an absence.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -144,24 +148,24 @@ pub enum Answers {
     Rows,
     /// How many rows. `list_len(filter_list(…))`, whose value is an `Int` — and no list is built.
     Count,
-    /// One end of the group. `list_min(filter_list(…))`, or the same over a `map_list` of it,
-    /// whose value is an `Option` — and no list is built.
+    /// A number the group's rows decide, which the group does not have to exist for.
+    /// `list_min(filter_list(…))` or `list_sum(…)`, or either over a `map_list` of it — and no
+    /// list is built.
     ///
     /// Boxed because it is the only variant carrying an expression, and an enum is as large as its
     /// largest arm wherever it is held.
-    Extreme(Box<Extreme>),
+    Aggregate(Box<Aggregate>),
 }
 
-/// One end of a group, and what its rows contribute to the question.
+/// What a group was asked for, and what its rows contribute to the question.
 #[derive(Clone, Debug)]
-pub struct Extreme {
-    /// Which end.
+pub struct Aggregate {
+    /// Which question.
     pub agg: Agg,
     /// What each row contributes, as a function of one row of the *filtered* collection: the
-    /// `map_list`'s function, or the identity when the program asked for the extreme of the rows
-    /// themselves.
+    /// `map_list`'s function, or the identity when the program asked about the rows themselves.
     pub of: Core,
-    /// The parameter [`Extreme::of`] is written over — the filtered element, not the loop's.
+    /// The parameter [`Aggregate::of`] is written over — the filtered element, not the loop's.
     pub param: VarId,
 }
 
@@ -442,18 +446,18 @@ fn qualify(
         // The identity, written as the *variable node* the predicate already reads `y` through
         // rather than as one this function builds: a `Core` carries its type, and the type of the
         // row is not something the shape of a `filter_list` says.
-        Asked::Extreme { agg, of: None } => Answers::Extreme(Box::new(Extreme {
+        Asked::Aggregated { agg, of: None } => Answers::Aggregate(Box::new(Aggregate {
             agg,
             of: find_var(&by, y).ok_or(Refusal::PredicateIsNotAnEquality)?,
             param: y,
         })),
-        Asked::Extreme { agg, of: Some(f) } => {
+        Asked::Aggregated { agg, of: Some(f) } => {
             let (z, of) = lambda(f, defs).ok_or(Refusal::ProjectionReadsMoreThanTheRow)?;
             let of = resolve(&of, &outer, DEPTH);
             if !reads(&of).is_subset(&BTreeSet::from([z])) {
                 return Err(Refusal::ProjectionReadsMoreThanTheRow);
             }
-            Answers::Extreme(Box::new(Extreme { agg, of, param: z }))
+            Answers::Aggregate(Box::new(Aggregate { agg, of, param: z }))
         }
     };
     Ok((
@@ -475,9 +479,9 @@ fn qualify(
 enum Asked<'a> {
     Rows,
     Count,
-    Extreme {
+    Aggregated {
         agg: Agg,
-        /// The `map_list`'s function, or `None` for the extreme of the rows themselves.
+        /// The `map_list`'s function, or `None` for an aggregate of the rows themselves.
         of: Option<&'a Core>,
     },
 }
@@ -495,17 +499,18 @@ fn asked(c: &Core) -> Option<(&Core, Asked<'_>)> {
     };
     match op {
         Prim::ListLen if args.len() == 1 && is_filter(&args[0]) => Some((&args[0], Asked::Count)),
-        Prim::ListMin | Prim::ListMax if args.len() == 1 => {
+        Prim::ListMin | Prim::ListMax | Prim::ListSum if args.len() == 1 => {
             let agg = match op {
                 Prim::ListMin => Agg::Min,
-                _ => Agg::Max,
+                Prim::ListMax => Agg::Max,
+                _ => Agg::Sum,
             };
             if is_filter(&args[0]) {
-                return Some((&args[0], Asked::Extreme { agg, of: None }));
+                return Some((&args[0], Asked::Aggregated { agg, of: None }));
             }
-            // `list_min(map_list(filter_list(…), f))` — the extreme of what each row projects to,
-            // which is how anybody writes "the earliest of their deadlines" rather than "the
-            // smallest of their rows".
+            // `list_min(map_list(filter_list(…), f))` — the aggregate of what each row projects
+            // to, which is how anybody writes "the earliest of their deadlines" or "what they are
+            // owed" rather than "the smallest of their rows".
             let CoreKind::Prim {
                 op: Prim::MapList,
                 args: mapped,
@@ -516,7 +521,7 @@ fn asked(c: &Core) -> Option<(&Core, Asked<'_>)> {
             match mapped.len() == 2 && is_filter(&mapped[0]) {
                 true => Some((
                     &mapped[0],
-                    Asked::Extreme {
+                    Asked::Aggregated {
                         agg,
                         of: Some(&mapped[1]),
                     },

@@ -835,9 +835,23 @@ fn renaming_every_name_in_the_corpus_either_works_or_says_why() {
         }
     }
 
+    // Printed rather than left in a comment, because `docs/65` quotes this figure twice and it was
+    // derivable only by editing this test — `DEFECTS.md`'s `corpus-wide-counts-drift` in miniature,
+    // and the same reason `native.rs` and `wasm_backend.rs` print theirs.
+    let disagreed = refused
+        .iter()
+        .filter(|r| r.contains("cannot account for"))
+        .count();
+    println!(
+        "{renamed} of {} corpus names rename; {} decline — {disagreed} because the two accounts \
+         disagree and {} because the edit would not compile",
+        renamed + refused.len(),
+        refused.len(),
+        refused.len() - disagreed
+    );
     // Both ends, because each catches a different regression: a floor stops a change that refuses
     // its way to green, and a ceiling on the refusals stops one that quietly narrows what an editor
-    // can do. The corpus renames 316 of its 325 names today and declines nine.
+    // can do.
     assert!(
         renamed >= 250,
         "the corpus should rename hundreds of names; it renamed {renamed}, refusing:\n{}",

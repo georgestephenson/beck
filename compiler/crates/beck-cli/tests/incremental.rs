@@ -409,6 +409,55 @@ fn one_end_of_a_group_is_a_group_by_and_not_an_index_over_its_rows() {
     );
 }
 
+/// **A total is the same operator probed as a value rather than as an option**, which is the one
+/// place the aggregates differ downstream of the group.
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's last
+/// aggregate. `list_sum` over the same `filter_list` compiles to the same [`Op::GroupBy`] the
+/// extremes do — no `arrange_by`, one entry per group — and the join above it reads a missing entry
+/// as `0` rather than as `None`, because a group with no rows has a sum and has no smallest
+/// element. The body says so by not needing `unwrap_or` at all: `list_sum` answers with an `Int`.
+#[test]
+fn a_total_is_a_group_by_probed_as_a_value_rather_than_an_option() {
+    use beck_core::plan::{Agg, Matching, Op, Plan};
+
+    let plan = Plan::compile(&ok(
+        "total.beck",
+        &capturing(
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return map_list(map_keys(s.items), \
+                                 lambda k: str(list_sum(map_list(\
+                                                  filter_list(map_values(s.items), \
+                                                              lambda v: str(v) == k), \
+                                                  lambda v: v + 1))))\n",
+        ),
+    ));
+    assert!(
+        !plan
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::ArrangeBy { .. })),
+        "the total built an index over the group's rows, which is the collection the question was \
+         avoiding"
+    );
+    assert_eq!(
+        plan.nodes.iter().find_map(|n| match n.op {
+            Op::GroupBy { agg, .. } => Some(agg),
+            _ => None,
+        }),
+        Some(Agg::Sum),
+    );
+    assert_eq!(
+        plan.nodes.iter().find_map(|n| match n.op {
+            Op::Join { matched, .. } => Some(matched),
+            _ => None,
+        }),
+        Some(Matching::Total),
+        "a total probed as an option would make an account nobody has posted to render nothing \
+         where the program says `0`"
+    );
+}
+
 /// **Two lookups that index the same collection by the same key build one index.**
 ///
 /// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.5 decision 4: an

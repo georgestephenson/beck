@@ -17,6 +17,54 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-20 — The corpus-wide counts, re-derived against thirty-seven programs.**
+  `corpus/37-ledger.beck` is the 37th, and [`DEFECTS.md`](DEFECTS.md)'s `corpus-wide-counts-drift`
+  says what that costs. It had drifted again, and this time in three directions at once: the
+  WebAssembly emitter's corpus denominator read **195** in [`docs/08`](docs/08-roadmap.md), **213**
+  in [`docs/93`](docs/93-the-native-backends-report.md) and **220** in
+  [`docs/103`](docs/103-the-wasm-emitter-report.md) and [`docs/README`](docs/README.md) — three
+  numbers for one quantity, in four places.
+  Re-derived: the native backends compile **975** definitions against **143** refused, **all
+  thirty-seven** corpus programs compile their `apply_event` and **twenty-five of thirty-seven**
+  their `view`; the WebAssembly emitter is measured against **225** corpus definitions, of which
+  **220** are refused for one shape — a parameter that lives on the heap, where §103.6 said 138 of
+  195 were a `Str` parameter; and the corpus places **382** definitions and signals, not 373, with
+  the tier table moved with it — `any` 201 (52.6%), `server` 83, `data` 61, `client` 37.
+  [`docs/65`](docs/65-the-editor-report.md)'s rename figure was the worst of them, **316 of 325**
+  against a true **366 of 376**, and the reason is worth the entry: the test that derives it never
+  printed it. The count lived in a *comment* beside an assertion with a floor of 250, so the only
+  way to read today's value was to edit the test. It prints it now, as `native.rs` and
+  `wasm_backend.rs` print theirs, which is the cheapest half of the gate that entry still owes.
+
+- **2026-08-20 — A group's total, and the decision that a sum is its answer.**
+  [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's last aggregate, and the
+  only one that owed a **decision** rather than an operator. The two edges it named were real: a
+  float total maintained by adding what arrived and subtracting what left is not the number a left
+  fold produces, and an integer one passes through intermediate values `checked_add` raises on, so
+  the maintained plan and the recompute could disagree about whether the program *failed*. Both are
+  edges of the fold rather than of the sum. **A sum is its answer, not the order it was added in**:
+  `list_sum` is the exact total and raises only when *that* leaves `Int`, which makes it a function
+  of the numbers alone — and a **conservative extension** of `+`, with the same answer wherever the
+  fold has one and an answer for `[Int_MAX, Int_MAX, -Int_MAX]`, where the fold has none.
+  `interp.rs::a_sum_is_its_answer_and_not_the_order_it_was_added_in` is that sentence at the two
+  functions themselves. **`Float` gets no `sum`**, because there the same definition would *disagree*
+  with the fold rather than extend it — a different number in the last bits, on ordinary inputs
+  ([`docs/46`](docs/46-standard-library-report.md) §46.16).
+  `Agg::Sum` therefore keeps a running total and **no multiset**, since a sum does not care which
+  distinct values its group holds: `corpus/37-ledger.beck` shows every account's balance in **47
+  backend steps at 200 postings and at 1,600, against 2,060 and 16,060** with the operator switched
+  off (`scaling.rs::totalling_a_group_does_not_build_it`, which measures both settings). Unlike the
+  extremes there is no worst case to choose — every posting moves its account's total, so an ordinary
+  event is already the reassembling one.
+  Two things it does that the extremes do not. An empty group is `0` rather than `None`, so the join
+  above it reads a missing entry as a *value* — `Matching::Total`, gated by
+  `incremental.rs::a_total_is_a_group_by_probed_as_a_value_rather_than_an_option`. And a total no
+  `Int` holds is **published rather than raised**: the operator maintains every group while the
+  recompute only sums the groups the loop reaches, so raising at maintenance time would fail renders
+  that never asked. The raise lands at the probe, and
+  `incremental_engine.rs::a_total_outside_int_fails_where_it_is_asked_for_and_nowhere_else` holds the
+  two plans to the same failure as well as to the same answer.
+
 - **2026-08-20 — A malicious `arrayref` release, and the gate that saw the pin for it expire.**
   The `licences` job went red on a yank rather than an advisory: crates.io withdrew `arrayref 0.3.9`,
   which reaches this tree through `blake3`. **The fix `cargo-deny` suggests was the attack.**

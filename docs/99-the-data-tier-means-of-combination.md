@@ -1,13 +1,16 @@
 # 99 — The data tier's means of combination
 
-> **The join, both of its indexes, and three of the four aggregates are built; `sum`, `distinct` and
-> difference are not.** §99.9 items 1, 3, 4 and 5 have landed — the shape gate, `arrange_by`, the
-> `Join` operator with §99.5's bilinear delta rule, and the recognition that emits both for the loop
-> a program already wrote — and item 6 has landed for `count`, `min` and `max`, the last two as
-> `Op::GroupBy`, which answers a question about a group without the group existing. What is left is
-> `sum` (which owes a decision about `Int` and `Float` before an operator), `distinct` and
-> difference, fusion for the new operators, and the read-model SQL compiling into the plan. §99.9 is
-> where each of them sits. Everything below is the design; what is built says so where it is built.
+> **The join, both of its indexes, and all four aggregates are built; `distinct` and difference are
+> not.** §99.9 items 1, 3, 4, 5 and 6 have landed — the shape gate, `arrange_by`, the `Join` operator
+> with §99.5's bilinear delta rule, the recognition that emits both for the loop a program already
+> wrote, and `count`, `min`, `max` and `sum` per group, the last three as `Op::GroupBy`, which
+> answers a question about a group without the group existing. `sum` is the one that owed a decision
+> rather than an operator, and the decision is that **a sum is its answer and not the order it was
+> added in** — exact over `Int`, raising only when the total does not fit, and absent over `Float`,
+> because there the same definition would disagree with the `+` the language already has. What is
+> left is `distinct` and difference, fusion for the new operators, and the read-model SQL compiling
+> into the plan. §99.9 is where each of them sits. Everything below is the design; what is built says
+> so where it is built.
 >
 > [`25`](25-benchmarks-and-expressiveness.md) asked
 > whether Beck has "Scheme's full means of combination and means of abstraction" and answered it for
@@ -181,9 +184,9 @@ Everything the engine implements ([`plan.rs`](../compiler/crates/beck-core/src/p
 | nesting / unnesting | `flatten`, `flat_map` | ✓ |
 | cardinality | `list_len`, `list_is_empty` | ✓ over a whole collection, `±1` per delta |
 | **join (⋈)** | `Join`, recognised | **built** — an outer equi-join against an index whose key is unique, which is what an arrangement is (§99.5 decision 2). No syntax: §99.6 |
-| **grouping and aggregation (Γ)** | — | **missing**; there is no `sum`, `min`, `max`, or per-group anything |
-| **difference (−)** | — | missing |
-| **distinct (δ)** | — | missing |
+| **grouping and aggregation (Γ)** | `ArrangeBy`, `Join`'s tally, `GroupBy` | **built** — the group as rows, its `count`, and `min`, `max` and `sum` per group, each answered without the group being assembled. Recognised from the loop that already asked (§99.6). What is missing is a *general* aggregate: a fifth one needs an operator, not a parameter |
+| **difference (−)** | — | missing (§99.9 item 7) |
+| **distinct (δ)** | — | missing (§99.9 item 7) |
 
 Read as SICP's three-part test, which is the standard [`01`](01-vision-and-premise.md) §1.1 sets and
 [`25`](25-benchmarks-and-expressiveness.md) measures the language against:
@@ -393,7 +396,7 @@ One build item discharges five things already written down:
 
 | already written | closed by |
 |---|---|
-| [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, aggregates — **nothing**" | the operators — the join and both of its indexes are built, grouping and the aggregates are not |
+| [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, aggregates — **nothing**" | the operators — the join, both of its indexes and all four aggregates are built; subqueries are not |
 | [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, `group by`, aggregates other than `count(*)`" | the read-model SQL compiling **to the plan** rather than growing a second interpreter |
 | [`12`](12-standards-and-conformance.md) §12.5 `psql`'s `\d` unsupported because `pg_catalog` needs joins | the same |
 | [`23`](23-incremental-views-report.md) §23.19 "`count(*)` without scanning" | grouping, which is where a maintained count *per group* lives — **and both halves are now built**: the ungrouped one reads the arrangement's size, which `Op::Count` has read since the engine existed, and the grouped one is a tally the join keeps (§99.9 item 6). This row over-attributed even so: not every aggregate question is a grouping question, and the ungrouped one never needed grouping to answer it |
@@ -604,8 +607,8 @@ than a refusal: the first version refused it, which left `33-awareness` paying t
 refusal that keeps a program at `O(n)` per event is not a conservative choice — it is the defect with
 a sentence attached.
 
-**6. `group by` and aggregates** — `count`, `sum`, `min`, `max` per group. **`count`, `min` and
-`max` are done; `sum` is not**, and what separated them was never effort. It was whether the
+**6. `group by` and aggregates** — `count`, `sum`, `min`, `max` per group. **All four are done**,
+and they arrived in three pieces because what separated them was never effort. It was whether the
 language had a spelling for the question.
 
 `count` is done because it does: `list_len` over the same `filter_list` item 5 recognises is a
@@ -675,24 +678,78 @@ written rather than generated, and it withdraws the standing minimum, the standi
 a tie, and the last bid on a lot. Deleting the multiplicity leaves the corpus-wide differential
 **green** and turns that one red, which was measured rather than assumed.
 
-**`sum` has no spelling at all** — there is no `sum` primitive, and `corpus/28-catalogue.beck` writes
-one as a recursion. Giving it one is a decision rather than an implementation, and the decision has
-two edges, both of which the differential would find rather than tolerate:
+**`sum` is done, and it needed a spelling rather than an operator.** It had none — there was no `sum`
+primitive, and `corpus/28-catalogue.beck` writes one as a recursion — and the two edges this section
+named before it landed were both real:
 
 - A **float** sum cannot be maintained by adding what arrived and subtracting what left, because
   floating-point addition is not associative and the maintained answer is held to the recomputed one
-  byte for byte. Over `Float` a `sum` has to be a recompute, and say so.
+  byte for byte.
 - An **integer** sum can be, arithmetically — but Beck's `+` is `checked_add` and *raises* on
   overflow, so a running total that is maintained passes through different intermediate values from
-  one that is recomputed from zero, and the two can disagree about whether the program failed. Exact
-  is not the same as total.
+  one recomputed from zero, and the two can disagree about whether the program failed. Exact is not
+  the same as total.
 
-So the surface owes an answer for each of `Int` and `Float` before an operator is written, which is
-why it is the last of the four rather than the easiest. **What the extremes did not do is answer it**:
-`Op::GroupBy` holds a multiset, so a sum could be derived from one — but in `O(distinct)` per probe
-rather than `O(1)`, and in the multiset's ascending order rather than the collection's, which is a
-different program under overflow. The operator is ready for a third aggregate and the language is
-not.
+**Both are edges of the fold rather than of the sum, and naming that is the decision: a sum is its
+answer, not the order it was added in.** `list_sum(xs)` is the *exact* sum of `xs` and raises only
+when **that** does not fit an `Int`. It is therefore a function of the multiset its rows project to
+and of nothing else — which is the property every other aggregate here already had, and the reason
+`min` and `max` never raised this question. A running total and a recompute are then the same
+number, and they fail on the same lists.
+
+**That makes `list_sum` a conservative extension of `+` rather than a rival to it**, which is the
+test a second spelling for an old operation has to pass. Where `x1 + x2 + …` has an answer this is
+the same answer; where the fold raises on the way to a total that fits — `[Int_MAX, Int_MAX,
+-Int_MAX]` — this one has it. Strictly more lists have an answer and no list has a different one, so
+nothing that held before holds differently. `interp.rs::a_sum_is_its_answer_and_not_the_order_it_was_added_in`
+is that sentence as three assertions, at the two functions themselves.
+
+**`Float` gets no sum at all, and that is the decision rather than the omission.** The same
+definition over `Float` would not extend the fold, it would *disagree* with it: an order-independent
+float sum is a different number in the last bits, on ordinary inputs, not merely defined on more of
+them. A program holding one of each would have two answers to one question, and the difference would
+land on whoever wrote the program rather than on the engine. So a float total stays the recursion a
+program writes, `beck explain cost` prices it as the recompute it is, and
+[`46`](46-standard-library-report.md) §46.16 carries it as an absence somebody chose. The asymmetry
+between the two numeric types is the point: over `Int` the new function differs from the fold only
+where the fold has **no answer at all**.
+
+**What the extremes did not do is answer it, and this section was right about that.** `Op::GroupBy`
+holds a multiset, so a sum could be derived from one — but in `O(distinct)` per probe rather than
+`O(1)`. So `Agg::Sum` keeps no multiset: a running total and a row count, moved by `±n` and `±1` and
+read in `O(1)`. One operator, two shapes of state, each holding what its aggregate needs and no
+more — the count that rides along is not bookkeeping, it is what separates a group whose total is
+zero from a key the arrangement must not hold.
+
+**And the empty group is where the aggregates part company downstream.** `list_min` of no rows is
+`None`; `list_sum` of no rows is `0`. So the join above a total reads a missing entry as a *value*
+rather than as an absence — `Matching::Total`, the one place the four aggregates differ after the
+group — and an account nobody has posted to renders a balance rather than a dash.
+`incremental.rs::a_total_is_a_group_by_probed_as_a_value_rather_than_an_option` is the gate, and it
+holds the other half too: no `arrange_by` in the plan, because an implementation that indexed the
+rows and added up each range would answer correctly and cost the group.
+
+`corpus/37-ledger.beck` is the program: every account and its balance, amounts signed because a
+ledger's are, written `list_sum(map_list(filter_list(…), …))` with no `group by` and no `sum by` in
+the file. Three things it is held to:
+
+- **The cost.** `scaling.rs::totalling_a_group_does_not_build_it` measures a posting landing on a
+  pile of 200 and of 1,600: **47 backend steps at both sizes, against 2,060 and 16,060 with
+  the operator switched off**, and one entry copied out of an arrangement either way. Unlike the
+  extremes' gate there is no worst case to choose, and that is worth stating rather than skipping:
+  every posting moves its account's total, so an ordinary event *is* the reassembling case. A `sum`
+  is the aggregate that never takes the "the group moved and the answer did not" discount.
+- **The agreement, including about failure.** The differential holds the maintained page to the
+  recomputed one, and `incremental_engine.rs::a_total_outside_int_fails_where_it_is_asked_for_and_nowhere_else`
+  holds the two to the same *failures*. This is why `Op::GroupBy` **publishes** a total no `Int`
+  holds instead of raising one: the operator maintains every group and the recompute only ever sums
+  the groups the loop reaches, so raising at maintenance time would fail renders that never asked.
+  The raise belongs at the probe, where the program wrote the question.
+- **The bookkeeping.** `incremental_engine.rs::a_maintained_total_survives_the_events_that_take_it_back_down`
+  writes the log rather than generating it, for the extremes' reason one paragraph up: a posting
+  voided out of the middle, a *credit* voided (a subtraction of a negative), one of two identical
+  amounts, and the last posting on an account, so the group empties to `0` and is rebuilt from
+  nothing.
 
 **7. `distinct` and difference**, per decision 2 — after the above, and only with the multiplicity
 question answered on its own terms.
@@ -707,9 +764,9 @@ and nowhere earlier.
 own interpreter — which closes §23.19 and §12.5 together and keeps one code path.
 
 Items 1–2 were days, items 4–5 were the phase, and item 3 followed them rather than preceding them.
-Item 6 arrived in two pieces for the reason it names — the count with item 3, the extremes once the
-language had a spelling for them — and what is left of it is `sum`, which is a decision rather than a
-branch. Items 7–9 each stand alone and can be scheduled independently.
+Item 6 arrived in three pieces for the reason it names — the count with item 3, the extremes once the
+language had a spelling for them, and the total once that spelling had been *decided* rather than
+merely added. Items 7–9 each stand alone and can be scheduled independently.
 
 **The convergence rungs interleave rather than follow.** §99.8's ladder is not a second project to
 start afterwards, and treating it as one is how a guessed constant becomes permanent:
@@ -720,26 +777,27 @@ start afterwards, and treating it as one is how a guessed constant becomes perma
 | item 5 (recognition) | **rung 2** — the two programs that already contain a join, replayed under both plans, are the first real measurement, and `Work` is the unit |
 | item 3 (`arrange_by`) | **rungs 0 and 1 did not come due either, and this row was wrong about why they would.** It expected `arrange_by` to give a join two sides that could be swapped. It does not, and the reason is the surface rather than the operator: the join is *inferred from a loop*, and the loop fixes which side is the left, because the left side's order is the output's order (decision 1). Nor is building the index a choice — it is ruled by "the rewrite must remove a capture" rather than priced, and the measurement says the index is never worse (§99.9 item 3's 1.1× ceiling). Rung 0 is satisfied in the strict sense it asks for: **no plan decision rests on a named constant**, checked rather than assumed. What would make a choice exist is a join whose sides are both indexed and neither of which is the output's order — which arrives with `group by` and with an explicit surface, not here |
 | item 6, aggregates (`count`, `min`, `max`) | **rungs 0 and 1 did not come due a third time**, and the row above had already said why they would not: the aggregate's right side is one entry per group, its left is the loop, and there is nothing to swap. What it adds is that the pattern survives an operator with *no index at all* on one side — so "an inferred surface postpones the solver" is about the surface and not about what the operators happen to be |
-| items 6 (`sum`), 7–8 | **rung 4** — search, once replay is the oracle rather than the model |
+| item 6, the total (`sum`) | **rungs 0 and 1 did not come due a fourth time.** The row above forecast that they would arrive "with `group by` and with an explicit surface"; `group by` is now complete and the surface is still inferred, so there is still nothing to swap. What this one adds is that the pattern survives an aggregate whose right side is not even a *reading* of the group — a running total is a number the operator keeps — so the postponement is the loop's order and not anything about the group |
+| items 7–8 | **rung 4** — search, once replay is the oracle rather than the model |
 | Phase 4's `beck tune` | **rung 3** — the rate, fed back from a deployment, because it exists nowhere else |
 
 Rung 1 belongs *inside* the first item that makes a choice, rather than after it, and that is the
 sequencing decision worth arguing over: shipping a join that reads `ASSUMED_CARDINALITY` would make
 the constant load-bearing for a decision it was never honest for (§99.8), and a constant that has
-shipped is a constant that gets tuned instead of removed. Both joins that have landed keep that rule
-by making no choice at all — which is the cheapest way to honour it and was not the way this table
-expected it to be honoured, three times now. **The pattern the second time made visible and the
-third confirmed: an inferred surface postpones the solver.** A plan choice exists only where two plans could produce the same
+shipped is a constant that gets tuned instead of removed. Every operator that has landed keeps that
+rule by making no choice at all — which is the cheapest way to honour it and was not the way this
+table expected it to be honoured, four times now. **The pattern the second time made visible and the
+third and fourth confirmed: an inferred surface postpones the solver.** A plan choice exists only where two plans could produce the same
 answer, and a rewrite of a loop the programmer wrote has the loop's order to preserve, which fixes
 most of the plan before any cost is consulted. `ASSUMED_CARDINALITY` is still in `cost.rs` and still
 reaches no plan decision.
 
 ## 99.10 What this document does not claim
 
-- **What is built is the join, its two indexes, and three of the four aggregates.** `sum`,
-  `distinct` and difference are unbuilt, and so is the surface `sum` waits on. Nor is there a
-  `group by` a program can *write*: every operator here is emitted for a loop somebody already
-  wrote, and `Op::GroupBy` is the name of an operator rather than of a construct. The measurements in
+- **What is built is the join, its two indexes, and all four aggregates.** `distinct` and
+  difference are unbuilt. Nor is there a `group by` a program can *write*: every operator here is
+  emitted for a loop somebody already wrote, and `Op::GroupBy` is the name of an operator rather
+  than of a construct. The measurements in
   §99.3 are of the compiler *before* the operator, and every command is quoted in full so they can
   be re-run — with `--no-join`, which is how that transcript is reproduced today.
 - **It does not reopen D26.** Nothing here puts a relation in the store or writes anything on the
@@ -758,17 +816,21 @@ reaches no plan decision.
   assumed and is now tested.
 - **`arrange_by` removes the scan and not the group.** One left row's answer is the whole group as a
   `list`, so an event that touches a group rebuilds it. §99.6 measures both ends of what that is
-  worth, and item 6 closes it only for the questions that have a spelling.
-- **One aggregate is built and it is `count`.** `sum`, `min` and `max` per group are not, and §99.9
-  item 6 says what each is waiting on — a surface, in every case, rather than a delta rule. The
-  design for `min`/`max` is written there and no code implements it.
+  worth, and item 6 closes it only for the questions that have a spelling — which is now four of
+  them, and not the fifth somebody writes next.
+- **The four aggregates are the four, and there is no fifth.** `count`, `min`, `max` and `sum` per
+  group are built and each is a *variant* rather than a parameter, so an average, a product or a
+  `string_agg` is an operator somebody writes and not a function somebody passes. That is decision 4
+  read from the other side — a general fold per group would have to state its own inverse before it
+  could be maintained, and none of these four had to, because each carries the inverse in the
+  operator.
 - **What the instrument can and cannot compare.** `Work::steps` is what the *backend* executed, so it
   sees inside a per-element function and does not see the engine's own bookkeeping — the `BTreeMap`
   work and the value copies a group probe does are the clock's business, not its. Two runs of one
   backend are comparable in it; two backends are not, and it is a count rather than a duration for
   [`13`](13-testing.md) §13.7's reason.
-- **`min`/`max` over a group and `distinct` over values are named as hard**, not designed. Item 6 and
-  item 7 each need their own decision before they are written.
+- **`distinct` over values is named as hard**, not designed. Item 7 needs its own decision — the
+  multiplicity question, on its own terms — before it is written.
 
 ## 99.11 What this corrects, elsewhere
 

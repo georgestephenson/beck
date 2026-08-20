@@ -737,3 +737,209 @@ fn every_operator_the_plan_falls_back_on_says_which_construct_forced_it() {
         }
     }
 }
+
+/// A group's **total** is maintained, and the events a generated log reaches only by luck are
+/// written out.
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's last
+/// aggregate. `corpus/37-ledger.beck` shows every account's balance and
+/// [`beck_core::plan::Op::GroupBy`] keeps one running total per group, so what can go wrong is not
+/// what goes wrong for an extreme: a total is never *promoted* from anywhere, it is added to and
+/// taken back from, and the failures are all failures of arithmetic bookkeeping.
+///
+///   * a posting is **voided**, so its amount has to come back out of a number nothing else
+///     remembers it went into;
+///   * a **credit** is posted and then voided, so the subtraction has to be a subtraction of a
+///     negative rather than of a magnitude;
+///   * two postings of the **same amount**, one voided — where an operator holding a set of
+///     contributions rather than a total would take out both, or neither;
+///   * **the last posting on an account goes**, so the group empties and the balance has to be `0`
+///     rather than the missing entry an extreme reads as `None`;
+///   * a posting **arrives after empty**, so a group that was removed is rebuilt from nothing.
+///
+/// The closing assertion is on the end state, because a green run over a log that only ever went up
+/// says nothing: one account emptied and refilled, one holding a credit and a debit that do not
+/// cancel.
+#[test]
+fn a_maintained_total_survives_the_events_that_take_it_back_down() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/37-ledger.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let mut subject = Subject::new("corpus/37-ledger.beck", compile("37-ledger.beck", &src));
+
+    let event = |variant: &str, fields: Vec<(&str, Value)>| {
+        Value::data(
+            Arc::from("Event"),
+            Some(Arc::from(variant)),
+            beck_core::core::Fields::from_iter(fields.into_iter().map(|(k, v)| (Arc::from(k), v))),
+        )
+    };
+    let opened = |id: &str, name: &str| {
+        event(
+            "Opened",
+            vec![("id", Value::str_(id)), ("name", Value::str_(name))],
+        )
+    };
+    let posted = |id: &str, account: &str, amount: i64| {
+        event(
+            "Posted",
+            vec![
+                ("id", Value::str_(id)),
+                ("account", Value::str_(account)),
+                ("amount", Value::Int(amount)),
+            ],
+        )
+    };
+    let voided = |id: &str| event("Voided", vec![("id", Value::str_(id))]);
+
+    let log = vec![
+        opened("a1", "cash"),
+        opened("a2", "stock"),
+        posted("p1", "a1", 250),
+        posted("p2", "a1", 125),
+        // A credit, then the debit that does not quite cancel it.
+        posted("p3", "a1", -90),
+        posted("p4", "a2", 40),
+        // Out again, from the middle of the pile and from the credit.
+        voided("p2"),
+        voided("p3"),
+        // Two of the same amount, then half of the pair — a total is not a set of contributions.
+        posted("p5", "a1", 250),
+        voided("p5"),
+        // And empty: everything on cash, then stock's one posting, then one back.
+        voided("p1"),
+        voided("p4"),
+        posted("p6", "a1", -60),
+        posted("p7", "a1", 275),
+    ];
+
+    let mut compared = subject.agrees("the empty log");
+    for (i, e) in log.into_iter().enumerate() {
+        subject.fold(e);
+        compared += subject.agrees(&format!("event {}", i + 1));
+    }
+    assert!(compared >= 28, "only {compared} pages were compared");
+
+    let page = subject
+        .runtime
+        .view(&subject.state, ACTORS[0])
+        .expect("recompute")
+        .render();
+    assert!(
+        page.contains("cash: 215p") && page.contains("stock: 0p"),
+        "the log this test is written around no longer empties a group and refills it:\n{page}"
+    );
+}
+
+/// **The maintained plan and the recompute agree about whether the program failed**, which is the
+/// half of [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's
+/// decision that an operator could get wrong without ever printing a wrong number.
+///
+/// `list_sum` raises when its *answer* does not fit an `Int` and not when the way there does, so a
+/// running total kept in a wider accumulator is the same function as the recompute — the first
+/// assertion is that pair of postings, whose sum is an ordinary `Int` and whose partial total is
+/// not. A plan that maintained the balance with the language's own `+` would raise on the second
+/// posting and disagree with a recompute that never fails.
+///
+/// The second assertion is the other edge, and it is why [`beck_core::plan::Op::GroupBy`] publishes
+/// an unrepresentable total rather than raising one. The engine maintains **every** group; the
+/// recompute only ever sums the groups the loop reaches. So a ghost account — postings whose
+/// account was never opened, which the page therefore never asks about — must not fail a render
+/// that recompute completes. Only when the same total is asked for does either of them raise, and
+/// then both do.
+///
+/// The log is written directly rather than proposed, because `validate` rejects a posting to an
+/// account that does not exist and the point of the case is a group with no reader.
+#[test]
+fn a_total_outside_int_fails_where_it_is_asked_for_and_nowhere_else() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/37-ledger.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let mut subject = Subject::new("corpus/37-ledger.beck", compile("37-ledger.beck", &src));
+
+    let event = |variant: &str, fields: Vec<(&str, Value)>| {
+        Value::data(
+            Arc::from("Event"),
+            Some(Arc::from(variant)),
+            beck_core::core::Fields::from_iter(fields.into_iter().map(|(k, v)| (Arc::from(k), v))),
+        )
+    };
+    let posted = |id: &str, account: &str, amount: i64| {
+        event(
+            "Posted",
+            vec![
+                ("id", Value::str_(id)),
+                ("account", Value::str_(account)),
+                ("amount", Value::Int(amount)),
+            ],
+        )
+    };
+
+    // Recompute and maintained, side by side, as answers that may be failures.
+    fn both(subject: &mut Subject) -> (Result<String, String>, Result<String, String>) {
+        let actor = ACTORS[0];
+        let recomputed = subject
+            .runtime
+            .view(&subject.state, actor)
+            .map(|v| v.render())
+            .map_err(|e| format!("{e:#}"));
+        let state = subject.state.clone();
+        let session = subject.runtime.session(actor);
+        let here = beck_core::edge::presence_of(actor);
+        let aware = subject
+            .runtime
+            .contribution(actor)
+            .expect("an awareness roster");
+        let maintained = subject.engines[0]
+            .render_all(&state, &session, &here, &aware)
+            .map(|got| page("corpus/37-ledger.beck", got))
+            .map_err(|e| e.to_string());
+        (recomputed, maintained)
+    }
+
+    subject.fold(event(
+        "Opened",
+        vec![("id", Value::str_("a1")), ("name", Value::str_("cash"))],
+    ));
+    // A total that leaves `Int` on the way and comes back inside it.
+    subject.fold(posted("p1", "a1", i64::MAX));
+    subject.fold(posted("p2", "a1", i64::MAX));
+    subject.fold(posted("p3", "a1", -i64::MAX));
+    let (recomputed, maintained) = both(&mut subject);
+    let expected = format!("cash: {}p", i64::MAX);
+    assert!(
+        recomputed.as_deref().is_ok_and(|p| p.contains(&expected)),
+        "the recompute did not answer a sum whose partial total is not an `Int`: {recomputed:?}"
+    );
+    assert_eq!(
+        maintained, recomputed,
+        "the maintained balance is not the recomputed one where the two are both answers"
+    );
+
+    // A group nobody asks about, whose total no `Int` holds. The page must not notice.
+    subject.fold(posted("g1", "ghost", i64::MAX));
+    subject.fold(posted("g2", "ghost", i64::MAX));
+    let (recomputed, maintained) = both(&mut subject);
+    assert!(
+        recomputed.is_ok(),
+        "the recompute failed on a group it never sums, so this case is not the one described"
+    );
+    assert_eq!(
+        maintained, recomputed,
+        "a group with no reader failed the maintained render and not the recomputed one — \
+         `Op::GroupBy` is raising at maintenance time rather than publishing (docs/99 §99.9 item 6)"
+    );
+
+    // And the same total, asked for. Both raise, with the same words.
+    subject.fold(posted("p4", "a1", i64::MAX));
+    let (recomputed, maintained) = both(&mut subject);
+    // Compared on the words rather than on the whole string, because the two call paths wrap
+    // differently — the runtime puts "rendering the view" in front of what the backend raised and
+    // the engine hands its error back bare. What the aggregate owes is that both fail and that both
+    // fail *as `list_sum`*, which is what this asserts.
+    for (which, got) in [("recompute", &recomputed), ("maintained", &maintained)] {
+        assert!(
+            got.as_ref()
+                .is_err_and(|e| e.contains("`list_sum` overflowed")),
+            "a balance no `Int` holds did not raise in the {which}: {got:?}"
+        );
+    }
+}

@@ -17,8 +17,8 @@ first place.
 **§65.6 is rename, and none of the work was the editing.** A rename is an assertion that a set of
 byte ranges is *every* place a name is written, and this compiler had four separate reasons why the
 obvious ways to compute that set are wrong. The rule that survived all four needs **two accounts of
-a name to agree**, and its refusals are the feature: 316 of the corpus's 325 names rename, nine
-decline, and the ninth declines because the edit was made and the file no longer type-checked.
+a name to agree**, and its refusals are the feature: 366 of the corpus's 376 names rename, ten
+decline, and the tenth declines because the edit was made and the file no longer type-checked.
 
 ---
 
@@ -231,11 +231,11 @@ occurrence would still compile whenever the name it left behind resolved to some
 
 | | |
 |---|---|
-| names renamed, verified compiling **and** publishing the same interface | **316** |
-| declined because the two accounts disagree | **8** |
+| names renamed, verified compiling **and** publishing the same interface | **366** |
+| declined because the two accounts disagree | **9** |
 | declined because the edit was made and would not compile | **1** |
 
-The eight are one shape: **a signal whose name is also a model field.** `s.carts` is a field access
+The nine are one shape: **a signal whose name is also a model field.** `s.carts` is a field access
 rather than a reference to the signal, so the lexical account sees the word, the semantic account has
 no reference there, and the rename declines rather than renaming a field somebody did not ask about.
 

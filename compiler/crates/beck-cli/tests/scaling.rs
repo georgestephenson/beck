@@ -1290,3 +1290,153 @@ fn asking_a_group_for_one_end_does_not_build_it() {
          of an arrangement whatever the pile holds — docs/99 §99.9 item 6"
     );
 }
+
+/// **A group's total is maintained, and the group is never built.**
+///
+/// [`docs/99-the-data-tier-means-of-combination.md`](../../../../docs/99-the-data-tier-means-of-combination.md)
+/// §99.9 item 6's last aggregate, and the sibling of `asking_a_group_for_one_end_does_not_build_it`
+/// above. `corpus/37-ledger.beck` shows every account's balance;
+/// [`beck_core::plan::Op::GroupBy`] keeps a running total per group and moves it by `±n`, so a
+/// posting costs two applications whatever the account it lands on already holds.
+///
+/// **There is no worst case to choose here, and that is the difference worth measuring.** The
+/// extremes above are gated on a *new low* because an event that changes neither end leaves the
+/// whole plan below the aggregate idle, and a flat row measured on one of those would be flat for a
+/// reason that has nothing to do with the operator. Every posting moves its account's total, so
+/// every event is the reassembling case and an ordinary one is the honest measurement.
+///
+/// Two instruments, as above: [`beck_core::engine::Work::steps`] against [`Relate::Refuse`], the
+/// off switch [`docs/08`](../../../../docs/08-roadmap.md) §8.3 item 8 requires of a choice the
+/// compiler makes unbidden; and `materialised`, held to the exact number, because a group copied
+/// out of an arrangement in order to add it up is what the operator exists not to do.
+#[test]
+fn totalling_a_group_does_not_build_it() {
+    use beck_core::core::Fields;
+    use beck_core::engine::{Engine, Prepared, Work};
+    use beck_core::plan::{Agg, Op, Plan, Relate};
+    use beck_core::Value;
+    use beck_rt::{Envelope, Instant, Runtime};
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/37-ledger.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let (placed, diags, map) = beck_core::compile_str("37-ledger.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("the corpus program compiles");
+
+    let totals = |relate: Relate| -> Vec<Agg> {
+        Plan::compile_with(&placed, relate)
+            .nodes
+            .iter()
+            .filter_map(|n| match n.op {
+                Op::GroupBy { agg, .. } => Some(agg),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        totals(Relate::Recognise),
+        vec![Agg::Sum],
+        "corpus/37-ledger.beck no longer compiles to a `group_by` holding a total, so this gate \
+         measures something else"
+    );
+    assert!(
+        totals(Relate::Refuse).is_empty(),
+        "`Relate::Refuse` left the aggregate in the plan, so the off switch is not one"
+    );
+
+    let event = |variant: &str, fields: &[(&str, Value)]| {
+        let mut f = Fields::new();
+        for (k, v) in fields {
+            f.insert(Arc::from(*k), v.clone());
+        }
+        Value::data(Arc::from("Event"), Some(Arc::from(variant)), f)
+    };
+    let posted = |id: &str, amount: i64| {
+        event(
+            "Posted",
+            &[
+                ("id", Value::str_(id)),
+                ("account", Value::str_("a1")),
+                ("amount", Value::Int(amount)),
+            ],
+        )
+    };
+
+    // What one more posting costs once `n` are already on the same account.
+    let cost_at = |relate: Relate, n: i64| -> Work {
+        let backend = beck_eval::backend(&placed);
+        let plan = Arc::new(Plan::compile_with(&placed, relate));
+        let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("the plan prepares"));
+        let runtime = Runtime::new(placed.clone(), backend).expect("the program prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let mut seq = 0u64;
+        let mut state = runtime.initial_state().expect("an initial accumulator");
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: Instant(seq as i64),
+                actor: "ana".to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("folds")
+        };
+        seq += 1;
+        state = fold(
+            &state,
+            event(
+                "Opened",
+                &[("id", Value::str_("a1")), ("name", Value::str_("cash"))],
+            ),
+            seq,
+        );
+        for i in 0..n {
+            seq += 1;
+            state = fold(&state, posted(&format!("p{i:06}"), 100 + i), seq);
+        }
+        // The cold render builds every arrangement — `O(n)`, once, and not what is measured.
+        engine.render(&state, &session, &here).expect("renders");
+        seq += 1;
+        state = fold(&state, posted("p999999", 250), seq);
+        engine.render(&state, &session, &here).expect("renders");
+
+        let work = engine.work();
+        println!(
+            "{relate:?} at {n:>5} postings: {:>6} steps, {:>5} materialised ({} applications, {} \
+             touched, {} recomputed)",
+            work.steps, work.materialised, work.applications, work.touched, work.recomputed
+        );
+        work
+    };
+
+    let (small, large) = (
+        cost_at(Relate::Recognise, 200),
+        cost_at(Relate::Recognise, 1_600),
+    );
+    let (refused_small, refused_large) =
+        (cost_at(Relate::Refuse, 200), cost_at(Relate::Refuse, 1_600));
+
+    assert!(
+        large.steps <= small.steps,
+        "eight times the postings cost {} backend steps against {}. A total is a number the \
+         operator keeps, and adding to it is not reading the group — docs/99 §99.9 item 6",
+        large.steps,
+        small.steps
+    );
+    assert!(
+        refused_large.steps > refused_small.steps * 3,
+        "with the aggregate refused, eight times the postings cost {} steps against {} — which is \
+         not the pile-adding this gate exists to say the operator removes, so the flat row above \
+         says nothing",
+        refused_large.steps,
+        refused_small.steps
+    );
+    assert_eq!(
+        (small.materialised, large.materialised),
+        (1, 1),
+        "the page asks for no account's postings and has one account of its own, so one entry is \
+         copied out of an arrangement whatever the ledger holds — docs/99 §99.9 item 6"
+    );
+}

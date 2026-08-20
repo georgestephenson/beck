@@ -222,10 +222,12 @@ pub enum Op {
     /// `list_min` of a list and of an empty list already return.
     ///
     /// **It is not an index and it does not arrange the collection.** [`Op::ArrangeBy`] keys every
-    /// *row* so that a range answers with the group; this keeps, per group, a multiset of what the
-    /// rows projected to, and the aggregate is one end of it. A row that arrives is one insert into
-    /// a tree whose size is the group's distinct values, and the aggregate moves or it does not —
-    /// so an event that does not change the answer emits no change and nothing downstream runs.
+    /// *row* so that a range answers with the group; this keeps, per group, only as much as its
+    /// aggregate needs — a multiset of what the rows projected to for an extreme, a running total
+    /// for a sum. A row that arrives moves that and nothing else, and the aggregate moves or it
+    /// does not: an event that does not change the answer emits no change and nothing downstream
+    /// runs. A `sum` is the aggregate that takes no discount there, because every row that joins
+    /// its group changes it.
     ///
     /// **Both ends of that multiset are reachable, and that is the finding.** §99.9 item 6 expected
     /// `min` and `max` to be asymmetric, because a prefix range of *somebody else's* arrangement
@@ -239,7 +241,7 @@ pub enum Op {
         /// reason.
         key: Fun,
         /// What each row contributes to its group — the projection under the aggregate, and the
-        /// identity when the program asked for the extreme of the rows themselves.
+        /// identity when the program asked about the rows themselves.
         of: Fun,
         /// Which end of the group is wanted.
         agg: Agg,
@@ -248,10 +250,16 @@ pub enum Op {
 
 /// Which aggregate a [`Op::GroupBy`] maintains.
 ///
-/// Two rather than four: `count` is the join's own tally ([`Matching::Count`]) because a count
-/// needs nothing of the row, and `sum` has no spelling in the language yet —
-/// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6 owes it a
-/// decision about `Int` and `Float` before an operator can be written for it.
+/// Three rather than four: `count` is the join's own tally ([`Matching::Count`]) because a count
+/// needs nothing of the row at all.
+///
+/// Every one of them is a function of **which numbers** its group's rows project to and of nothing
+/// else — not of the order they arrived in, not of the order the collection holds them in. That is
+/// what makes a maintained answer and a recomputed one the same value rather than nearly the same
+/// one, and it is why `sum` waited for a spelling rather than for an implementation
+/// ([`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6). It is a
+/// statement about the answer rather than about the state: what an operator has to *keep* in order
+/// to give it differs per aggregate, and for a sum it is not a multiset at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Agg {
     /// The smallest projection in the group, by [`crate::Value`]'s own total order — which is what
@@ -260,6 +268,15 @@ pub enum Agg {
     Min,
     /// The largest, and it costs what [`Agg::Min`] costs.
     Max,
+    /// The total of the group's projections — `list_sum`, whose answer is `Int` and whose empty
+    /// group is `0` rather than `None`, which is what [`Matching::Total`] exists to say.
+    ///
+    /// **This one keeps no multiset.** A running total moves by `+n` and `-n` as rows arrive and
+    /// leave, so the group's *distinct values* are not a thing it has to know, and the probe is
+    /// `O(1)` rather than the `O(distinct)` a sum derived from [`Agg::Min`]'s tree would cost. The
+    /// accumulator is wider than the answer for `list_sum`'s reason: the sum is exact and the
+    /// failure is a property of the total, not of the way there.
+    Sum,
 }
 
 impl Agg {
@@ -268,6 +285,7 @@ impl Agg {
         match self {
             Agg::Min => "min",
             Agg::Max => "max",
+            Agg::Sum => "sum",
         }
     }
 }
@@ -293,6 +311,21 @@ pub enum Matching {
     /// nothing and **no group is built**. That is the whole difference from [`Matching::Group`],
     /// which pays the group's size on every event that touches it.
     Count,
+    /// The same one-entry-per-group index [`Matching::Unique`] probes, read as a **value rather
+    /// than an option**: [`Op::GroupBy`] with [`Agg::Sum`], whose answer is an `Int`.
+    ///
+    /// A key with no entry is a group with no rows, and the sum of no numbers is `0` — where
+    /// `list_min` of the same empty group is `None`. So the two probes differ in exactly one place
+    /// and it is what a missing entry *means*, which is a property of the aggregate rather than of
+    /// the index.
+    ///
+    /// The third answer is the one worth naming: an entry that is not an `Int` — `None`, as
+    /// [`Op::GroupBy`] publishes it — is a group whose total does not fit one, and probing it
+    /// raises what `list_sum` raises. It is published rather
+    /// than raised at maintenance time because **a group nobody asks about must not fail a render**
+    /// — the recompute only ever sums the groups the loop reaches, and a maintained plan that
+    /// failed on the others would disagree with it about whether the program failed at all.
+    Total,
 }
 
 /// Every operator the engine implements, by name.
@@ -859,12 +892,20 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
         } => "δ keys applied on the left, and on the right ±1 per moved index entry  —  the \
               group is counted, never built"
             .to_string(),
+        Op::Join {
+            matched: Matching::Total,
+            ..
+        } => "δ keys applied on the left, and on the right one entry per group whose total \
+              moved  —  the group is totalled, never built"
+            .to_string(),
         Op::ArrangeBy { .. } => "δ applications, at most 2δ touched — a move is a remove and an \
                                  insert. The probe is the join's cost, not this one's"
             .to_string(),
         // Two applications rather than one — the group's key and the projection — and then one
         // entry per group whose answer *moved*, which is the half worth stating: an event that
-        // adds a row behind the extreme changes nothing and nothing downstream of it runs.
+        // adds a row behind the extreme changes nothing and nothing downstream of it runs. A
+        // `sum` is the one aggregate whose answer moves whenever its group does, so it is the one
+        // that never takes that discount.
         Op::GroupBy { agg, .. } => format!(
             "2δ applications, at most δ touched  —  one {} per group, and the group is never built",
             agg.name()
@@ -1764,12 +1805,12 @@ impl Builder<'_> {
                         // Two aggregates over the same collection, key and projection share one
                         // node; two that differ in any of the three do not, which is what the
                         // projection's own fingerprint is in the sharing key for.
-                        crate::relate::Answers::Extreme(extreme) => {
-                            let crate::relate::Extreme {
+                        crate::relate::Answers::Aggregate(aggregate) => {
+                            let crate::relate::Aggregate {
                                 agg,
                                 of,
                                 param: row,
-                            } = *extreme;
+                            } = *aggregate;
                             let name = format!(
                                 "group_by/{}/{over}/{fp}/{}",
                                 agg.name(),
@@ -1779,9 +1820,16 @@ impl Builder<'_> {
                                 code: lam(vec![row], of),
                                 captures: Vec::new(),
                             };
+                            // The one place the aggregates differ downstream, and it is what an
+                            // absent entry *means*: no rows is `None` for an extreme and `0` for
+                            // a total.
+                            let matched = match agg {
+                                Agg::Sum => Matching::Total,
+                                Agg::Min | Agg::Max => Matching::Unique,
+                            };
                             (
                                 self.shared(name, Op::GroupBy { key, of, agg }, vec![over], None),
-                                Matching::Unique,
+                                matched,
                             )
                         }
                     }
