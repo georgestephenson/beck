@@ -41,6 +41,14 @@ deny = []
 
 [advisories]
 yanked = "deny"
+# An allowance that has outlived its reason is what an `ignore` list invites: the crate moves on,
+# nobody deletes the line, and the next yank of the same crate is waved through by a permission
+# granted for something else. `cargo-deny` notices — it reports `yanked-not-detected` when an entry
+# matches nothing — but as a warning, which no CI job reads. As a denial it is what keeps the list
+# above honest, and it earned that on the day it was added: `arrayref 0.3.9` was yanked, held here
+# for one commit because 0.3.10 was a supply-chain attack, and un-yanked upstream hours later. This
+# line is what said so, by failing.
+unused-ignored-advisory = "deny"
 # Empty, and it should stay that way: an advisory is fixed at the root — by dropping the feature
 # or the dependency that pulls it in — rather than muted here. `postcard`'s default features were
 # removed for exactly this reason (RUSTSEC-2023-0089 via heapless → atomic-polyfill).

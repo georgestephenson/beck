@@ -5,7 +5,7 @@ held to the tree-walker by a differential of **12,852 calls run in a real WebAss
 a million-deep tail recursion proving `return_call` is a jump.
 
 **What it does not establish, said first because it is the number that matters**: it compiles
-**0 of the corpus's 213 definitions**. An application is records, lists and a page; the heap is not
+**0 of the corpus's 220 definitions**. An application is records, lists and a page; the heap is not
 laid out on this target, so [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) is **not
 reversed** — Mode B still ships the interpreter, and this buys a running program nothing yet. What
 it is, is the half of a Mode B code generator that has no heap in it, and the half where everything

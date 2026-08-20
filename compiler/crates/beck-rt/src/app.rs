@@ -47,6 +47,17 @@ pub struct AppConfig {
     /// §23.8) — and an operator running a fanout of a hundred thousand idle sessions over a large
     /// accumulator should be able to decide that differently without recompiling.
     pub maintain_views: bool,
+    /// Whether `/beck.css` carries the stylesheet the compiler derived from the program's own
+    /// classes, or nothing at all
+    /// ([`docs/104`](../../../../../docs/104-styling-and-the-component-library.md) §104.4's
+    /// `styles = none`).
+    ///
+    /// On by default, because a page whose classes have no rules behind them is not styled. It is
+    /// a *switch* rather than a fact because the sheet is an opinion — a preflight and Tailwind's
+    /// design system — and a deployment that ships its own stylesheet should be able to say so
+    /// without the compiler arguing. Off, `beck_core::style` still runs and `beck explain style`
+    /// still answers; what changes is that nothing is served.
+    pub styles: bool,
     /// Whether the operators that do not read the session are held **once** for every subscriber
     /// rather than once per subscriber (§5.3).
     ///
@@ -108,6 +119,7 @@ impl Default for AppConfig {
             snapshot_every: 1000,
             max_batch: 256,
             dedup_capacity: 16_384,
+            styles: true,
             maintain_views: true,
             share_arrangements: true,
             retention: beck_core::engine::Retention::default(),
@@ -158,6 +170,12 @@ pub struct App {
     /// What everybody is doing — the roster `awareness(f)` reads, held beside `here` because it is
     /// the same kind of fact about the same connections and moves independently of it.
     aware: Arc<crate::awareness::Registry>,
+    /// The stylesheet this program's pages need, derived once at startup.
+    ///
+    /// Derived rather than read from disk, for `/beck-bundle.bpk`'s reason one line up: a page
+    /// cannot be served rules for a program this process is not executing. Empty when
+    /// [`AppConfig::styles`] is off.
+    stylesheet: String,
     /// Set once, when this process is going away. Every subscription watches it.
     ///
     /// §5.2 lists "graceful drain (finish folds, snapshot, hand off subscriptions)" among the
@@ -198,6 +216,7 @@ impl App {
         let (version, _) = watch::channel(head);
         let (tx, rx) = mpsc::channel::<Proposal>(1024);
         let shared = runtime.shared_dataflow(config.retention);
+        let runtime_for_styles = runtime.clone();
         let app = Arc::new(App {
             runtime,
             store,
@@ -208,12 +227,23 @@ impl App {
             config: config.clone(),
             shared,
             limit: crate::quota::RateLimit::new(config.quota),
+            stylesheet: match config.styles {
+                true => beck_core::style::stylesheet(&beck_core::style::classes(
+                    &runtime_for_styles.placed().program,
+                )),
+                false => String::new(),
+            },
             here: crate::presence::Registry::new(config.presence),
             aware: crate::awareness::Registry::new(config.awareness),
             draining: watch::channel(false).0,
         });
         tokio::spawn(sequencer(app.clone(), rx, config));
         Ok(app)
+    }
+
+    /// The stylesheet `/beck.css` serves — this program's classes and nothing else.
+    pub fn stylesheet(&self) -> &str {
+        &self.stylesheet
     }
 
     pub fn runtime(&self) -> &Runtime {

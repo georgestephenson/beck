@@ -487,6 +487,214 @@ fn a_maintained_count_per_group_survives_the_events_that_take_it_down() {
     );
 }
 
+/// A group's **ends** are maintained, and the four events a generated log reaches only by luck are
+/// written out.
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's other two
+/// aggregates. `corpus/36-auction.beck` shows the lowest and the highest bid on each lot, and
+/// [`beck_core::plan::Op::GroupBy`] answers both from one multiset per group. The oracle is the same
+/// one every other test here uses — the recomputed page, byte for byte — and what this adds is a log
+/// in which each of the four ways an extreme can be wrong actually happens:
+///
+///   * the **standing minimum is withdrawn**, so the answer has to be promoted from the tree rather
+///     than left where it was;
+///   * the **standing maximum is withdrawn**, which is the same failure read from the other end and
+///     is the half an implementation that only maintains `min` gets wrong;
+///   * a **tie is broken by half**: two bids of the same amount, one withdrawn. A tree that held
+///     values rather than a multiset of them drops the answer here and shows the wrong end;
+///   * the **last bid on a lot goes**, so the group empties and the page must say so again —
+///     an empty group is a missing entry rather than an entry holding nothing.
+///
+/// The closing assertion is on the end state, because a green run over a log that never went down
+/// says nothing: one lot back to no bids at all, and one holding a single bid that arrived after
+/// both of its ends had been taken away.
+#[test]
+fn a_maintained_extreme_per_group_survives_the_events_that_take_it_down() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/36-auction.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let mut subject = Subject::new("corpus/36-auction.beck", compile("36-auction.beck", &src));
+
+    let event = |variant: &str, fields: Vec<(&str, Value)>| {
+        Value::data(
+            Arc::from("Event"),
+            Some(Arc::from(variant)),
+            beck_core::core::Fields::from_iter(fields.into_iter().map(|(k, v)| (Arc::from(k), v))),
+        )
+    };
+    let opened = |id: &str, title: &str| {
+        event(
+            "Opened",
+            vec![("id", Value::str_(id)), ("title", Value::str_(title))],
+        )
+    };
+    let offered = |id: &str, lot: &str, amount: i64| {
+        event(
+            "Offered",
+            vec![
+                ("id", Value::str_(id)),
+                ("lot", Value::str_(lot)),
+                ("amount", Value::Int(amount)),
+            ],
+        )
+    };
+    let withdrawn = |id: &str| event("Withdrawn", vec![("id", Value::str_(id))]);
+
+    let log = vec![
+        opened("l1", "a lamp"),
+        opened("l2", "a rug"),
+        offered("b1", "l1", 40),
+        offered("b2", "l1", 12),
+        offered("b3", "l1", 95),
+        // Between the two ends: the group moves and neither answer does.
+        offered("b4", "l1", 63),
+        offered("b5", "l2", 7),
+        // Down at the bottom, then at the top.
+        withdrawn("b2"),
+        withdrawn("b3"),
+        // A tie, then half of it — the multiplicity is what keeps 40 the answer.
+        offered("b6", "l1", 40),
+        withdrawn("b6"),
+        // And empty: everything on the lamp, then the rug's one bid, then one bid back.
+        withdrawn("b1"),
+        withdrawn("b4"),
+        withdrawn("b5"),
+        offered("b7", "l1", 21),
+    ];
+
+    let mut compared = subject.agrees("the empty log");
+    for (i, e) in log.into_iter().enumerate() {
+        subject.fold(e);
+        compared += subject.agrees(&format!("event {}", i + 1));
+    }
+    assert!(compared >= 30, "only {compared} pages were compared");
+
+    let page = subject
+        .runtime
+        .view(&subject.state, ACTORS[0])
+        .expect("recompute")
+        .render();
+    assert!(
+        page.contains("a lamp: 21 / 21") && page.contains("a rug: no bids / no bids"),
+        "the log this test is written around no longer empties a group and refills it:\n{page}"
+    );
+}
+
+/// **An event that moves a group without moving its ends re-renders nothing.**
+///
+/// This is the property that separates an aggregate from a `filter_list` somebody measures, and it
+/// is about the operator's *output* rather than its cost:
+/// [`beck_core::plan::Op::GroupBy`] publishes a change only when the answer moved, so a bid between
+/// the standing low and the standing high stops at that operator and nothing below it runs — not the
+/// join, not the loop, not the page.
+///
+/// Measured as a difference between two events on the same program rather than against a constant,
+/// because two of the plan's recomputes read the accumulator and re-evaluate whatever the event was:
+/// what this asserts is that the *page* is among them for one event and not for the other.
+#[test]
+fn a_bid_between_the_ends_does_not_re_render_the_page() {
+    use beck_core::plan::Plan;
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/36-auction.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let placed = compile("36-auction.beck", &src);
+    let backend = beck_eval::backend(&placed);
+    let plan = Arc::new(Plan::compile(&placed));
+    let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("the plan prepares"));
+    let runtime = Runtime::new(placed, backend).expect("the program prepares");
+
+    let event = |variant: &str, fields: Vec<(&str, Value)>| {
+        Value::data(
+            Arc::from("Event"),
+            Some(Arc::from(variant)),
+            beck_core::core::Fields::from_iter(fields.into_iter().map(|(k, v)| (Arc::from(k), v))),
+        )
+    };
+
+    // One lot with two bids, so there is a low and a high to sit between.
+    let cost_of_next = |amount: i64| -> beck_core::engine::Work {
+        let mut engine = Engine::new(prepared.clone());
+        let session = runtime.session(ACTORS[0]);
+        let here = beck_core::edge::presence_of(ACTORS[0]);
+        let mut state = runtime.initial_state().expect("an initial accumulator");
+        let mut seq = 0u64;
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: Instant(seq as i64),
+                actor: ACTORS[0].to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("folds")
+        };
+        for body in [
+            event(
+                "Opened",
+                vec![("id", Value::str_("l1")), ("title", Value::str_("a lamp"))],
+            ),
+            event(
+                "Offered",
+                vec![
+                    ("id", Value::str_("b1")),
+                    ("lot", Value::str_("l1")),
+                    ("amount", Value::Int(20)),
+                ],
+            ),
+            event(
+                "Offered",
+                vec![
+                    ("id", Value::str_("b2")),
+                    ("lot", Value::str_("l1")),
+                    ("amount", Value::Int(80)),
+                ],
+            ),
+        ] {
+            seq += 1;
+            state = fold(&state, body, seq);
+        }
+        engine.render(&state, &session, &here).expect("renders");
+        seq += 1;
+        state = fold(
+            &state,
+            event(
+                "Offered",
+                vec![
+                    ("id", Value::str_("b3")),
+                    ("lot", Value::str_("l1")),
+                    ("amount", Value::Int(amount)),
+                ],
+            ),
+            seq,
+        );
+        engine.render(&state, &session, &here).expect("renders");
+        engine.work()
+    };
+
+    let between = cost_of_next(50);
+    let below = cost_of_next(5);
+    println!(
+        "a bid between the ends: {} recomputed, {} touched; one below the low: {} recomputed, {} \
+         touched",
+        between.recomputed, between.touched, below.recomputed, below.touched
+    );
+    assert!(
+        between.recomputed < below.recomputed,
+        "a bid that moved neither end cost {} recomputes and one that moved the low cost {} — so \
+         the aggregate published a change for an answer that did not move, and every subscriber \
+         reassembled a page identical to the one it had",
+        between.recomputed,
+        below.recomputed
+    );
+    assert_eq!(
+        between.touched, 1,
+        "a bid between the ends touched {} arrangement entries; one is the `map_values` diff of \
+         the accumulator's own map, and anything more is an operator below the aggregate reacting \
+         to a change that should not have been published",
+        between.touched
+    );
+}
+
 /// Fold one `Added` event into the sketch's accumulator.
 fn fold_added(runtime: &Runtime, state: &Value, n: u64, actor: &str) -> Value {
     let id = Value::data(

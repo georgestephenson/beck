@@ -212,6 +212,64 @@ pub enum Op {
         /// [`Op::Join`]'s reason.
         key: Fun,
     },
+    /// One value per group, maintained — [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md)
+    /// §99.9 item 6's `group by`, and the operator that answers a question about a group
+    /// **without the group existing**.
+    ///
+    /// Its output is an arrangement keyed by the group's key alone, holding the aggregate, so a
+    /// [`Op::Join`] probes it with [`Matching::Unique`] exactly as it probes a `map_values` — the
+    /// answer is `Some(x)` for a group with rows and `None` for one without, which is what
+    /// `list_min` of a list and of an empty list already return.
+    ///
+    /// **It is not an index and it does not arrange the collection.** [`Op::ArrangeBy`] keys every
+    /// *row* so that a range answers with the group; this keeps, per group, a multiset of what the
+    /// rows projected to, and the aggregate is one end of it. A row that arrives is one insert into
+    /// a tree whose size is the group's distinct values, and the aggregate moves or it does not —
+    /// so an event that does not change the answer emits no change and nothing downstream runs.
+    ///
+    /// **Both ends of that multiset are reachable, and that is the finding.** §99.9 item 6 expected
+    /// `min` and `max` to be asymmetric, because a prefix range of *somebody else's* arrangement
+    /// can be entered from its start and not from its end: bounding `(g, y)` above needs a
+    /// successor of an arbitrary [`crate::Value`] and there is none. A tree this operator builds
+    /// itself is keyed by the projection alone and is bounded at both ends by construction, so
+    /// `max` costs what `min` costs. The asymmetry belonged to the design rather than to the
+    /// problem.
+    GroupBy {
+        /// The group's key, as a function of one row. It captures nothing, for [`Op::Join`]'s
+        /// reason.
+        key: Fun,
+        /// What each row contributes to its group — the projection under the aggregate, and the
+        /// identity when the program asked for the extreme of the rows themselves.
+        of: Fun,
+        /// Which end of the group is wanted.
+        agg: Agg,
+    },
+}
+
+/// Which aggregate a [`Op::GroupBy`] maintains.
+///
+/// Two rather than four: `count` is the join's own tally ([`Matching::Count`]) because a count
+/// needs nothing of the row, and `sum` has no spelling in the language yet —
+/// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6 owes it a
+/// decision about `Int` and `Float` before an operator can be written for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Agg {
+    /// The smallest projection in the group, by [`crate::Value`]'s own total order — which is what
+    /// `list_min` compares, so the maintained answer and the recomputed one are the same function
+    /// of the same set.
+    Min,
+    /// The largest, and it costs what [`Agg::Min`] costs.
+    Max,
+}
+
+impl Agg {
+    /// The name that reaches a sharing key and `beck explain query`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Agg::Min => "min",
+            Agg::Max => "max",
+        }
+    }
 }
 
 /// What one probe of a join's right side returns.
@@ -260,6 +318,7 @@ pub const OPERATORS: &[&str] = &[
     "list_is_empty",
     "join",
     "arrange_by",
+    "group_by",
 ];
 
 impl Op {
@@ -282,6 +341,7 @@ impl Op {
             Op::IsEmpty => "list_is_empty",
             Op::Join { .. } => "join",
             Op::ArrangeBy { .. } => "arrange_by",
+            Op::GroupBy { .. } => "group_by",
         }
     }
 
@@ -300,6 +360,7 @@ impl Op {
                 | Op::IsEmpty
                 | Op::Join { .. }
                 | Op::ArrangeBy { .. }
+                | Op::GroupBy { .. }
         )
     }
 
@@ -337,6 +398,10 @@ impl Op {
             Op::ArrangeBy { .. } => {
                 "the key it indexes by, then the input's key — one range per key"
             }
+            // One component and no second, which is the difference from `arrange_by` above: this
+            // holds one entry per *group* rather than one per row, so a probe is a point lookup
+            // and the collection's own order never reaches the output.
+            Op::GroupBy { .. } => "the group's key — one entry per group, and no row",
         }
     }
 
@@ -353,36 +418,43 @@ impl Op {
                 | Op::FlatMap { .. }
                 | Op::Join { .. }
                 | Op::ArrangeBy { .. }
+                | Op::GroupBy { .. }
         )
     }
 
-    /// The per-element function this operator carries, whatever it is applied to.
+    /// Every per-element function this operator carries, whatever each is applied to.
     ///
     /// One accessor rather than the five-way `if let` that was written out at each of the four
     /// places that remap captures: a new operator with a [`Fun`] missed at one of them would be a
     /// capture the plan never renumbered, which is a wrong `OpId` rather than a compile error.
-    pub fn fun_mut(&mut self) -> Option<&mut Fun> {
+    ///
+    /// It returns a *list* because [`Op::GroupBy`] carries two, and an accessor that returned the
+    /// first would reintroduce exactly the defect the paragraph above describes — silently, for
+    /// the second one only.
+    pub fn funs_mut(&mut self) -> Vec<&mut Fun> {
         match self {
             Op::MapList { f }
             | Op::FilterList { f }
             | Op::SortBy { f }
             | Op::FlatMap { f }
             | Op::Join { key: f, .. }
-            | Op::ArrangeBy { key: f } => Some(f),
-            _ => None,
+            | Op::ArrangeBy { key: f } => vec![f],
+            Op::GroupBy { key, of, .. } => vec![key, of],
+            _ => Vec::new(),
         }
     }
 
-    /// The same function, borrowed.
-    pub fn fun(&self) -> Option<&Fun> {
+    /// The same functions, borrowed. Order is the order the engine prepares them in.
+    pub fn funs(&self) -> Vec<&Fun> {
         match self {
             Op::MapList { f }
             | Op::FilterList { f }
             | Op::SortBy { f }
             | Op::FlatMap { f }
             | Op::Join { key: f, .. }
-            | Op::ArrangeBy { key: f } => Some(f),
-            _ => None,
+            | Op::ArrangeBy { key: f } => vec![f],
+            Op::GroupBy { key, of, .. } => vec![key, of],
+            _ => Vec::new(),
         }
     }
 }
@@ -551,11 +623,14 @@ impl Plan {
                     .iter()
                     .any(|&j| self.nodes[j].per_session);
             self.nodes[i].per_session = per;
-            if let Some(f) = self.nodes[i].op.fun() {
-                let captured: Vec<OpId> = f.captures.clone();
-                if captured.iter().any(|&j| self.nodes[j].per_session) {
-                    self.nodes[i].per_session = true;
-                }
+            let captured: Vec<OpId> = self.nodes[i]
+                .op
+                .funs()
+                .iter()
+                .flat_map(|f| f.captures.iter().copied())
+                .collect();
+            if captured.iter().any(|&j| self.nodes[j].per_session) {
+                self.nodes[i].per_session = true;
             }
         }
         for i in 0..self.nodes.len() {
@@ -612,7 +687,7 @@ impl Plan {
             }
             let mut node = node;
             node.inputs.iter_mut().for_each(|id| *id = map[id]);
-            if let Some(f) = node.op.fun_mut() {
+            for f in node.op.funs_mut() {
                 f.captures.iter_mut().for_each(|id| *id = map[id]);
             }
             nodes.push(node);
@@ -635,7 +710,7 @@ impl Plan {
     /// Every node an operator reads, including the ones its per-element function captured.
     pub fn dependencies(&self, i: OpId) -> Vec<OpId> {
         let mut out = self.nodes[i].inputs.clone();
-        if let Some(f) = self.nodes[i].op.fun() {
+        for f in self.nodes[i].op.funs() {
             out.extend(f.captures.iter().copied());
         }
         out
@@ -787,6 +862,13 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
         Op::ArrangeBy { .. } => "δ applications, at most 2δ touched — a move is a remove and an \
                                  insert. The probe is the join's cost, not this one's"
             .to_string(),
+        // Two applications rather than one — the group's key and the projection — and then one
+        // entry per group whose answer *moved*, which is the half worth stating: an event that
+        // adds a row behind the extreme changes nothing and nothing downstream of it runs.
+        Op::GroupBy { agg, .. } => format!(
+            "2δ applications, at most δ touched  —  one {} per group, and the group is never built",
+            agg.name()
+        ),
     }
 }
 
@@ -1609,9 +1691,12 @@ impl Builder<'_> {
     /// or an `arrange_by` built for the purpose — and the join, taking the previous join's rows on
     /// its left. Then one loop over the last one's rows.
     ///
-    /// Both indexes are [`Builder::shared`], so two joins that want the same one get the same node
-    /// (§99.5 decision 4). For `arrange_by` that needs the key function to be part of the sharing
-    /// key, and [`crate::relate::fingerprint`] is what makes an expression into one.
+    /// Every index here is [`Builder::shared`], so two joins that want the same one get the same
+    /// node (§99.5 decision 4). For the built ones that needs the key function to be part of the
+    /// sharing key, and [`crate::relate::fingerprint_fun`] is what makes one into a string — with
+    /// the key's own parameter written canonically, because `Core` numbers variables per definition
+    /// and two loops that index the same collection by the same key would otherwise build two
+    /// identical arrangements.
     ///
     /// `Err` carries the reason nothing was rewritten, which the caller hangs on the operator that
     /// pays for it; `Err(None)` is the ordinary case of a loop that relates nothing.
@@ -1650,18 +1735,56 @@ impl Builder<'_> {
                     Matching::Unique,
                 ),
                 crate::relate::Index::Grouped { by, param, answers } => {
-                    let name = format!("arrange_by/{over}/{}", crate::relate::fingerprint(&by));
+                    let fp = crate::relate::fingerprint_fun(param, &by);
                     let key = Fun {
                         code: lam(vec![param], by),
                         captures: Vec::new(),
                     };
-                    (
-                        self.shared(name, Op::ArrangeBy { key }, vec![over], None),
-                        match answers {
-                            crate::relate::Answers::Rows => Matching::Group,
-                            crate::relate::Answers::Count => Matching::Count,
-                        },
-                    )
+                    match answers {
+                        crate::relate::Answers::Rows => (
+                            self.shared(
+                                format!("arrange_by/{over}/{fp}"),
+                                Op::ArrangeBy { key },
+                                vec![over],
+                                None,
+                            ),
+                            Matching::Group,
+                        ),
+                        crate::relate::Answers::Count => (
+                            self.shared(
+                                format!("arrange_by/{over}/{fp}"),
+                                Op::ArrangeBy { key },
+                                vec![over],
+                                None,
+                            ),
+                            Matching::Count,
+                        ),
+                        // An aggregate's right side is not the collection at all: it is one entry
+                        // per group, so the join probes it the way it probes a `map_get`'s map.
+                        // Two aggregates over the same collection, key and projection share one
+                        // node; two that differ in any of the three do not, which is what the
+                        // projection's own fingerprint is in the sharing key for.
+                        crate::relate::Answers::Extreme(extreme) => {
+                            let crate::relate::Extreme {
+                                agg,
+                                of,
+                                param: row,
+                            } = *extreme;
+                            let name = format!(
+                                "group_by/{}/{over}/{fp}/{}",
+                                agg.name(),
+                                crate::relate::fingerprint_fun(row, &of)
+                            );
+                            let of = Fun {
+                                code: lam(vec![row], of),
+                                captures: Vec::new(),
+                            };
+                            (
+                                self.shared(name, Op::GroupBy { key, of, agg }, vec![over], None),
+                                Matching::Unique,
+                            )
+                        }
+                    }
                 }
             };
             let key = Fun {

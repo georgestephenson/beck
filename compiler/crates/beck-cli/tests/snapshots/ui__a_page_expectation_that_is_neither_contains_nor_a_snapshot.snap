@@ -3,8 +3,8 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&format!(\"{}\\ntest \\\"neither\\\":\\n    given []\\n    expect page resembles \\\"milk\\\"\\n\",\nBASE))"
 ---
 error[B0120]: expected `contains` or `matches snapshot`
-  --> t.beck:195:17
+  --> t.beck:204:17
     |
-195 |     expect page resembles "milk"
+204 |     expect page resembles "milk"
     |                 ^^^^^^^^^ unexpected here
     |

@@ -529,6 +529,74 @@ impl Editor {
         self.names.get(&word_at(&self.text, offset)?)
     }
 
+    /// What to say about the **class** under the caret, when the caret is in a `class=` value.
+    ///
+    /// [`docs/104`](../../../../../docs/104-styling-and-the-component-library.md) §104.4: "hover
+    /// print the declarations […] that is the Tailwind IntelliSense extension, without an
+    /// extension, because the answers come from the compiler." A class is not a name this document
+    /// declares, so it is not in [`Editor::hover`]'s index and never could be — what it is, is a
+    /// token inside a string, answered from the same table `beck build` emits the sheet from.
+    pub fn class_hover(&self, offset: u32) -> Option<String> {
+        let token = class_token_at(&self.text, offset)?;
+        let rule = crate::style::rule(&token)?;
+        let decls = rule
+            .decls
+            .iter()
+            .map(|(p, v)| format!("{p}: {v};"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(match rule.at.is_empty() {
+            true => format!("{} {{ {decls} }}", rule.selector),
+            false => format!(
+                "{} {{ {} {{ {decls} }} }}",
+                rule.at.join(" "),
+                rule.selector
+            ),
+        })
+    }
+
+    /// The utilities that could finish the class being typed, best-first.
+    ///
+    /// Empty when the caret is not inside a `class=` value, which is what keeps four thousand
+    /// utility names out of every other completion in the file.
+    pub fn class_completions(&self, offset: u32) -> Vec<Completion> {
+        let Some(prefix) = class_prefix_at(&self.text, offset) else {
+            return Vec::new();
+        };
+        let (names, variants) = crate::style::enumerate();
+        // A variant is offered only once one has been typed towards, because `hover:` in front of
+        // four thousand names is four thousand more completions and none of them is what somebody
+        // reaching for `flex` wants.
+        let variants = variants
+            .into_iter()
+            .filter(|v: &&str| !prefix.is_empty() && v.starts_with(prefix.as_str()))
+            .map(|v| Completion {
+                label: format!("{v}:"),
+                detail: String::new(),
+                kind: CompletionKind::Keyword,
+                doc: None,
+            });
+        names
+            .into_iter()
+            .filter(|n| n.starts_with(&prefix))
+            .filter_map(|name| {
+                let rule = crate::style::rule(&name)?;
+                Some(Completion {
+                    detail: rule
+                        .decls
+                        .iter()
+                        .map(|(p, v)| format!("{p}: {v}"))
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                    label: name,
+                    kind: CompletionKind::Function,
+                    doc: None,
+                })
+            })
+            .chain(variants)
+            .collect()
+    }
+
     /// Where the name under the caret is declared, in this document.
     pub fn definition(&self, offset: u32) -> Option<(u32, u32)> {
         self.hover(offset)?.span
@@ -1211,6 +1279,63 @@ pub fn word_at(text: &str, offset: u32) -> Option<String> {
 /// Not [`word_at`]: a caret in the middle of `to|tal` completes on `to`, because the rest of the
 /// word is what the person is about to replace, and offering only names that start with `total`
 /// would answer a question they have not finished asking.
+/// Whether the caret is inside the value of a `class=` attribute, and what has been typed of the
+/// token it is in.
+///
+/// Text rather than tree, and deliberately: a class being *typed* has not parsed yet, so there is
+/// no node to ask. The rule is the one a reader would apply — find the string the caret is in, then
+/// look left past the rest of the list for `class=`.
+///
+/// `None` when the caret is not in such a string, which is what keeps the utility table out of
+/// every other completion in the file.
+fn class_prefix_at(text: &str, offset: u32) -> Option<String> {
+    let mut at = (offset as usize).min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let before = &text[line_start..at];
+    // Inside a string exactly when an odd number of quotes precede the caret on its line. A quote
+    // inside a string is not a case this has to handle: `class=` values are class names.
+    if before.matches('"').count().is_multiple_of(2) {
+        return None;
+    }
+    let quote = before.rfind('"')?;
+    // Everything between `class=` and that quote has to be the value so far — nothing, or the
+    // opening of a list and the strings already in it. Anything else means the value closed and
+    // something took its place: `class="flex", placeholder="gap in the diary"` has `class=` to its
+    // left and a caret inside a string, and is not a class at all.
+    let head = &before[..quote];
+    let opened = head.rfind("class=")? + "class=".len();
+    let between = &head[opened..];
+    if !between.is_empty() {
+        let outside: String = between.split('"').step_by(2).collect::<Vec<_>>().join("");
+        if !between.starts_with('[')
+            || !outside
+                .chars()
+                .all(|c| c == '[' || c == ',' || c.is_whitespace())
+        {
+            return None;
+        }
+    }
+    // The token being typed is what follows the last space inside the string: `class="flex it‸"`
+    // is completing `it` rather than `flex it`.
+    let typed = &before[quote + 1..];
+    Some(typed.rsplit(' ').next().unwrap_or(typed).to_string())
+}
+
+/// The whole class token the caret is inside, for hover.
+fn class_token_at(text: &str, offset: u32) -> Option<String> {
+    let prefix = class_prefix_at(text, offset)?;
+    let mut at = (offset as usize).min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    let rest = &text[at..];
+    let end = rest.find(['"', ' ', '\n']).unwrap_or(rest.len());
+    Some(format!("{prefix}{}", &rest[..end]))
+}
+
 fn prefix_at(text: &str, offset: u32) -> String {
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
     let mut end = (offset as usize).min(text.len());

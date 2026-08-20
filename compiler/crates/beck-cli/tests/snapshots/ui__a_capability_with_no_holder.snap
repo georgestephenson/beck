@@ -3,9 +3,9 @@ source: crates/beck-cli/tests/ui.rs
 expression: "render(&edited(\"def done_class(t: Todo) -> Str:\",\n\"def purge(t: Todo) -> Str uses cap.admin:\\n    return t.text\\n\\ndef done_class(t: Todo) -> Str:\"))"
 ---
 error[B0412]: `purge` requires a capability nothing can discharge
-  --> t.beck:117:1
+  --> t.beck:126:1
     |
-117 | def purge(t: Todo) -> Str uses cap.admin:
+126 | def purge(t: Todo) -> Str uses cap.admin:
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ needs {cap.admin}
     |
   = note: a `Session` reaches exactly one place in a Beck program: the validator `decide` is given, which is the only function handed a `Proposal`. Authority is one chokepoint (docs/03 §3.5), so a capability required outside it has no holder

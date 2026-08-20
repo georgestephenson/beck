@@ -1135,3 +1135,158 @@ fn the_work_a_render_reports_includes_what_happened_inside_it() {
         small.steps
     );
 }
+
+/// **Asking a group for one of its ends does not build the group.**
+///
+/// [`docs/99-the-data-tier-means-of-combination.md`](../../../../docs/99-the-data-tier-means-of-combination.md)
+/// §99.9 item 6's other two aggregates, and the sibling of `counting_a_group_does_not_build_it`
+/// above. `corpus/36-auction.beck` shows the lowest and the highest bid on every lot;
+/// [`beck_core::plan::Op::GroupBy`] keeps a multiset per group and reads an end of it, so a bid
+/// costs two applications and a tree insert whatever the pile it lands on holds.
+///
+/// The measured event is a **new low**, on purpose: it is the worst case for the operator, because
+/// the answer moves and the page is reassembled. An event that changed neither end would leave the
+/// whole plan below the aggregate idle and make this row true for a reason that has nothing to do
+/// with the group's size — which is a different property, gated in
+/// `incremental_engine.rs::a_bid_between_the_ends_does_not_re_render_the_page`.
+///
+/// Two instruments, as above: [`beck_core::engine::Work::steps`] against [`Relate::Refuse`], which
+/// is the off switch [`docs/08`](../../../../docs/08-roadmap.md) §8.3 item 8 requires of a choice
+/// the compiler makes unbidden; and `materialised`, held to the exact number, because a group
+/// copied out of an arrangement in order to walk it is what the operator exists not to do.
+#[test]
+fn asking_a_group_for_one_end_does_not_build_it() {
+    use beck_core::core::Fields;
+    use beck_core::engine::{Engine, Prepared, Work};
+    use beck_core::plan::{Agg, Op, Plan, Relate};
+    use beck_core::Value;
+    use beck_rt::{Envelope, Instant, Runtime};
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/36-auction.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let (placed, diags, map) = beck_core::compile_str("36-auction.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("the corpus program compiles");
+
+    let ends = |relate: Relate| -> Vec<Agg> {
+        Plan::compile_with(&placed, relate)
+            .nodes
+            .iter()
+            .filter_map(|n| match n.op {
+                Op::GroupBy { agg, .. } => Some(agg),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        ends(Relate::Recognise),
+        vec![Agg::Min, Agg::Max],
+        "corpus/36-auction.beck no longer compiles to a `group_by` at each end, so this gate \
+         measures something else"
+    );
+    assert!(
+        ends(Relate::Refuse).is_empty(),
+        "`Relate::Refuse` left the aggregate in the plan, so the off switch is not one"
+    );
+
+    let event = |variant: &str, fields: &[(&str, Value)]| {
+        let mut f = Fields::new();
+        for (k, v) in fields {
+            f.insert(Arc::from(*k), v.clone());
+        }
+        Value::data(Arc::from("Event"), Some(Arc::from(variant)), f)
+    };
+    let offered = |id: &str, amount: i64| {
+        event(
+            "Offered",
+            &[
+                ("id", Value::str_(id)),
+                ("lot", Value::str_("l1")),
+                ("amount", Value::Int(amount)),
+            ],
+        )
+    };
+
+    // What one more bid costs once `n` are already on the same lot. The pile the event lands on is
+    // the whole collection, which is the worst case for an aggregate that walks its group and no
+    // case at all for one that keeps it.
+    let cost_at = |relate: Relate, n: i64| -> Work {
+        let backend = beck_eval::backend(&placed);
+        let plan = Arc::new(Plan::compile_with(&placed, relate));
+        let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("the plan prepares"));
+        let runtime = Runtime::new(placed.clone(), backend).expect("the program prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let mut seq = 0u64;
+        let mut state = runtime.initial_state().expect("an initial accumulator");
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: Instant(seq as i64),
+                actor: "ana".to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("folds")
+        };
+        seq += 1;
+        state = fold(
+            &state,
+            event(
+                "Opened",
+                &[("id", Value::str_("l1")), ("title", Value::str_("a lamp"))],
+            ),
+            seq,
+        );
+        for i in 0..n {
+            seq += 1;
+            state = fold(&state, offered(&format!("b{i:06}"), 1_000 + i), seq);
+        }
+        // The cold render builds every arrangement — `O(n)`, once, and not what is measured.
+        engine.render(&state, &session, &here).expect("renders");
+        // A new low: the answer moves, the page is reassembled, and none of that is the group's
+        // size.
+        seq += 1;
+        state = fold(&state, offered("b999999", 5), seq);
+        engine.render(&state, &session, &here).expect("renders");
+
+        let work = engine.work();
+        println!(
+            "{relate:?} at {n:>5} bids: {:>6} steps, {:>5} materialised ({} applications, {} \
+             touched, {} recomputed)",
+            work.steps, work.materialised, work.applications, work.touched, work.recomputed
+        );
+        work
+    };
+
+    let (small, large) = (
+        cost_at(Relate::Recognise, 200),
+        cost_at(Relate::Recognise, 1_600),
+    );
+    let (refused_small, refused_large) =
+        (cost_at(Relate::Refuse, 200), cost_at(Relate::Refuse, 1_600));
+
+    assert!(
+        large.steps <= small.steps,
+        "eight times the bids cost {} backend steps against {}. The smallest of a group is one \
+         end of a tree the operator keeps, and neither end is the collection — docs/99 §99.9 item 6",
+        large.steps,
+        small.steps
+    );
+    assert!(
+        refused_large.steps > refused_small.steps * 3,
+        "with the aggregate refused, eight times the bids cost {} steps against {} — which is not \
+         the pile-walking this gate exists to say the operator removes, so the flat row above says \
+         nothing",
+        refused_large.steps,
+        refused_small.steps
+    );
+    assert_eq!(
+        (small.materialised, large.materialised),
+        (1, 1),
+        "the page asks for no group's rows and has one lot of its own, so one entry is copied out \
+         of an arrangement whatever the pile holds — docs/99 §99.9 item 6"
+    );
+}

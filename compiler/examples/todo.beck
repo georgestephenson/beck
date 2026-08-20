@@ -103,19 +103,28 @@ def view(s: State, session: Session) -> Html:
 
 def render(todos: list[Todo], left: Int) -> Html:
     return ui:
-        main:
-            h1: "todos"
-            input(aria_label="what needs doing?", placeholder="what needs doing?", autofocus="on",
+        main(class=["mx-auto", "max-w-80", "p-4"]):
+            h1(class=["text-2xl", "font-bold"]): "todos"
+            input(class=["w-full", "p-2", "border", "rounded"],
+                  aria_label="what needs doing?", placeholder="what needs doing?", autofocus="on",
                   on_enter=Add(id=Id(value="$id"), text="$value"))
-            ul:
+            ul(class=["my-4", "space-y-2"]):
                 for t in todos:
                     li(key=t.id, class=done_class(t)):
-                        span(on_click=Toggle(id=t.id)): t.text
+                        span(class=["flex-1"], on_click=Toggle(id=t.id)): t.text
                         button(on_click=Delete(id=t.id)): "x"
-            footer: (str(left) + " remaining")
+            footer(class=["text-gray-500"]): (str(left) + " remaining")
 
+## Every class this page carries is a utility the compiler knows, so `beck build` emits a rule for
+## each of them and nothing else (`docs/104` §104.4). `done` used to be this program's own name for
+## a rule in `beck-rt`'s hard-coded sheet; `line-through` is the same look with nothing hard-coded.
+##
+## Two whole alternatives rather than a list with one variable in it, which is what `docs/104`
+## §104.4's own example writes: `class=[…, done_class(t)]` lowers to a `str_join`, and `str_join`
+## has no delta rule, so it would make this page a recompute (`DEFECTS.md::class-list-recomputes`).
+## Both arms are literals either way, so the compiler enumerates both.
 def done_class(t: Todo) -> Str:
-    return "done" if t.done else ""
+    return "flex gap-2 items-baseline line-through" if t.done else "flex gap-2 items-baseline"
 
 # ---------- The wiring: where time enters, and where it stops ----------
 

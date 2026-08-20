@@ -143,9 +143,22 @@ jobs:
           ./target/release/beck run examples/todo.beck --addr 127.0.0.1:8080 --path /tmp/beck.log &
           for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8080/healthz >/dev/null && break; sleep 0.25; done
           curl -sf "http://127.0.0.1:8080/?actor=ci" | tee /tmp/page.html | head -c 400
-          # SSR is the data, rendered — not a shell that fetches it.
-          grep -q '<footer>0 remaining</footer>' /tmp/page.html
+          # SSR is the data, rendered — not a shell that fetches it. Matched without the opening
+          # tag's attributes: what this asserts is that the *text* was rendered into the footer,
+          # and pinning `<footer>` made restyling the sketch onto utility classes break a claim
+          # about server-side rendering (docs/104 §104.4a).
+          grep -q '>0 remaining</footer>' /tmp/page.html
           grep -q 'data-b-enter=' /tmp/page.html
+          # The stylesheet is the program's own, derived from the classes its pages can carry
+          # (docs/104 §104.4a) — so a class this page is serving has a rule in it, and one it
+          # cannot carry does not. Served rather than built: `beck build` writing the file is a
+          # different claim from this process answering for it.
+          curl -sf http://127.0.0.1:8080/beck.css > /tmp/beck.css
+          grep -q '\.text-gray-500{color:var(--color-gray-500);}' /tmp/beck.css
+          grep -q -- '--color-gray-500:oklch' /tmp/beck.css
+          if grep -q 'bg-emerald-700' /tmp/beck.css; then
+            echo 'the sheet carries a rule for a class this page cannot carry'; exit 1
+          fi
           # No user JavaScript in Mode A. The property is not "one script tag" — the residue is
           # several files now that Mode B shares its patch interpreter (docs/94) — it is that every
           # script the document loads is *compiler residue served by this server*, and that none of
@@ -155,7 +168,9 @@ jobs:
              = "$(grep -o '<script src="/beck-[a-z0-9-]*\.js" defer></script>' /tmp/page.html | wc -l)"
           # …and in Mode A that residue is the thin client, not the kernel.
           grep -q '<script src="/beck-thin.js" defer></script>' /tmp/page.html
-          ! grep -q 'beck-mode-b.js' /tmp/page.html
+          if grep -q 'beck-mode-b.js' /tmp/page.html; then
+            echo 'a Mode A page loaded the Mode B kernel'; exit 1
+          fi
           kill %1
 
       - name: replay is exact
@@ -169,7 +184,7 @@ jobs:
           ./target/release/beck run examples/todo.beck --addr 127.0.0.1:8081 \
             --store sqlite --path /tmp/beck.sqlite &
           for _ in $(seq 1 40); do curl -sf http://127.0.0.1:8081/healthz >/dev/null && break; sleep 0.25; done
-          curl -sf "http://127.0.0.1:8081/?actor=ci" | grep -q '<footer>0 remaining</footer>'
+          curl -sf "http://127.0.0.1:8081/?actor=ci" | grep -q '>0 remaining</footer>'
           kill %1
           sleep 1
           ./target/release/beck replay examples/todo.beck --store sqlite \
@@ -237,7 +252,9 @@ jobs:
           test "$code" -ne 0        # the test fails…
           test "$code" -lt 128      # …by failing, not by dying on a signal
           grep -q "which is the evaluator's limit" /tmp/deep.out
-          ! grep -q 'overflowed its stack' /tmp/deep.err
+          if grep -q 'overflowed its stack' /tmp/deep.err; then
+            echo 'the evaluator overflowed the host stack instead of reaching its own limit'; exit 1
+          fi
           # And the same recursion in tail position has no ceiling at all.
           python3 - <<'PY'
           open("/tmp/iterative.beck", "w").write(
@@ -272,7 +289,9 @@ jobs:
           open("/tmp/rigid.beck", "w").write(
               'def f[T](x: T) -> Int:\n    return x + 1\n')
           PY
-          ! ./target/release/beck check /tmp/rigid.beck
+          if ./target/release/beck check /tmp/rigid.beck; then
+            echo 'a body that assumes `T` is `Int` was accepted, so the polymorphism is decorative'; exit 1
+          fi
           ./target/release/beck check /tmp/rigid.beck 2>&1 | grep -q 'found `T`'
           # docs/27: a list can be taken apart, and a `match` on one has to cover both shapes.
           python3 - <<'PY'
@@ -294,7 +313,9 @@ jobs:
               '            return 0\n')
           PY
           ./target/release/beck test /tmp/fold.beck
-          ! ./target/release/beck check /tmp/partial.beck
+          if ./target/release/beck check /tmp/partial.beck; then
+            echo 'a `match` that covers one list shape of two was accepted'; exit 1
+          fi
           ./target/release/beck check /tmp/partial.beck 2>&1 | grep -q 'B0341'
           # docs/27: and a pure caller of a generic higher-order definition stays pure, however
           # another caller uses it. Read off the *published contract*, which is where it was wrong.
@@ -319,7 +340,9 @@ jobs:
           src += '\ntest "deliberately false":\n    given []\n    expect list_len(events) == 1\n'
           open("/tmp/failing.beck", "w").write(src)
           PY
-          ! ./target/release/beck test /tmp/failing.beck
+          if ./target/release/beck test /tmp/failing.beck; then
+            echo 'a deliberately false test passed, so the gate is decorative'; exit 1
+          fi
 
       - name: the signal graph is sliced as a graph
         # docs/23. Two `durable` folds compiled and were mis-sliced for two phases, so the gate is
@@ -337,7 +360,9 @@ jobs:
           src += '\nadmin: Signal[Html] = map2(render, tally, roster)\n'
           open("/tmp/two-pages.beck", "w").write(src)
           PY
-          ! ./target/release/beck check /tmp/two-pages.beck
+          if ./target/release/beck check /tmp/two-pages.beck; then
+            echo 'a program with two pages was accepted'; exit 1
+          fi
           ./target/release/beck check /tmp/two-pages.beck 2>&1 | grep -q 'B0510'
 
       - name: views are maintained, and the report says so about each program
@@ -373,7 +398,9 @@ jobs:
           # §3.3: "placement is not a primitive annotation; it is a constraint solution". Strip
           # every `@on(...)` and the solver has to land on a placement that runs.
           sed 's/^@on(server)$//;s/^@on(data)$//;s/^@on(client)$//' examples/todo.beck > /tmp/bare.beck
-          ! grep -q '@on' /tmp/bare.beck
+          if grep -q '@on' /tmp/bare.beck; then
+            echo 'the annotations were not stripped, so the solver was handed the answer'; exit 1
+          fi
           ./target/release/beck check /tmp/bare.beck \
             --assert-place page=client \
             --assert-place todos=data \
@@ -386,7 +413,16 @@ jobs:
           ./target/release/beck iface examples/todo.beck -o /tmp/v1.becki
           ./target/release/beck check examples/todo.beck --wire-compat /tmp/v1.becki
           # A body edit is not a wire change (§3.6's firewall).
-          sed 's/"done" if t.done else ""/"done" if t.done else " "/' examples/todo.beck > /tmp/edited.beck
+          # A *quoted* text literal, so the edit cannot reach a definition's name — an unquoted
+          # ` remaining` also matches `def remaining(…)`, and renaming a definition really is an
+          # interface change. The diff below is what says the edit reached anything at all: this
+          # line named `done_class`'s old body until restyling moved it, and a `sed` that matches
+          # nothing leaves the two `check`s asserting about the same file (docs/104 §104.4a).
+          sed 's/"todos"$/"to-dos"/' examples/todo.beck > /tmp/edited.beck
+          if diff -q examples/todo.beck /tmp/edited.beck >/dev/null; then
+            echo 'the body edit changed nothing, so both checks are about the same file'
+            exit 1
+          fi
           ./target/release/beck check /tmp/edited.beck --wire-compat /tmp/v1.becki
           # Adding an event variant is (§4.3's rolling-deploy rule), and must fail without --breaking.
           python3 - <<'PY'
@@ -397,7 +433,9 @@ jobs:
               "        case Deleted(id):\n            return s.with(todos=map_remove(s.todos, id))\n        case Starred(id):\n            return toggled(s, id)")
           open("/tmp/v2.beck", "w").write(src)
           PY
-          ! ./target/release/beck check /tmp/v2.beck --wire-compat /tmp/v1.becki
+          if ./target/release/beck check /tmp/v2.beck --wire-compat /tmp/v1.becki; then
+            echo 'a breaking wire change was accepted without --breaking'; exit 1
+          fi
           ./target/release/beck check /tmp/v2.beck --wire-compat /tmp/v1.becki --breaking
 
       - name: every program in the corpus checks, and the project links
@@ -454,7 +492,9 @@ jobs:
           grep -q 'Route/'     /tmp/objects/explain.txt
           # The grant is append-only because the program is.
           grep -q 'GRANT SELECT, INSERT' /tmp/objects/k8s/*grants.yaml
-          ! grep -q 'DELETE' /tmp/objects/k8s/*grants.yaml
+          if grep -q 'DELETE' /tmp/objects/k8s/*grants.yaml; then
+            echo 'the derived grant carries DELETE for an append-only program'; exit 1
+          fi
           # The cluster manifests are on their own, so `kubectl apply -f` and a GitOps controller
           # pointed at that directory see manifests and nothing else.
           ls /tmp/objects/k8s | grep -qv apko

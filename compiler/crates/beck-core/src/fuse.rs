@@ -558,7 +558,7 @@ fn substitute(plan: &mut Plan, from: OpId, to: OpId) {
     };
     for node in &mut plan.nodes {
         node.inputs.iter_mut().for_each(swap);
-        if let Some(f) = node.op.fun_mut() {
+        for f in node.op.funs_mut() {
             f.captures.iter_mut().for_each(swap);
         }
     }

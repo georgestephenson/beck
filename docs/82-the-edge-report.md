@@ -432,7 +432,27 @@ the **log's head** rather than on identifiers: fifty proposals, a limit of five,
 and a head that stops at five. "The proposal was refused" and "nothing was written" are different
 claims, and F3 is about the second.
 
-That is the fourth gate this project has found that could not fail, after
+**Nine at once, in the shell rather than in Rust.** The pattern's largest single instance is not in
+this chapter's subject at all: `compiler.yml` asserted ten things by writing `! cmd`, and **nine of
+them could not fail**. `bash -e` "shall not exit" when the command that failed "is part of a `!`
+expression" — POSIX's own words — so a negation followed by any further line is a comment with a
+process behind it. Among the nine: that a deliberately-false Beck test fails the build, that a
+`match` covering one list shape of two is refused, that a rigid type parameter is not silently
+generalised, that a breaking wire change needs `--breaking`. The tenth was live only because it
+happened to be the last line of its step.
+
+This one is the pattern's purest form, because the file **already knew**. The deep-recursion step
+carries the comment "an exit status of 134 or 139 … is exactly the thing a `! cmd` gate would have
+accepted, so the status is checked rather than only the failure" — somebody hit the trap, understood
+it exactly, fixed the instance in front of them, and left the nine others. The fix is the same as
+everywhere else in this section: assert the form rather than the instance.
+`workflows.rs::no_workflow_asserts_with_a_negation_that_cannot_fail` forbids a `run:` line beginning
+with `!` anywhere in any workflow, and does **not** exempt the last-line case, because an exemption
+that depends on position is lost the moment somebody appends a line. All nine turned out to be
+asserting things that were true, so nothing had been hiding behind them — which is luck, and is the
+reason the count is the finding rather than a defect list.
+
+That is the fourth kind of gate this project has found that could not fail, after
 [`70`](70-the-evaluator-gets-fast-report.md) §70.7's three and
 [`80`](80-structured-concurrency-report.md) §80.11's harness that was cited by name and never
 written. The pattern across all four: **the gate was written by the person who knew the gap, and

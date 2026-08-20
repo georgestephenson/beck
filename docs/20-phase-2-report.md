@@ -110,15 +110,15 @@ todos  →  data tier
   because    : the log is at the data tier, and the accumulator is what the log stores
 ```
 
-Where the corpus ends up, across 362 placed definitions and signals
-(`cargo test --release --test measure_phase2 -- --nocapture`, re-read 2026-08-18):
+Where the corpus ends up, across 373 placed definitions and signals
+(`cargo test --release --test measure_phase2 -- --nocapture`, re-read 2026-08-19):
 
 | tier | count | share |
 |---|---|---|
-| `any` (unplaced-pure) | 189 | 52.2% |
-| `server` | 81 | 22.4% |
-| `data` | 57 | 15.7% |
-| `client` | 35 | 9.7% |
+| `any` (unplaced-pure) | 196 | 52.5% |
+| `server` | 82 | 22.0% |
+| `data` | 59 | 15.8% |
+| `client` | 36 | 9.7% |
 
 The first row is the interesting one. §3.3 says "purity means *unplaced*: legal on every tier,
 compiled to each tier that needs it. That duplication is the payoff, not waste." Half the corpus is

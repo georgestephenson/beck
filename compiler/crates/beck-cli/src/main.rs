@@ -743,11 +743,32 @@ fn dispatch(cli: Cli) -> Result<()> {
             let platform = platform_named(&platform)?;
             let placed = compiled(&file)?;
             let source = read(&file)?;
-            let written = beck_infra::emit_with(&placed, &source, &out, platform.as_ref())?;
+            let mut written = beck_infra::emit_with(&placed, &source, &out, platform.as_ref())?;
+            // The stylesheet, from the classes the program's pages can carry rather than from a
+            // scan of the source (`docs/104` §104.4). It is written beside the manifests because it
+            // is the same kind of artefact: derived from the program, and stale the moment the
+            // program changes.
+            let styles = beck_core::style::classes(&placed.program);
+            let sheet = out.join("styles.css");
+            std::fs::write(&sheet, beck_core::style::stylesheet(&styles))
+                .with_context(|| format!("writing {}", sheet.display()))?;
+            written.push(sheet);
             for w in &written {
                 println!("{}", w.display());
             }
             println!("{} files, wire id {}", written.len(), placed.wire_id);
+            let utilities = styles
+                .classes
+                .iter()
+                .filter(|c| beck_core::style::is_utility(c))
+                .count();
+            println!(
+                "styles.css: {utilities} of {} classes have a rule; {} site{} builds a class name \
+                 at run time (`beck explain style`)",
+                styles.classes.len(),
+                styles.dynamic.len(),
+                if styles.dynamic.len() == 1 { "" } else { "s" }
+            );
             // A Mode B component needs one artefact these manifests do not describe. The bundle
             // itself is *not* written: the server derives it from the program it is running, so a
             // deployment cannot serve a slice of a different program than the one it is executing.

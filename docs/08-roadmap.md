@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **968 definitions compiled against 137 refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **972 definitions compiled against 140 refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -95,9 +95,9 @@ ask in order:
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
-| "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for that group's size, and you write all three as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that only asks `list_len` of that filter is answered from a maintained count with no group built. All are maintained from both sides and `beck explain query` shows them. `sum`, `min` and `max` per group and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
+| "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for three questions about that group, and you write all of them as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that asks `list_len`, `list_min` or `list_max` of that filter is answered without the group being built at all — the count from a tally the join keeps, the two ends from a `group_by` holding one multiset per group. All are maintained from both sides and `beck explain query` shows them. `sum` per group and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
-| "How do I make it look like anything?" | **Badly, and this is the newest row.** The stylesheet a running application serves is eight rules hard-coded in `beck-rt/src/css.rs`; `css:` appears in the tour and has no parser. `class=` takes a list now and `beck explain style` will tell you every class your pages can carry — but nothing emits a stylesheet from that set yet, so the answer to the question as asked is unchanged. Tailwind styles a Beck page with no configuration today, and its scanner cannot survive a package manager ([`104`](104-styling-and-the-component-library.md) §104.3), so the answer until §8.5.4's styling cluster lands is "bring npm" — which for a project whose product is one static binary is the wrong answer, not a smaller one |
+| "How do I make it look like anything?" | **With Tailwind's names and no Tailwind**, which is the row that moved. `beck build` writes `styles.css` and a running program serves the same bytes: one rule per class your pages can carry, worked out from the program rather than scanned for, with the theme tokens those rules read and nothing else ([`104`](104-styling-and-the-component-library.md) §104.4a). **3,474 of the 3,625 names Tailwind emits a rule for are rendered identically here**, held byte for byte against Tailwind's own compiler; the sketch's sheet is 2.3 KB and `beck-rt/src/css.rs` is deleted. What is still missing is a way to write a rule of *your own* — `css:` has no parser — so a class the compiler did not define gets no rule, and `beck explain style` says which of yours are which. What the compiler *will* say is that `rounded-ful` is one edit from `rounded-full` (`B0222`), and your editor completes and explains a utility from the same table |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
 | "How do I get the compiler?" | One command ([`92`](92-supply-chain-and-release-report.md)) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 says in that order |
 
@@ -175,12 +175,14 @@ read it.**
   tools, views as resources, effect rows in the tool annotations), each gated by a foreign reader
   per §101.9, and the rest of §101.7's edge ledger — idempotency, `seq`-derived ETags, the response
   vocabulary, deprecation headers — arriving with the forms that need them.
-- **The data tier's means of combination** ([`99`](99-the-data-tier-means-of-combination.md)):
-  `join`, `group by` and the aggregates, which the view algebra has never had — every operator it
-  implements takes one collection, so a program relating two of them escapes the algebra into a
-  per-element function that captured the accumulator and is reapplied on every event. The order is
-  §99.9's and its **first item is a gate that goes red today**, not an operator. This is what §8.4's
-  Phase 5 TPC-H row has always been conditioned on, and it had never been assigned.
+- **What is left of the data tier's means of combination**
+  ([`99`](99-the-data-tier-means-of-combination.md)): `sum` per group, `distinct` and difference,
+  fusion for the new operators, and the read-model SQL compiling into the plan rather than growing a
+  second interpreter. The join, both of its indexes and per-group `count`, `min` and `max` have
+  landed and are §8.5.4's row; what remains is §99.9 items 6 (`sum` only), 7, 8 and 9, and the first
+  of those is a **surface decision** — `Int` and `Float` disagree about whether a maintained sum is
+  the recomputed one — rather than a delta rule. This is what §8.4's Phase 5 TPC-H row has always
+  been conditioned on.
 - **The log's own lifecycle, and the substrate that reads it** ([`10`](10-decisions.md) D3's
   obligations, [`09`](09-risks-and-open-questions.md) R6): segment archival to Parquet on object
   storage, bounded retention for the stores that opt down from `retain=forever`, and **DataFusion**
@@ -445,10 +447,18 @@ rows.
   `arrange_by` removes the scan and leaves the group, which is what `group by` takes — **and its first
   aggregate has taken it**: `list_len` over the same filter is answered from a tally the join keeps,
   so `corpus/35-workload.beck` shows every person's open-issue count while copying **one** entry out
-  of an arrangement at 200 issues and at 1,600. What is left, in §99.9's order: **`sum`, `min` and
-  `max` per group**, each waiting on a surface rather than on a delta rule (§99.9 item 6 has the
-  design for `min`/`max` and the `Int`-versus-`Float` decision `sum` needs), then `distinct` and
-  difference, fusion for the new operators, and the read-model SQL compiling into the plan. This was a Phase 4 bullet from the
+  of an arrangement at 200 issues and at 1,600 — **and its other two have taken it as well**:
+  `list_min` and `list_max` over that filter compile to `group_by`, one entry per group holding a
+  multiset of what its rows projected to, so `corpus/36-auction.beck` shows the lowest and the
+  highest bid on every lot in **72 backend steps at 200 bids and at 1,600, against 4,097 and
+  32,097** with the operator switched off. §99.9 item 6 had forecast that `max` would cost more than
+  `min`; it does not, and the asymmetry turned out to belong to the design rather than to the
+  problem — a tree the operator builds itself is bounded at both ends, and what cannot be entered
+  from its end is a prefix range of *somebody else's* arrangement. What is left, in §99.9's order:
+  **`sum` per group**, which waits on a surface rather than on a delta rule — the `Int`-versus-`Float`
+  decision in §99.9 item 6, and the only one of the four the language has no spelling for — then
+  `distinct` and difference, fusion for the new operators, and the read-model SQL compiling into the
+  plan. This was a Phase 4 bullet from the
   day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list,
   which is the same defect §8.5 opens by describing one level down — a phase is not a position. It
   lives in **Lane B** (`engine.rs`, `plan.rs`, `relate.rs`) and contends with nothing in Lane A.
@@ -613,19 +623,27 @@ rows.
      than named, with which of three reasons it was. A `Class` **type** had nothing to be checked
      against until item 4's table existed, so it moved behind it rather than in front: a type whose
      checking is empty is a scaffold. Lanes A and C.
-  4. **The utility table and the sheet emitter** (S): exact extraction over the typed tree,
-     `beck build` writing the stylesheet, `styles = none` turning all of it off, and the
-     differential gate that holds the accepted table against Tailwind's own compiler
-     ([`104`](104-styling-and-the-component-library.md) §104.4). This is what retires
-     `beck-rt/src/css.rs`. **The table and its oracle are built**: `beck_core::style::is_utility`
-     knows 631 of 782 candidate names with no unsound acceptance, held against Tailwind 4.3.3's own
-     answer, committed under `compiler/style/expected/` so no gate needs a package registry. Two
-     things a person writing the table down would have got wrong were caught by asking it — the
-     spacing scale is multiplicative rather than a list of steps, and the first generator matched
-     `.rounded-ful` against `.rounded-full`. **The emitter is not built**: nothing writes CSS,
-     `styles = none` does not exist, and `css.rs` still serves its eight rules. **Both paths gated**, per §8.3 — the switched-off program is compiled and
-     run beside the switched-on one, because a default nobody has run is a claim. Lane B, with the
-     table generated into Lane A's tables.
+  4. **The utility table and the sheet emitter** (S). **Done.** `beck build` writes `styles.css`,
+     a running program serves the same bytes at `/beck.css` derived from the program it is
+     executing, `AppConfig::styles` is the `styles = none` switch and **both of its settings are
+     run** per §8.3 item 8, and `beck-rt/src/css.rs` is deleted. The table is held to Tailwind
+     4.3.3's own compiler byte for byte — **3,474 of the 3,625 names it emits a rule for**, no
+     unsound acceptance, the answer committed under `compiler/style/expected/` so no gate needs a
+     package registry.
+     What the emitter changed about the table is the finding: a *predicate* cannot emit a sheet, so
+     `is_utility` is now defined as "there is a rule for it" and the oracle records what Tailwind
+     **emits** rather than whether it emits. Asking the bigger question found four details of the
+     spacing scale and the escaping that a person writing them down would have got wrong — and
+     **seventeen unsound acceptances** (`size-screen`, `max-w-auto`, fifteen `-auto` paddings) that
+     had survived every green run because `candidates.txt` had never been asked about them. The
+     table enumerates itself now, and a gate fails when it accepts a name the oracle never saw.
+     Its last two consequences landed after the emitter: **`B0222`** warns about a class within one
+     edit of a utility — a warning rather than a refusal, because the class vocabulary is open and
+     `done`, `column` and `mine` are names this tree's own programs write — and the **editor**
+     completes `class="fl‸"` to `flex` and hovers `gap-2` to the rule the sheet will carry, from the
+     same table. §104.4b has the margin that threshold keeps and the two attempts its negative gate
+     took. The `Class` **type** is not built and is no longer owed: what it would have checked is
+     what `B0222` checks. Lane B, with the table generated into Lane A's tables.
   5. **The theme as a Beck value**, and a styled `beck new` (S): tokens as a record generating both
      the theme block and the accepted names, so renaming a brand colour is a rename. Lane B.
   6. **Where interface state lives** (F, and a **decision before an implementation**): a modal's
@@ -679,7 +697,7 @@ directories.
 | Lane | Owns | What is left in it | Collides with |
 |---|---|---|---|
 | **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3, 6 and 7 (§8.5.4) — `Class` as a type, where interface state lives, and focus as an attribute | **Itself, completely** — see below |
-| **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned; the styling cluster's items 1, 4 and 5 (§8.5.4) — the SVG namespace in `client/beck-patch.js`, the sheet emitter that retires `css.rs`, and the theme | Nothing in A, C, E or F |
+| **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned; the styling cluster's item 5 (§8.5.4) — the theme as a Beck value; items 1 and 4 are done | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4). Comment-preserving printing and the `ui:` vocabulary were this lane's and are done | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
 | **E — backends** | `beck-eval/`, `beck-llvm/`, `beck-clif/`, `beck-wasmgen/`, `beck-core/src/backend.rs`, any new codegen crate | Mode B's codegen; the three items of [`93`](93-the-native-backends-report.md) §93.15, of which the two-calls-at-once worker is now what blocks cancelling a compiled child | Nothing — the seam is why ([`19`](19-phase-1-report.md) §19.9), and sixteen consecutive Lane E changes have held that prediction, several without touching one line of `beck-rt` |

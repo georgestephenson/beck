@@ -52,7 +52,7 @@ use beck_diag::Span;
 
 use crate::backend::{Backend, Callable, ExecError};
 use crate::core::Value;
-use crate::plan::{Fun, Matching, Op, OpId, Plan};
+use crate::plan::{Agg, Fun, Matching, Op, OpId, Plan};
 use crate::pmap::PMap;
 use crate::split::Placed;
 
@@ -140,7 +140,10 @@ struct Cell {
     /// For each input that arrives as a plain list rather than as an arrangement, the copy this
     /// operator last saw. A list-valued input has no deltas of its own, so the operator makes them.
     shadow: Vec<BTreeMap<Key, Value>>,
-    /// `sort_by`: where each input key currently sits in the output order.
+    /// `sort_by`: where each input key currently sits in the output order. `join`: the join key a
+    /// left row is waiting on. `group_by`: the group a row is in and what it contributed to it,
+    /// which is what lets the row be withdrawn without re-applying either function to a value that
+    /// has already gone.
     positions: BTreeMap<Key, Key>,
     /// `flatten`: how many entries each input key currently contributes, so the old ones can be
     /// withdrawn without scanning the arrangement.
@@ -159,6 +162,13 @@ struct Cell {
     /// needs: an entry that arrived is `+1` and one that left is `-1`, and the two are the same
     /// arithmetic whatever operator produced them.
     tally: BTreeMap<Value, u64>,
+    /// `group_by`: per group, a multiset of what its rows projected to.
+    ///
+    /// A count against each distinct value rather than a list of them, because two rows that
+    /// project to the same value are indistinguishable to a `min` and the multiplicity is what says
+    /// when the last of them has left. The size is the group's *distinct* values, which is at most
+    /// its rows and is usually far fewer.
+    groups: BTreeMap<Value, BTreeMap<Value, u64>>,
 }
 
 /// What one [`Engine::render`] cost, in units that do not depend on the machine.
@@ -208,7 +218,9 @@ pub struct Prepared {
     plan: Arc<Plan>,
     /// The pointwise operators' bodies and the collection operators' per-element functions.
     code: Vec<Option<Callable>>,
-    funs: Vec<Option<Callable>>,
+    /// One per operator, in the order [`crate::plan::Op::funs`] gives them: a `map_list` has one,
+    /// a `group_by` has its key and its projection, everything else has none.
+    funs: Vec<Vec<Callable>>,
     /// Constants, evaluated once here and never recomputed.
     consts: Vec<Option<Value>>,
     /// The backend's step counter, taken once at prepare time — see [`crate::backend::Steps`].
@@ -223,16 +235,17 @@ impl Prepared {
     pub fn new(plan: Arc<Plan>, backend: &dyn Backend) -> Result<Prepared, ExecError> {
         let n = plan.nodes.len();
         let mut code: Vec<Option<Callable>> = Vec::with_capacity(n);
-        let mut funs: Vec<Option<Callable>> = Vec::with_capacity(n);
+        let mut funs: Vec<Vec<Callable>> = Vec::with_capacity(n);
         for node in &plan.nodes {
             code.push(match &node.op {
                 Op::Pointwise { code } => Some(backend.function(code)?),
                 _ => None,
             });
-            funs.push(match node.op.fun() {
-                Some(f) => Some(backend.function(&f.code)?),
-                None => None,
-            });
+            let mut prepared = Vec::new();
+            for f in node.op.funs() {
+                prepared.push(backend.function(&f.code)?);
+            }
+            funs.push(prepared);
         }
         let mut consts: Vec<Option<Value>> = vec![None; n];
         for (&id, expr) in &plan.constants {
@@ -566,6 +579,7 @@ impl Engine {
                 Op::Count => self.aggregate(up, id, cold, false)?,
                 Op::IsEmpty => self.aggregate(up, id, cold, true)?,
                 Op::Join { key, matched } => self.join(up, id, key, *matched, cold)?,
+                Op::GroupBy { key, of, agg } => self.group_by(up, id, key, of, *agg, cold)?,
             }
         }
         Ok(())
@@ -1188,6 +1202,151 @@ impl Engine {
         Ok(Value::List(Arc::new(rows)))
     }
 
+    /// One value per group, maintained — [`Op::GroupBy`], and
+    /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's
+    /// other two aggregates.
+    ///
+    /// Per group, a multiset of what its rows projected to ([`Cell::groups`]); the aggregate is one
+    /// end of it. A row that arrived is one insert and one row that left is one removal, so the
+    /// operator costs `2δ` applications and `O(δ log n)` on the trees — the group is never
+    /// assembled and the collection is never scanned.
+    ///
+    /// **What it publishes is the change in the answer, not the change in the group.** A row added
+    /// behind the extreme moves the multiset and not the aggregate, so no change is emitted and
+    /// nothing downstream of this operator runs at all. That is the difference between an aggregate
+    /// and a `filter_list` a consumer measures: the second reports every event that touched the
+    /// group, whether or not it changed the answer.
+    ///
+    /// **`min` and `max` cost the same**, which §99.9 item 6 expected not to be true. The
+    /// asymmetry it forecast is real of a *prefix range of somebody else's arrangement* — bounding
+    /// `(g, y)` above needs a successor of an arbitrary [`Value`] and there is none — and it is not
+    /// real here, because this tree is keyed by the projection alone and per group, so both of its
+    /// ends are one `BTreeMap` call.
+    fn group_by(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        key: &Fun,
+        of: &Fun,
+        agg: Agg,
+        cold: bool,
+    ) -> Result<(), ExecError> {
+        let input = self.prepared.plan.nodes[id].inputs[0];
+        // Both functions, because either one capturing something that moved makes every row's
+        // contribution a different value — the rebuild rule `Engine::incoming` states for one.
+        let rebuild = cold
+            || self.rebuilt_of(up, input)
+            || key
+                .captures
+                .iter()
+                .chain(of.captures.iter())
+                .any(|&c| self.changed_of(up, c));
+        let incoming = self.feed(up, id, 0, input, rebuild)?;
+        if incoming.is_empty() && !rebuild {
+            self.cells[id].changed = false;
+            self.cells[id].changes.clear();
+            self.cells[id].rebuilt = false;
+            return Ok(());
+        }
+
+        let group_of = self.fun_of(id)?;
+        let project = self.nth_fun_of(id, 1)?;
+        let group_captures = self.captures(up, key)?;
+        let project_captures = self.captures(up, of)?;
+        let mut arr = self.take_arrangement(id, rebuild);
+        if rebuild {
+            self.cells[id].groups.clear();
+        }
+        let mut groups = std::mem::take(&mut self.cells[id].groups);
+        let mut positions = std::mem::take(&mut self.cells[id].positions);
+        // The groups whose multiset moved, so each is answered once however many of its rows did.
+        let mut moved: BTreeSet<Value> = BTreeSet::new();
+
+        for c in incoming {
+            if let Some(was) = positions.remove(&c.key) {
+                let (g, contributed) = (was[0].clone(), &was[1]);
+                if let Some(multiset) = groups.get_mut(&g) {
+                    if let Some(n) = multiset.get_mut(contributed) {
+                        // Saturating for `Engine::join`'s reason: a row cannot leave a group it
+                        // never joined, so the saturation is unreachable rather than defensive, and
+                        // the alternative to writing it this way is a panic in a render.
+                        *n = n.saturating_sub(1);
+                        if *n == 0 {
+                            multiset.remove(contributed);
+                        }
+                    }
+                    // A group with no rows left holds nothing, rather than an empty map keyed by a
+                    // value the data no longer contains — which would be `back`'s leak
+                    // (`Engine::join`) arrived at from the other side.
+                    if multiset.is_empty() {
+                        groups.remove(&g);
+                    }
+                }
+                moved.insert(g);
+            }
+            let Some(v) = c.new else { continue };
+            let mut args = group_captures.clone();
+            args.push(v.clone());
+            let g = group_of(args)?;
+            let mut args = project_captures.clone();
+            args.push(v);
+            let contributed = project(args)?;
+            self.work.applications += 2;
+            *groups
+                .entry(g.clone())
+                .or_default()
+                .entry(contributed.clone())
+                .or_default() += 1;
+            positions.insert(c.key, Arc::from(vec![g.clone(), contributed]));
+            moved.insert(g);
+        }
+
+        let mut changes = Vec::new();
+        for g in moved {
+            let now = groups.get(&g).and_then(|multiset| match agg {
+                Agg::Min => multiset.keys().next().cloned(),
+                Agg::Max => multiset.keys().next_back().cloned(),
+            });
+            let out_key: Key = Arc::from(vec![g]);
+            match now {
+                Some(v) => {
+                    let old = arr.entries.insert(out_key.clone(), v.clone());
+                    // The whole point of the operator, in one condition: the answer moved or it did
+                    // not, and a group that was touched without its extreme changing publishes
+                    // nothing.
+                    if old.as_ref() != Some(&v) {
+                        changes.push(Change {
+                            key: out_key,
+                            old,
+                            new: Some(v),
+                        });
+                    }
+                }
+                None => {
+                    if let Some(old) = arr.entries.remove(&out_key) {
+                        changes.push(Change {
+                            key: out_key,
+                            old: Some(old),
+                            new: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        self.cells[id].groups = groups;
+        self.cells[id].positions = positions;
+        if changes.is_empty() && !rebuild {
+            self.cells[id].out = Out::Arr(arr);
+            self.cells[id].changed = false;
+            self.cells[id].changes.clear();
+            self.cells[id].rebuilt = false;
+            return Ok(());
+        }
+        self.publish(id, arr, changes, rebuild);
+        Ok(())
+    }
+
     /// `list_len` and `list_is_empty`: read the arrangement's size.
     ///
     /// This is §3.8's sentence, mechanised. It reads `entries.len()` — `O(1)` — and, crucially,
@@ -1373,7 +1532,12 @@ impl Engine {
     }
 
     fn fun_of(&self, id: OpId) -> Result<Callable, ExecError> {
-        self.prepared.funs[id].clone().ok_or_else(|| {
+        self.nth_fun_of(id, 0)
+    }
+
+    /// One of an operator's prepared functions, in [`crate::plan::Op::funs`]' order.
+    fn nth_fun_of(&self, id: OpId, n: usize) -> Result<Callable, ExecError> {
+        self.prepared.funs[id].get(n).cloned().ok_or_else(|| {
             ExecError::new("a collection operator has no prepared function", Span::NONE)
         })
     }

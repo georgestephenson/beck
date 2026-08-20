@@ -119,7 +119,9 @@ async fn route(
             "application/octet-stream",
         )),
         (&Method::GET, "/beck-kernel.wasm") => Ok(kernel()),
-        (&Method::GET, "/beck.css") => Ok(asset(&crate::css::stylesheet(), "text/css")),
+        // The program's own sheet: one rule per class its pages can carry (`docs/104` §104.4),
+        // derived at startup from the program this process is executing.
+        (&Method::GET, "/beck.css") => Ok(asset(app.stylesheet(), "text/css")),
         (&Method::GET, "/beck-devtools.js") => Ok(asset(crate::DEVTOOLS_CLIENT, "text/javascript")),
         // What the panel draws: the program's own signal graph and the dataflow the compiler made
         // of its view. Derived from the running program, so a panel cannot describe a version of

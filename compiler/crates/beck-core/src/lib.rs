@@ -109,6 +109,10 @@ pub fn compile_with(
     place::apply(&mut program, &solution);
     place::check_placement(&program, diags);
     secure::check_security(&program, diags);
+    // After placement, because it reads the whole resolved program: a class written in one
+    // definition and used in another is one name, and §104.4's did-you-mean is over the table
+    // rather than over the file.
+    style::check_classes(&program, diags);
     if diags.has_errors() {
         return None;
     }

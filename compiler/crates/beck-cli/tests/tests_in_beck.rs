@@ -385,7 +385,7 @@ fn a_page_assertion_that_fails_prints_the_page() {
     let why = why(&run(&placed), "milk is not there");
     assert!(why.contains("does not contain"), "{why}");
     assert!(
-        why.contains("<h1>todos</h1>"),
+        why.contains(">todos</h1>"),
         "the page itself is in the report: {why}"
     );
 }

@@ -350,9 +350,23 @@ fn attr_expr(kw: &Node, tag: &str, diags: &mut Diagnostics) -> Node {
     // It is done in the **lowering** rather than in `html_attr`, so every backend agrees by
     // construction: what reaches the checker is one `str_join` and there is nothing for an emitter
     // to know about ([`docs/19`] §19.9's seam, honoured by not touching it).
+    //
+    // A list whose every element is a **literal** is joined here and now. That is not an
+    // optimisation of the emitted code, it is the difference between a page that is maintained by
+    // delta and one that is recomputed: `str_join` has no delta rule — a change to its input can
+    // change all of its output — so a constant list at the top of a view would turn the whole page
+    // into a recompute for a string that was decided at compile time.
     let value = match value.head_name() {
         Some(head) if head == sym::LIST && SPACE_SEPARATED.contains(&attr_name.as_str()) => {
-            Node::form("str_join", vec![value, str_lit(" ", span)], span)
+            match value
+                .args
+                .iter()
+                .map(Node::as_str_lit)
+                .collect::<Option<Vec<&str>>>()
+            {
+                Some(tokens) => str_lit(tokens.join(" "), span),
+                None => Node::form("str_join", vec![value, str_lit(" ", span)], span),
+            }
         }
         _ => value,
     };

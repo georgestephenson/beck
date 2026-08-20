@@ -17,6 +17,190 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-20 — A malicious `arrayref` release, and the gate that saw the pin for it expire.**
+  The `licences` job went red on a yank rather than an advisory: crates.io withdrew `arrayref 0.3.9`,
+  which reaches this tree through `blake3`. **The fix `cargo-deny` suggests was the attack.**
+  `cargo update -p arrayref` resolved to `0.3.10`, which added a normal dependency on
+  **`proc-macro1`** — one character from `proc-macro2`, with exactly two published versions (1.0.106
+  and 1.0.107, `proc-macro2`'s own latest two), copying its feature set and its single normal
+  dependency, and declaring `base64`, `rustls` and **`ureq` as build dependencies**: an HTTP client
+  and a TLS stack running inside a build script at compile time. `arrayref` is two hundred lines of
+  macros for taking a reference to a sub-array; 0.3.9 has no runtime dependencies at all.
+  What made it visible was the disproportion — that one-crate update produced a lock file **283 lines
+  larger**, pulling in `ureq`, `url`, `webpki-roots` and the whole ICU stack. Nothing was built with
+  it and `arrayref-0.3.10.crate` was never downloaded; the version facts were read from the registry
+  index.
+  So `arrayref@0.3.9` was held in `deny.toml`'s `advisories.ignore` — the yanked version being the
+  safe one and the current one the attack. **crates.io removed 0.3.10 and un-yanked 0.3.9 hours
+  later**, so the list is empty again and the lock file never moved: it holds the same `0.3.9` it
+  held before any of this.
+  **What is left is the gate.** `unused-ignored-advisory = "deny"` was added alongside the pin
+  because `cargo-deny` reports `yanked-not-detected` only as a warning, which no CI job reads. It
+  failed the build the moment the pin stopped being needed — which is how the entry came out the same
+  day rather than sitting there until the next yank of the same crate was waved through by a
+  permission granted for something else. A gate whose first firing is a true positive, on its first
+  day, is the argument for writing it at the same time as the thing it guards.
+
+- **2026-08-20 — Nine CI gates could not fail, and the sketch's restyle is what found them.**
+  CI went red on the styling change: the workflow asserted `grep -q '<footer>0 remaining</footer>'`
+  and the footer now carries a class. Two lines to fix — matched as `'>0 remaining</footer>'`, since
+  the property is that the *text* was server-rendered, not what the tag wears. What the fix turned up
+  is the entry.
+  **`! cmd` does not fail a step.** `bash -e` "shall not exit" when the command that failed "is part
+  of a `!` expression" — POSIX's own words — so a negation followed by any further line is a comment
+  with a process behind it. `compiler.yml` had **ten** such assertions and **nine were dead**: that a
+  deliberately-false Beck test fails the build, that a `match` covering one list shape of two is
+  refused, that a rigid `T` is not silently generalised, that a breaking wire change needs
+  `--breaking`, that a Mode A page does not load the Mode B kernel, that the derived grant carries no
+  `DELETE`, that stripping `@on` leaves none, that a deep recursion does not overflow the host stack,
+  and that the sheet has no rule for a class the page cannot carry. The tenth was live only because
+  it was the last line of its step.
+  All ten are now `if cmd; then echo 'why'; exit 1; fi`, which aborts wherever it sits and says what
+  broke. **All nine were asserting things that are true** — verified one at a time against the
+  current tree — so nothing had been hiding behind them.
+  **The file already knew.** The deep-recursion step's own comment reads "an exit status of 134 or
+  139 … is exactly the thing a `! cmd` gate would have accepted, so the status is checked rather than
+  only the failure": somebody hit the trap, understood it exactly, fixed the instance in front of
+  them, and left the nine others. That is
+  [`docs/82`](docs/82-the-edge-report.md) §82.10's pattern, now recorded there with this as its
+  largest instance.
+  `workflows.rs::no_workflow_asserts_with_a_negation_that_cannot_fail` forbids a `run:` line
+  beginning with `!` in any workflow, with **no exemption for the last-line case** — an exemption
+  that depends on position is lost the moment somebody appends a line, which is how nine of these
+  happened.
+  **And a second thing the restyle broke silently.** The wire-compat step's "a body edit is not a
+  wire change" ran `sed 's/"done" if t.done else ""/…/'` — `done_class`'s *old* body. The `sed`
+  matched nothing, so both `check`s were about the same file and the claim was vacuous. It now edits
+  a quoted text literal (`"todos"` → `"to-dos"`; unquoted ` remaining` also matches
+  `def remaining(…)`, and renaming a definition genuinely *is* an interface change) and `diff`s to
+  prove the edit landed.
+  New in the serving step: the page's stylesheet is fetched over HTTP and checked to carry a rule for
+  a class the page serves, the token that rule reads, and nothing for a class it cannot carry —
+  `beck build` writing the file was already gated, this process answering for it was not.
+
+- **2026-08-19 — A misspelled utility is a diagnostic, and the editor answers from the same table.**
+  [`docs/104`](docs/104-styling-and-the-component-library.md) §104.4b — the second and third of
+  §104.4's four consequences, and what closes
+  [`docs/08`](docs/08-roadmap.md) §8.5.4's styling item 4. **`B0222`**: a class that is not a
+  utility and is within one edit of one — two, from eight characters up — is a warning naming the
+  utility it is one slip from. `rounded-ful` → `rounded-full`, `bg-emerald-550` → `bg-emerald-500`,
+  `items-centre` → `items-center`. And the **editor**: `class="fl‸"` completes to `flex` from the
+  closed table plus the scale Tailwind documents, and hovering `gap-2` prints
+  `.gap-2 { gap: calc(var(--spacing) * 2); }` — the rule the sheet will actually carry, because it
+  comes from the function that emits it.
+  **A warning rather than a refusal, which is the design and not a hedge.** `B0217` and `B0218` are
+  errors because their vocabularies are closed; a class vocabulary is open, `done`, `column` and
+  `mine` are names this tree's own programs write, and Beck still has no way to write a rule of your
+  own — so refusing them would be refusing an escape hatch that does not exist.
+  **The gate asserts the margin, not the outcome.** Every class this tree writes is **three or more**
+  edits from anything in the table (`card` to `grid`, `here` to `h-px`, `mine` to `inline`), so the
+  threshold sits one edit clear of the population it must not touch.
+  `style.rs::a_misspelled_utility_is_a_diagnostic` asserts that distance rather than asserting that
+  nothing was said — the second passes on any threshold below it, the first goes red when a family
+  added to the table lands near a name somebody chose.
+  **And the editor's negative gate took two attempts, which is the entry's other half.** A class is
+  a token inside a string, so the only thing between four thousand utility names and every
+  completion in the file is the test for where the caret is. The first gate put a caret in a string
+  reading `"hello"` and asserted nothing came back — true for the wrong reason, since no utility
+  begins with `hel`. Pointed at `placeholder="gap in the diary"`, whose prefix matches seventy, it
+  went red at once: `class=` was to the left on the same line and the caret was inside *a* string,
+  which was all the context test checked. It now requires the text between `class=` and the caret's
+  own string to be the value itself, which is what tells `class=["flex", "ga‸"]` from
+  `class="flex", placeholder="ga‸"`.
+  The `Class` **type** is not built and is no longer owed: what it would have checked is what
+  `B0222` checks, and [`docs/104`](docs/104-styling-and-the-component-library.md) §104.12 records it
+  as absent rather than as scheduled.
+
+- **2026-08-19 — The stylesheet is emitted from the program, and `css.rs` is deleted.**
+  [`docs/104`](docs/104-styling-and-the-component-library.md) §104.4a and
+  [`docs/08`](docs/08-roadmap.md) §8.5.4's styling item 4, second half. `beck build` writes
+  `styles.css` and a running program serves the same bytes at `/beck.css`, derived at startup from
+  the program it is executing: **one rule per class its pages can carry**, the theme tokens those
+  rules read and nothing else, in front of a nine-rule preflight that is Beck's own rather than
+  Tailwind's. `AppConfig::styles` is the `styles = none` switch and **both settings are run** by a
+  gate, per §8.3 item 8. The eight rules hard-coded in `beck-rt/src/css.rs` are gone with the file.
+  **A predicate cannot emit a sheet, and that is what the second half changed about the first.**
+  `beck_core::style::rule` turns a name into declarations and `is_utility` is now *defined* as
+  "there is a rule for it", so a table and an emitter cannot disagree about a page; the oracle
+  records what Tailwind **emits** rather than whether it emits; and the gate compares the at-rules,
+  the selector and the declarations byte for byte. **3,474 of the 3,625 names Tailwind 4.3.3 emits a
+  rule for are rendered identically here**, 35 it refuses are refused, 151 remain as the families
+  this table has not taken, and all 293 theme tokens are Tailwind's own values.
+  **Asking the bigger question found four details and seventeen defects.** The details are that `1`
+  is `var(--spacing)` and not `calc(var(--spacing) * 1)`, `0` is `0px`, `space-x-0` drops the
+  reverse-margin `calc`, and `2xl:flex` escapes to `.\32 xl\:flex` — a hex escape terminated by a
+  *space* that the previous reader of the oracle stopped at, so every `2xl:` rule had been silently
+  missing from its answer. The defects are `size-screen`, `max-w-auto` and fifteen `-auto` paddings:
+  names the table accepted, Tailwind emits nothing for, and **`candidates.txt` had never been asked
+  about**, so they were in none of the gate's three buckets through every green run
+  ([`docs/82`](docs/82-the-edge-report.md) §82.10 exactly). The table enumerates itself now and
+  `style.rs::every_name_the_table_accepts_was_asked_about` fails when it accepts a name the oracle
+  never saw.
+  **The sketch is the proof and its sheet is 2.3 KB.** `examples/todo.beck` is restyled onto
+  utilities — seventeen classes, seventeen rules, six of the theme's 293 tokens — and its `done`
+  class, the one name in it that was the program's own and the reason `css.rs` existed, is
+  `line-through`. Restyling it found a defect worth its own entry in
+  [`DEFECTS.md`](DEFECTS.md): `class=["a", b]` with one non-literal element lowers to a `str_join`,
+  which has no delta rule, so **the shape §104.4 recommends turns a page into a recompute**. No
+  program in this tree had ever written one. An all-literal list is folded at lowering time and
+  costs nothing; the mixed list is `class-list-recomputes`, and the sketch writes two whole
+  alternatives behind an `if` until it is fixed.
+
+- **2026-08-19 — Both ends of a group, answered without the group.**
+  [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's other two aggregates, and
+  the last of that item the language has a spelling for. `list_min` and `list_max` over the same
+  `filter_list` the recogniser already reads — bare, or over a `map_list` of it — compile to
+  `Op::GroupBy`: one entry per group, holding a **multiset** of what its rows projected to, of which
+  `min` and `max` are the two ends. It is the first right side in this algebra that is not an index
+  over the collection, so the join above it is a plain `Matching::Unique` — `Some` for a group with
+  rows and `None` for one without, which is what `list_min` already answered for a list and for an
+  empty one. No syntax, and no edit to any program.
+  **`max` costs what `min` costs, and §99.9 said it would not.** The asymmetry it forecast is real of
+  the design it forecast it for — a range over an index keyed `(group, value)` can be entered from
+  its start and not from its end, because there is no successor of an arbitrary `Value` to bound it
+  with — and it dissolves under the rule the *count* established: an aggregate is the reading
+  operator's and never the index's, and a tree an operator builds itself is bounded at both ends by
+  construction. The design was asymmetric; the problem was not. Corrected in place in §99.9 item 6.
+  `corpus/36-auction.beck` is the program — the lowest and the highest bid on every lot, with no
+  `group by` and no `min by` in the file. `scaling.rs::asking_a_group_for_one_end_does_not_build_it`
+  measures a **new low** landing on a pile of 200 bids and of 1,600 — the worst case, because the
+  answer moves and the page is reassembled — at **72 backend steps at both sizes against 4,097 and
+  32,097** with the operator switched off, and one entry copied out of an arrangement either way;
+  on a clock that is **22 µs against 95 µs at 200 bids and 56 µs against 698 µs at 1,600**, 4.3× then
+  12.5× (`measure_incremental::what_answering_a_group_from_its_ends_saves`, whose slow side is the
+  same three operators written through a `let`, so the two plans differ in the aggregate and nothing
+  else).
+  Two gates hold what the corpus-wide differential cannot. A bid *between* the standing ends moves
+  the group and neither answer, so the operator publishes nothing and the join, the loop and the page
+  do not run — `incremental_engine.rs::a_bid_between_the_ends_does_not_re_render_the_page`, which is
+  about the operator's output rather than its cost. And the **multiset** rather than a set: two bids
+  of the same amount are two bids, so
+  `incremental_engine.rs::a_maintained_extreme_per_group_survives_the_events_that_take_it_down`
+  withdraws the standing minimum, the standing maximum, half of a tie and the last bid on a lot from
+  a written log — deleting the multiplicity leaves the corpus-wide differential **green** and turns
+  that one red, which was checked rather than assumed.
+  Two things fell out of it. A site nested inside one that **failed** is now tried, where before
+  every nested site was skipped: `list_min` over a filter whose projection reads the loop's element
+  is not an aggregate anything can maintain, and refusing the whole body would have taken the index
+  down with it and left the loop at `O(n)` per event. And two lookups that index one collection by
+  the same key now build **one** index rather than two — `Core` numbers variables per definition, so
+  `lambda b: b.lot` and `lambda c: c.lot` reached the hash-consing key as different strings, and an
+  arrangement is memory per subscriber as well as work per event. §99.5 decision 4 records it and
+  `incremental.rs::two_lookups_by_the_same_key_share_one_index` is the gate.
+
+- **2026-08-19 — The corpus-wide counts, re-derived against thirty-six programs.**
+  `corpus/36-auction.beck` is the 36th, and [`DEFECTS.md`](DEFECTS.md)'s `corpus-wide-counts-drift`
+  says what that costs: every figure derived from the whole corpus moves and nothing gates it. It had
+  already drifted again — [`docs/93`](docs/93-the-native-backends-report.md)'s headline read 963 while
+  [`docs/08`](docs/08-roadmap.md), [`docs/README`](docs/README.md) and §93.6's own table read 968.
+  Re-derived: the native backends compile **972** definitions against **140** refused, **all
+  thirty-six** corpus programs compile their `apply_event` and **twenty-five of thirty-six** their
+  `view`; the WebAssembly emitter is measured against **220** corpus definitions, not 213; and the
+  corpus places **373** definitions and signals, not 362, with the tier table moved with it — `any`
+  196 (52.5%), `server` 82, `data` 59, `client` 36. §93.6's Compiled column now says it is the
+  reading taken when each row landed rather than today's, which is what made it look like a
+  contradiction rather than a history.
+
 - **2026-08-19 — `h2` taken to 0.4.16, which is what RUSTSEC-2026-0258 asks for.**
   `cargo deny`'s advisories check went red on `h2 0.4.15` — unbounded empty DATA frames, reachable
   through `hyper` — in the `licences` job, with `bans`, `licenses` and `sources` all still green. The
