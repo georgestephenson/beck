@@ -544,6 +544,39 @@ impl Plan {
         (maintained, operators.count() - maintained)
     }
 
+    /// The operators whose per-element function captured something that moves **on every event**,
+    /// so the whole collection is reapplied whenever anything happens.
+    ///
+    /// This is the defect [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md)
+    /// §99.3 found by sweeping the tree by hand: a loop body that reads the accumulator is a
+    /// *different function* after every event, so §23.13's rebuild rule reapplies it to every
+    /// element — a nested-loop join with no index, invisible until the collection is large. The
+    /// operators of §99.9 remove it where the shape can be recognised, and §99.6's rule for the
+    /// shape that cannot is "compile it the slow way and say so", which is
+    /// [`Node::because`].
+    ///
+    /// Published so the sweep can be a **standing property rather than a thing somebody re-runs**.
+    /// It was re-run by hand three times, and the third time found a site that had arrived one
+    /// change after the second and been missed — the figure in the document was stale because the
+    /// tree had grown under it ([`docs/08`](../../../../../docs/08-roadmap.md) §8.5.6's third decay
+    /// direction). `incremental.rs::no_program_in_the_tree_reapplies_a_collection_per_event` is
+    /// what re-runs it now.
+    ///
+    /// A **per-subscription** capture is not this and is not returned: a function that captured the
+    /// session is reapplied when a subscriber navigates, which is a route change rather than an
+    /// event, and calling the two the same thing is what made the hand sweep hard to read.
+    pub fn reapplied_per_event(&self) -> Vec<OpId> {
+        captured_per_node(self)
+            .into_iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                c.as_ref()
+                    .is_some_and(|(_, cadence)| *cadence == Cadence::PerEvent)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     /// The nodes that do not read the session: §5.3's shared dataflow.
     pub fn shared(&self) -> Vec<OpId> {
         (0..self.nodes.len())
@@ -982,6 +1015,36 @@ fn cadences(plan: &Plan) -> Vec<Cadence> {
     out
 }
 
+/// What each operator's per-element function captured, and how often that moves.
+///
+/// `None` for an operator that has no per-element function, or whose function captured nothing.
+/// The join's key function is deliberately excluded: it captures nothing by construction, and an
+/// empty capture line for it would read as a cost.
+///
+/// **One computation, several readers**, which is [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md)
+/// §99.9 item 2's lesson applied a second time: [`cost_report`] prints these, its summary counts
+/// them, and [`Plan::reapplied_per_event`] answers a question about them. Three readers deriving
+/// the same fact separately is how the tally and the body came to disagree the first time.
+fn captured_per_node(plan: &Plan) -> Vec<Option<(Vec<OpId>, Cadence)>> {
+    let moves = cadences(plan);
+    plan.nodes
+        .iter()
+        .map(|node| {
+            let captures = match &node.op {
+                Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } => {
+                    f.captures.clone()
+                }
+                _ => Vec::new(),
+            };
+            captures
+                .iter()
+                .map(|&j| moves[j])
+                .max()
+                .map(|worst| (captures, worst))
+        })
+        .collect()
+}
+
 /// One operator's line in the report, and the facts the summary is counted from.
 ///
 /// The summary is derived from these rather than recomputed beside them, which is the shape of the
@@ -1013,23 +1076,11 @@ enum Linear {
 /// running, and no placement decision can see them.
 pub fn cost_report(plan: &Plan) -> String {
     use std::fmt::Write;
-    let moves = cadences(plan);
+    let mut captures = captured_per_node(plan);
     let charges: Vec<Charge> = (0..plan.nodes.len())
         .map(|i| {
             let cost = op_cost(plan, i);
-            // The join's key function is deliberately not here: it captures nothing by
-            // construction, and printing an empty capture line for it would read as a cost.
-            let captures = match &plan.nodes[i].op {
-                Op::MapList { f } | Op::FilterList { f } | Op::SortBy { f } | Op::FlatMap { f } => {
-                    f.captures.clone()
-                }
-                _ => Vec::new(),
-            };
-            let captured = captures
-                .iter()
-                .map(|&j| moves[j])
-                .max()
-                .map(|worst| (captures, worst));
+            let captured = std::mem::take(&mut captures[i]);
             let linear = if cost.contains("n entries copied") {
                 Some(Linear::Forced)
             } else if captured

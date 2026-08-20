@@ -367,8 +367,20 @@ compile it to ([`99`](99-the-data-tier-means-of-combination.md) §99.6): `27-rev
 transcripts and the sweep that found three such sites in the tree among fifteen benign ones the same
 line reported identically — **all four are now closed**, the last of them (`board`) being a grouping
 rather than a lookup, which took the `arrange_by` §99.9 item 3 schedules. Four rather than three
-because a fourth site arrived with `awareness(f)` after that sweep was run and nothing re-ran it. What the episode leaves behind is the lesson rather than
-the case: two commands that are each true about one operator, and no reader who would run both.
+because a fourth site arrived with `awareness(f)` after that sweep was run and nothing re-ran it.
+That last clause is why the sweep is now a gate:
+`incremental.rs::no_program_in_the_tree_reapplies_a_collection_per_event` plans all 42 programs in
+`corpus/` and `examples/` and holds the count at zero, against 8 sites with the recognition switched
+off. What the episode leaves behind is the lesson rather than the case: two commands that are each
+true about one operator, and no reader who would run both.
+
+**So this section's `materialise` column is now the whole of what is left**, and that is a change in
+its standing rather than in its number. When it was written it was one of two per-event linear costs
+and the smaller-sounding one; with the captures closed it is the only one, in every program in the
+tree. It also had no position in [`08`](08-roadmap.md) §8.5's order until that was measured —
+"a known piece of work rather than an open question" is precisely the description §8.5's preamble
+gives of an item that never comes due — and it has one now, as an **F** item, because the fix is the
+work Mode B's per-component kernel needs anyway.
 
 ## 23.9 One shared dataflow: the three choices
 

@@ -498,6 +498,20 @@ rows.
     which half of D9 that leaves open.
   - **Salsa-memoised expansion**, §2.4's "macro-heavy code must not destroy IDE latency" — which
     now has something to memoise.
+- **The delta at the top of the plan is the patch set** (F, and it had **no position in this list
+  until it was measured**, which is the failure §8.5 opens by describing). Now that the aggregates
+  have closed §99.3's captures, the sweep across `corpus/` and `examples/` finds **42 programs
+  planning and not one of them reapplying a collection per event** — and every one of them still
+  has an operator costing `O(n)` per event, all for the same reason: *a recompute needs a `list`
+  and an arrangement is a keyed collection.* That is the last per-event linear cost in the tree,
+  and [`23`](23-incremental-views-report.md) §23.8 both measured it (3–5×, "a constant factor on an
+  unchanged asymptote rather than a change of asymptote") and named the fix — `beck-rt` renders a
+  whole page and structurally diffs it, where an engine emitting patches from its own output
+  changes would skip the assembly *and* the diff. It is **F** rather than **S** because §23.8 says
+  it is the same work Mode B's per-component kernel needs, so the item below inherits it; it sits
+  here for that reason. What it was missing was never a design — it was a **position**, and a piece
+  of work written down as "a known piece of work rather than an open question" in a report is
+  exactly the shape §8.5's preamble says never comes due.
 - **Mode B's codegen: the heap on a wasm target** (S, and the item with a user in front of it).
   The emitter is written and the scalar subset compiles, in a real engine, against the
   tree-walker ([`103`](103-the-wasm-emitter-report.md)) — and it compiles **0 of the corpus's 225

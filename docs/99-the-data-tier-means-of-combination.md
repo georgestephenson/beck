@@ -160,15 +160,30 @@ is the point. **`33-awareness` is the other number**: it had the shape too, it w
 eighteen, and it was not missed — it did not exist, arriving with `awareness(f)` one change after
 this document was written, and nothing re-ran the sweep. That is [`08`](08-roadmap.md) §8.5.6's third
 decay direction, a *quoted figure going stale because the tree grew under it*, demonstrated one
-commit after the paragraph describing it. So three of four are closed rather than two of three, and
-`board` is the one left — which is a **grouping** rather than a lookup and waits on §99.9 item 3.
+commit after the paragraph describing it.
 
-**And the analysis disagrees with the plan.** `beck explain incremental corpus/27-review.beck`
-reports `flat_map ×1 maintained`. It is maintained in the sense the analysis means — the operator has
-a delta rule — and it is reapplied wholesale anyway, because its *function* moved rather than its
-input. This is the second instance of the disagreement [`23`](23-incremental-views-report.md) §23.8
-already caught once for `html_el` and said out loud: "that table is a statement about what a plan
-could do, and the engine does not do this one." Nobody has said it about this one.
+**The sweep is now zero, and it is a gate rather than a sweep.** `arrange_by` (§99.9 item 3) took
+`board`, which was the grouping the row above was waiting on, and nothing has replaced it:
+**42 programs across `corpus/` and `examples/` plan, and none of them reapplies a collection on
+every event — against 8 sites in 8 programs with the recognition switched off.** Every capture left
+in the tree is a `const` or the `session`; not one is downstream of the accumulator.
+
+That second number is the half that makes the first mean anything, and it is the reason this is
+`incremental.rs::no_program_in_the_tree_reapplies_a_collection_per_event` rather than a fourth
+reading of the same table. **A figure in a document cannot notice a new program.** This one was
+read by hand three times, went stale in between twice, and the staleness was always in the
+flattering direction. `Plan::reapplied_per_event` is the property, and `beck explain cost` prints
+its lines from the same computation the gate counts — §99.9 item 2's lesson, applied to a second
+reader rather than rediscovered.
+
+**And the analysis used to disagree with the plan.** `beck explain incremental corpus/27-review.beck`
+reported `flat_map ×1 maintained` while `beck explain cost` reported `n applications whenever #0
+moves` for the same operator: maintained in the sense the analysis means — the operator has a delta
+rule — and reapplied wholesale anyway, because its *function* moved rather than its input. That was
+the second instance of the disagreement [`23`](23-incremental-views-report.md) §23.8 caught once for
+`html_el` and said out loud. `27-review` compiles to a `Join` now and the two commands agree about
+it; what the episode leaves behind is the shape rather than the case, and the gate above is what
+would say so next time.
 
 ## 99.4 The algebra, stated as one
 
