@@ -1,0 +1,19 @@
+{
+  "note": "beck's solved placement. Review it like a lockfile: a change here is a change in where code runs.",
+  "placement": {
+    "def/apply_event": "any",
+    "def/done_class": "any",
+    "def/if_owned": "any",
+    "def/mine": "any",
+    "def/remaining": "any",
+    "def/render": "any",
+    "def/toggled": "any",
+    "def/validate": "any",
+    "def/view": "any",
+    "signal/events": "server",
+    "signal/page": "client",
+    "signal/proposals": "server",
+    "signal/todos": "data"
+  },
+  "version": 1
+}

@@ -73,6 +73,52 @@ fn no_workflow_starts_a_value_with_a_character_yaml_reserves() {
     }
 }
 
+/// **A gate written `! cmd` does not fail the step it is in**, unless it happens to be the last
+/// line of one.
+///
+/// `bash -e` "shall not exit" when the command that failed "is part of a `!` expression" — POSIX's
+/// own words — so `! grep -q 'DELETE' grants.yaml` followed by anything at all is a comment with a
+/// process behind it. **Nine of the ten in `compiler.yml` were dead**, including the one asserting
+/// that a deliberately-false Beck test fails the build, and the tenth was live only because it was
+/// the last line of its block. They had been green since they were written.
+///
+/// The workflow already knew the shape and had not generalised it: the deep-recursion step says
+/// "an exit status of 134 or 139 … is exactly the thing a `! cmd` gate would have accepted, so the
+/// status is checked rather than only the failure". That is
+/// [`docs/82`](../../../../docs/82-the-edge-report.md) §82.10 in one file — somebody saw the gap
+/// where it bit them and wrote the fix for that instance.
+///
+/// So the rule is the form rather than the instance: **no `run:` line may begin with `!`**, and
+/// what replaces it is `if cmd; then echo 'why'; exit 1; fi`, which aborts wherever it sits and
+/// says what went wrong when it does. The exception the rule does not need is the last-line case —
+/// admitting it would make the check positional, and a step that grows a line afterwards would
+/// silently lose its gate, which is how this happened.
+#[test]
+fn no_workflow_asserts_with_a_negation_that_cannot_fail() {
+    let mut found: Vec<String> = Vec::new();
+    for path in workflows() {
+        let text = std::fs::read_to_string(&path).expect("a workflow is readable");
+        for (n, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("! ") {
+                found.push(format!(
+                    "{}:{}: {}",
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    n + 1,
+                    trimmed.trim_end()
+                ));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "these assertions are negations, and `bash -e` does not exit on one unless it is the last \
+         line of its step — so they pass whatever happens. Write `if cmd; then echo 'why'; exit 1; \
+         fi` instead:\n  {}",
+        found.join("\n  ")
+    );
+}
+
 #[test]
 fn every_published_page_is_built_with_a_link_back_to_the_repository() {
     // The site links back to the repository through `beck doc --repo`, and `docs.rs` asserts that
