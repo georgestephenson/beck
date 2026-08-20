@@ -1410,8 +1410,28 @@ def secret_after(n: Int) -> Int uses env:
 /// the record sits above the arena's mark and the next call writes over it — and this is where
 /// that shows.
 ///
-/// Nothing is asserted about a rate, for `what_the_heap_costs_against_the_tree_walker`'s reason.
-/// What is asserted is the **shape**: the per-call cost must not grow with the count.
+/// **Nothing here is asserted**, including the shape, and the reason is that the shape is gated
+/// properly somewhere else.
+///
+/// This used to assert that the per-call cost at ten thousand calls stayed under twice the cost at
+/// one thousand. That is a wall clock standing in for "the outcome record does not accumulate", and
+/// it took CI red on a commit that changed only YAML and prose, on a reading of 2.07× against a
+/// bound of 2.0. The bound was inside the noise: on a quiet machine every row goes the *other* way —
+/// `shouted` 134 ns to 96, `digested` 250 to 206, `parsed` 87 to 53 — because a fixed per-call
+/// overhead amortises over more calls, and what moves is the small-count reading, which ranged
+/// 121–269 ns over twelve runs. That is a factor of 2.2 in the numerator under a ratio bound of 2.
+/// Twelve solo runs passed; one of eleven runs of the whole suite, which is thirteen of these tests
+/// on one machine at once, failed — the CI condition. `compiler.yml`'s own header states the rule it
+/// was breaking, citing `docs/13` §13.7: timings are printed but never thresholded, "because a
+/// shared CI runner cannot hold a timing threshold honestly and a gate that flakes gets deleted".
+///
+/// **The claim it stood in for is gated by bytes**, and was before this test existed:
+/// `native.rs::a_linked_call_costs_its_answer_and_nothing_else` asserts that 800 more `digest` calls
+/// cost exactly 800 answers — 80 bytes each, at both sizes — so a record that leaked its sixteen
+/// bytes below the mark would make it 96 and go red, with no clock anywhere in it. `docs/93` §93.12
+/// says as much where it makes the claim: "which is why the gate for it counts bytes rather than
+/// seconds". So what was lost by deleting the assertion here is nothing, and what is left is the
+/// measurement this test is named for.
 #[test]
 fn what_a_linked_primitive_costs() {
     let program = compile("linked.beck", LINKED);
@@ -1472,16 +1492,20 @@ fn what_a_linked_primitive_costs() {
         per_call.push((name, ns));
     }
 
-    // The shape. A per-call cost that grew with the count would mean the mechanism accumulates
-    // something per call — the outcome record, if it were written *below* the mark rather than
-    // above it — and the arena is 256 MiB, so a leak that small takes a large count to show. The
-    // bound is loose because the small size is noisier, not because the claim is weak.
+    // The trend, printed rather than asserted. A per-call cost that grew with the count would mean
+    // the mechanism accumulates something per call — the outcome record, if it were written *below*
+    // the arena's mark rather than above it. A reader can see that here; a threshold on it could not
+    // tell it from a busy machine, and `native.rs::a_linked_call_costs_its_answer_and_nothing_else`
+    // says it in bytes.
+    println!();
     for (name, [small, large]) in &per_call {
-        assert!(
-            large < &(small * 2.0),
-            "`{name}` cost {small:.0} ns per call at the small count and {large:.0} ns at the \
-             large one — a per-call cost that grows with the count is a mechanism that keeps \
-             something, and this one is supposed to keep nothing"
+        println!(
+            "{name:<14} {:>6.2}× the per-call cost at ten times the calls{}",
+            large / small,
+            match large > small {
+                true => " — above 1.0, which is the machine unless it is reproducible",
+                false => "",
+            }
         );
     }
     println!(
