@@ -710,8 +710,16 @@ def joined_up(xss: list[list[Int]]) -> Int:
     }
     // And the shape the sort is really about. Eight times the elements is about ten times the work
     // for `n log n` and sixty-four for `n²`, so a quadratic merge would show as a ratio that fell by
-    // about a factor of six against a tree-walker whose own sort is Rust's. The bound is the loose
-    // one this file already uses for `scaling.rs`'s reason: a gate that flakes gets deleted.
+    // about a factor of six against a tree-walker whose own sort is Rust's — `large / small` near
+    // **0.17**.
+    //
+    // The bound is derived from that rather than borrowed. It used to be 0.5, the loose constant
+    // the ratios above use, and 0.5 is not loose here: measured 18 times on a quiet machine this
+    // ratio ran 0.55 to 1.18 with a mean of 0.81, and under this suite's own thirteen-way
+    // concurrency it reached 0.42 — two failures in ten runs, against a phenomenon three times
+    // further away. A bound of 0.3 sits below every sound reading observed and well above a
+    // quadratic's 0.17, which is the gap the constant is supposed to be in. The floor and the
+    // phenomenon are what it is between; the noise is not one of its inputs.
     let (_, small, large, _) = ratios
         .iter()
         .find(|(n, ..)| *n == "sorted_down")
@@ -723,9 +731,10 @@ def joined_up(xss: list[list[Int]]) -> Int:
         large / small
     );
     assert!(
-        large > &(small * 0.5),
-        "the sort was {small:.2}× at the small size and only {large:.2}× at the large one, which is \
-         the shape a merge sort must not have"
+        large > &(small * 0.3),
+        "the sort was {small:.2}× at the small size and only {large:.2}× at the large one — {:.2}× \
+         of the ratio kept, and a quadratic merge is what 0.17× would mean",
+        *large / *small
     );
 }
 
