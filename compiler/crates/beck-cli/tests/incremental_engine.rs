@@ -943,3 +943,83 @@ fn a_total_outside_int_fails_where_it_is_asked_for_and_nowhere_else() {
         );
     }
 }
+
+/// **One event allocates a handful of new html nodes, whatever the page holds.**
+///
+/// `html_el` is a pointwise operator, so one event rebuilds every element from the page down to
+/// the list — and what that rebuild does to the children it is handed is the whole question.
+/// Holding them as owned `Html` deep-copied each one, at every level, so an enclosing element
+/// re-copied what its children had just copied and a page of `n` nodes cost all `n` per event.
+/// Held as shared handles, an untouched subtree costs a refcount.
+///
+/// **Counted by identity at two sizes, not by a clock** (§13.7). The property is that the number
+/// of *newly allocated* nodes does not grow with the collection: every node in the second page
+/// that is not the same allocation as one in the first is a node this event built. Pointer
+/// identity is deterministic and would go straight back to `n` if a `.clone()` crept into the
+/// builder, where a duration would only get slower on a machine nobody was watching. The old page
+/// is held for the whole comparison, so a live allocation cannot be reused underneath it.
+///
+/// Positions are deliberately *not* compared pairwise: the sketch prepends, so child `i` of the
+/// new page is child `i-1` of the old one and a positional walk reports the whole list as changed.
+/// What is asked is what the page is *made of*, which is what the cost follows from.
+#[test]
+fn one_event_allocates_a_handful_of_html_nodes_whatever_the_page_holds() {
+    use std::collections::HashSet;
+
+    let placed = support::todo_program();
+    let backend = beck_eval::backend(&placed);
+    let prepared = Arc::new(Prepared::compile(&placed, backend.as_ref()).expect("prepares"));
+    let runtime = Runtime::new(placed, backend).expect("prepares");
+
+    fn nodes(h: &Arc<beck_core::Html>, out: &mut HashSet<usize>) {
+        out.insert(Arc::as_ptr(h) as usize);
+        if let beck_core::Html::Element { children, .. } = &**h {
+            for c in children {
+                nodes(c, out);
+            }
+        }
+    }
+
+    let fresh_at = |rows: usize| -> (usize, usize) {
+        let mut engine = Engine::new(prepared.clone());
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut state = runtime.initial_state().expect("initial");
+        for i in 0..rows {
+            state = fold_added(&runtime, &state, i as u64 + 1, "ana");
+        }
+        let before = engine.render(&state, &session, &here).expect("warm");
+        let next = fold_added(&runtime, &state, rows as u64 + 1, "ana");
+        let after = engine.render(&next, &session, &here).expect("step");
+        let (Value::Html(before), Value::Html(after)) = (&before, &after) else {
+            panic!("a page is Html");
+        };
+        let (mut old, mut new) = (HashSet::new(), HashSet::new());
+        nodes(before, &mut old);
+        nodes(after, &mut new);
+        (new.difference(&old).count(), new.len())
+    };
+
+    let (small, small_total) = fresh_at(200);
+    let (large, large_total) = fresh_at(1_600);
+    println!(
+        "one event builds {small} new html nodes on a 200-row page of {small_total}, \
+         and {large} on a 1,600-row page of {large_total}"
+    );
+    // The shape, at two sizes, because one measurement cannot tell a constant from a linear one.
+    assert!(
+        large <= small * 2,
+        "one event built {large} new html nodes on a 1,600-row page against {small} on a 200-row \
+         one, so reassembling the page copies what did not change"
+    );
+    // And the absolute bound, so that "does not grow" cannot be satisfied by both being large.
+    assert!(
+        large < 100,
+        "one event built {large} new html nodes; the page above it is a handful of elements deep"
+    );
+    // The control: the pages really are the size this claims to be about.
+    assert!(
+        large_total > 1_600,
+        "a 1,600-row page held {large_total} nodes, so this gate is not measuring a list"
+    );
+}

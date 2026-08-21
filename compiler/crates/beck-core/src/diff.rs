@@ -16,6 +16,7 @@
 //!   insertions ascend.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
@@ -141,7 +142,7 @@ fn diff_attrs(old: &[(String, String)], new: &[(String, String)], path: &Path, o
     }
 }
 
-fn diff_children(old: &[Html], new: &[Html], path: &mut Path, ops: &mut Vec<Op>) {
+fn diff_children(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut Vec<Op>) {
     if keyed(old) && keyed(new) {
         diff_keyed(old, new, path, ops);
     } else {
@@ -151,7 +152,7 @@ fn diff_children(old: &[Html], new: &[Html], path: &mut Path, ops: &mut Vec<Op>)
 
 /// Keyed iff every child carries a key and the keys are unique — otherwise the reconciliation
 /// below would be ambiguous, and a positional diff is the honest fallback.
-fn keyed(children: &[Html]) -> bool {
+fn keyed(children: &[Arc<Html>]) -> bool {
     if children.is_empty() {
         return false;
     }
@@ -162,7 +163,7 @@ fn keyed(children: &[Html]) -> bool {
     })
 }
 
-fn diff_positional(old: &[Html], new: &[Html], path: &mut Path, ops: &mut Vec<Op>) {
+fn diff_positional(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut Vec<Op>) {
     let common = old.len().min(new.len());
     for i in 0..common {
         path.push(i as u32);
@@ -179,17 +180,17 @@ fn diff_positional(old: &[Html], new: &[Html], path: &mut Path, ops: &mut Vec<Op
         ops.push(Op::Insert {
             path: path.clone(),
             index: i as u32,
-            html: node.clone(),
+            html: (**node).clone(),
         });
     }
 }
 
-fn diff_keyed(old: &[Html], new: &[Html], path: &mut Path, ops: &mut Vec<Op>) {
-    let wanted: HashSet<&str> = new.iter().filter_map(Html::key_of).collect();
+fn diff_keyed(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut Vec<Op>) {
+    let wanted: HashSet<&str> = new.iter().filter_map(|c| c.key_of()).collect();
 
     // `cursor` mirrors the client's child list as the ops are applied, so every index emitted
     // below is the index the client will see at that point in the stream.
-    let mut cursor: Vec<&Html> = old.iter().collect();
+    let mut cursor: Vec<&Html> = old.iter().map(|c| &**c).collect();
 
     let mut i = 0;
     while i < cursor.len() {
@@ -223,7 +224,7 @@ fn diff_keyed(old: &[Html], new: &[Html], path: &mut Path, ops: &mut Vec<Op>) {
                 ops.push(Op::Insert {
                     path: path.clone(),
                     index: j as u32,
-                    html: want.clone(),
+                    html: (**want).clone(),
                 });
                 cursor.insert(j, want);
                 continue; // freshly inserted: nothing to diff against
@@ -257,7 +258,7 @@ pub fn apply(root: &Html, ops: &[Op]) -> Html {
             Op::Insert { path, index, html } => {
                 let parent = node_mut(&mut root, path);
                 *parent = rebuild(parent.clone(), |cs| {
-                    cs.insert(*index as usize, html.clone());
+                    cs.insert(*index as usize, Arc::new(html.clone()));
                 });
             }
             Op::Remove { path, index } => {
@@ -284,7 +285,10 @@ fn node_mut<'a>(root: &'a mut Html, path: &[u32]) -> &'a mut Html {
     let mut node = root;
     for step in path {
         node = match node {
-            Html::Element { children, .. } => &mut children[*step as usize],
+            // `make_mut` and not an index: children are shared with whatever other tree holds
+            // them, so descending to patch one has to unshare exactly the spine it walks. Nodes
+            // off the path keep their allocation and their refcount.
+            Html::Element { children, .. } => Arc::make_mut(&mut children[*step as usize]),
             Html::Text { .. } => panic!("patch path descends into a text node"),
         };
     }
@@ -296,7 +300,7 @@ fn set_node(root: &mut Html, path: &[u32], value: Html) {
 }
 
 /// Rebuild an element through the `Html` builder so the structural hash stays consistent.
-fn rebuild(node: Html, f: impl FnOnce(&mut Vec<Html>)) -> Html {
+fn rebuild(node: Html, f: impl FnOnce(&mut Vec<Arc<Html>>)) -> Html {
     match node {
         Html::Element {
             tag,
@@ -313,7 +317,7 @@ fn rebuild(node: Html, f: impl FnOnce(&mut Vec<Html>)) -> Html {
             if let Some(k) = key {
                 el = el.key(k);
             }
-            el.children(children)
+            el.children_shared(children)
         }
         text => text,
     }
@@ -349,7 +353,7 @@ fn with_attr(node: Html, name: &str, value: Option<&str>) -> Html {
             if let Some(k) = key {
                 el = el.key(k);
             }
-            el.children(children)
+            el.children_shared(children)
         }
         text => text,
     }

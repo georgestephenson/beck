@@ -182,8 +182,10 @@ incremental λ-calculus (Cai, Giarrusso, Rendel & Ostermann, PLDI 2014) gives de
 functions — Beck's `view` is one — but no system streams UI-tree deltas end to end. A change
 algebra over the page type is a research-shaped opening, not a catalogue item. Flagged but
 unverified in this pass: DeCo (arXiv:2602.20866, 2026), incrementality for generic algebraic data
-types, which if it holds up is the missing theory piece. **Watch**, and say plainly: the 3–5×
-constant factor stands until someone does research, possibly us.
+types, which if it holds up is the missing theory piece. **Watch**, and say plainly: the
+constant factor stands until someone does research, possibly us — it is 4–37× rather than 3–5×
+since [`23`](23-incremental-views-report.md) §23.8's copy became a refcount, which moved the
+constant and left the asymptote exactly where it was.
 
 ## 38.3 Slicing and placement: the choreographic turn
 

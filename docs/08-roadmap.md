@@ -504,10 +504,16 @@ rows.
   planning and not one of them reapplying a collection per event** — and every one of them still
   has an operator costing `O(n)` per event, all for the same reason: *a recompute needs a `list`
   and an arrangement is a keyed collection.* That is the last per-event linear cost in the tree,
-  and [`23`](23-incremental-views-report.md) §23.8 both measured it (3–5×, "a constant factor on an
-  unchanged asymptote rather than a change of asymptote") and named the fix — `beck-rt` renders a
-  whole page and structurally diffs it, where an engine emitting patches from its own output
-  changes would skip the assembly *and* the diff. It is **F** rather than **S** because §23.8 says
+  and [`23`](23-incremental-views-report.md) §23.8 both measured it and named the fix — `beck-rt`
+  renders a whole page and structurally diffs it, where an engine emitting patches from its own
+  output changes would skip the assembly *and* the diff.
+  **Its first stage has landed, and it was a defect rather than a stage.** §23.8 described the
+  residue as "`n` handles are copied"; `Html::Element` in fact held owned subtrees, so one event
+  deep-copied *every node of the page* and the cost compounded with nesting depth. Children are
+  shared handles now: **14,827 µs → 697 µs for one event on a 5,000-row page**, the cold recompute
+  halved with it, and the maintained-to-recomputed ratio went from 5× to 35×. What remains is the
+  item as originally stated — the assembly is `n` refcounts rather than `n` copies, which is a
+  smaller `n` and still an `n`. It is **F** rather than **S** because §23.8 says
   it is the same work Mode B's per-component kernel needs, so the item below inherits it; it sits
   here for that reason. What it was missing was never a design — it was a **position**, and a piece
   of work written down as "a known piece of work rather than an open question" in a report is

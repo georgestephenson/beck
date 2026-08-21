@@ -11,8 +11,10 @@ here rather than in a footnote:
 
 - `remaining` updates by **±1 per event, never by recount** — ten units of delta work at ten rows and
   at five thousand (§23.8).
-- Assembling the page's children is **still linear**, so the end-to-end win is a 3–5× constant factor
-  rather than a change of asymptote (§23.8).
+- Assembling the page's children is **still linear**, so the end-to-end win is a 4–37× constant
+  factor rather than a change of asymptote (§23.8). It was 3–5× until the children became shared
+  handles rather than owned subtrees — the copy that sentence had always described as "`n` handles"
+  was in fact every node of the page, compounding with depth.
 - Sharing the dataflow is worth **55× less work per event** on a public feed and **1.3×** on the todo
   sketch, at 256 subscribers. **Where a program reads the session decides what its fanout costs**
   (§23.10).
@@ -317,10 +319,10 @@ state that already holds `n`:
 
 ```
    rows       delta materialise   recomp   maintain µs recompute µs  ratio
-     10          10         11        9            44          133   3.0×
-    100          10        101        9           194         1014   5.2×
-   1000          10       1001        9          1656         9017   5.4×
-   5000          10       5001        9          9128        47293   5.2×
+     10           9         11        9            15           66   4.4×
+    100           9        101        9            28          532  19.0×
+   1000           9       1001        9           125         4585  36.7×
+   5000           9       5001        9           697        24370  35.0×
 ```
 
 **The `delta` column is the deliverable.** Ten units of work — per-element functions applied plus
@@ -335,10 +337,32 @@ table.** It is the cost of handing a *pointwise* operator a `Value::List`:
 so `n` handles are copied and an `n`-child element is constructed per event even though one child
 changed.
 
+**"`n` handles" was not true when this sentence was first written, and the difference was the
+larger half of the cost.** `Html::Element` held `children: Vec<Html>` — owned subtrees — so `child`
+deep-copied every child it was given, and because each enclosing element copied what its own
+children had just copied, one event rebuilt *every node of the page* rather than `n` of them. The
+cost therefore compounded with nesting depth, which is invisible in a column counting entries. It is
+`Vec<Arc<Html>>` now and the sentence above is true as written: an untouched subtree costs a
+refcount. The table is the same measurement before and after —
+
+| rows | maintain µs, owned | maintain µs, shared |
+|---|---|---|
+| 10 | 34 | **15** |
+| 100 | 182 | **28** |
+| 1,000 | 2,336 | **125** |
+| 5,000 | 14,827 | **697** |
+
+— and the recompute path halves as well (50,845 µs → 24,370 µs at 5,000 rows), because
+`beck_core::html::element` is the one function the evaluator *and* both native backends build a page
+with. `incremental_engine.rs::one_event_allocates_a_handful_of_html_nodes_whatever_the_page_holds`
+is the gate, and it is counted by pointer identity rather than by a clock (§13.7): **9 new nodes on
+a 200-row page and 9 on a 1,600-row page, against 211 and 1,611 with the copy put back**.
+
 So the maintained view is **not** `O(δ)` end to end. It is `O(δ)` in the *elements it computes* and
-`O(n)` in the *page it assembles*, and the measured 3–5× is a constant factor on an unchanged
-asymptote rather than a change of asymptote. **A report that quoted "5× faster" without that sentence
-would be describing a different system.**
+`O(n)` in the *page it assembles*, and the measured 4–37× is a constant factor on an unchanged
+asymptote rather than a change of asymptote. **A report that quoted "37× faster" without that
+sentence would be describing a different system** — the assembly is `n` refcounts now instead of `n`
+subtree copies, which is a much smaller `n` term and still an `n` term.
 
 Removing the remainder is a known piece of work rather than an open question, and it is the same
 piece of work in both directions: **the delta at the top of the plan *is* the patch set.** `beck-rt`

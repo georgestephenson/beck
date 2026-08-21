@@ -17,6 +17,8 @@
 //! has no signal graph, so it approximates that with an O(1) hash comparison per subtree — the
 //! same asymptotic effect, without the machinery.
 
+use std::sync::Arc;
+
 use serde_json::{json, Value};
 
 /// Attribute name under which a keyed node's key is materialised on the wire and in SSR output.
@@ -38,7 +40,14 @@ pub enum Html {
         tag: String,
         attrs: Vec<(String, String)>,
         key: Option<String>,
-        children: Vec<Html>,
+        /// Shared handles rather than owned subtrees, because a page is **reassembled** on every
+        /// event and a child that did not change must cost a refcount rather than a copy.
+        ///
+        /// With `Vec<Html>` here, `child` deep-copied the whole subtree it was given, at every
+        /// level — so one event rebuilding a page of `n` nodes copied every one of them, and the
+        /// cost compounded with nesting depth because each enclosing element copied what its
+        /// children had just copied (`docs/23` §23.8, which described this as "n handles").
+        children: Vec<Arc<Html>>,
         /// Three accumulators rather than one hash, so that the hash is a function of the node's
         /// *structure* and not of the order the builder methods happened to be called in. Getting
         /// this wrong makes two identical subtrees hash differently, and a differ that trusts a
@@ -115,7 +124,19 @@ impl Html {
         self
     }
 
-    pub fn child(mut self, c: Html) -> Html {
+    pub fn child(self, c: Html) -> Html {
+        self.child_shared(Arc::new(c))
+    }
+
+    /// Add a child that is **already** behind an [`Arc`], which is what every page assembled from
+    /// a view has: the engine holds each child as a `Value::Html` and hands the same allocation to
+    /// this element. Cloning the handle is what makes reassembling a page cost its *changed*
+    /// nodes rather than all of them.
+    ///
+    /// The hash is the child's own, already computed when it was built, so sharing costs nothing
+    /// at the differ either — an unchanged subtree still compares equal by hash without being
+    /// walked.
+    pub fn child_shared(mut self, c: Arc<Html>) -> Html {
         if let Html::Element {
             children,
             children_h,
@@ -131,6 +152,15 @@ impl Html {
     pub fn children(mut self, cs: impl IntoIterator<Item = Html>) -> Html {
         for c in cs {
             self = self.child(c);
+        }
+        self
+    }
+
+    /// [`Html::children`] for children that are already shared — the counterpart of
+    /// [`Html::child_shared`], used where an element is rebuilt from the children it already had.
+    pub fn children_shared(mut self, cs: impl IntoIterator<Item = Arc<Html>>) -> Html {
+        for c in cs {
+            self = self.child_shared(c);
         }
         self
     }
@@ -157,7 +187,7 @@ impl Html {
                 if let Some(k) = key {
                     el = el.key(k.clone());
                 }
-                el.children(children.iter().map(Html::rehash))
+                el.children(children.iter().map(|c| c.rehash()))
             }
         }
     }
@@ -210,7 +240,7 @@ impl Html {
                 json!([
                     tag,
                     Value::Array(pairs),
-                    children.iter().map(Html::to_wire).collect::<Vec<_>>()
+                    children.iter().map(|c| c.to_wire()).collect::<Vec<_>>()
                 ])
             }
         }
@@ -304,9 +334,11 @@ pub fn element(
         }
     }
     for ch in children {
-        match ch.as_html() {
-            Some(h) => el = el.child(h.clone()),
-            None => return Err(format!("not an Html child: {}", ch.display())),
+        match ch {
+            // The `Arc` and not the tree behind it: `ch` already owns this child, and every other
+            // element that holds it holds the same allocation.
+            Val::Html(h) => el = el.child_shared(h.clone()),
+            other => return Err(format!("not an Html child: {}", other.display())),
         }
     }
     Ok(el)
