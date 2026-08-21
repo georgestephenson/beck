@@ -49,6 +49,49 @@ fn require_llvm() -> bool {
     std::env::var("BECK_REQUIRE_LLVM").is_ok_and(|v| v == "1")
 }
 
+/// Whether this build's wall clock is evidence for a shape.
+///
+/// A measurement suite is a release suite ([`AGENTS.md`]), and `.github/workflows/compiler.yml`
+/// runs this one under `--release` saying exactly that: "it runs here rather than under
+/// `cargo test` because it is a release measurement". But `cargo test --workspace --all-targets`
+/// builds and runs it too, in debug, where the harness around each call — marshalling an
+/// 8,000-element list, cloning it per run — costs several times the generated code it is timing.
+/// The numbers still print there. They are just not evidence, and a threshold on them thresholds
+/// the profile.
+///
+/// This is not hypothetical. On one commit the `measurements` job passed this suite under
+/// `--release` while the `check` job failed it under `cargo test`, same commit and same runner
+/// class: `summed` read 127.95 ns/element at 2,000 and 414.66 at 8,000, a 3.24× that is the
+/// machine, against a bound of 3.0 chosen to sit between a flat append (1×) and a copying one
+/// (4×). Measured four times at each profile on one machine, `doubled`'s ratio across the two
+/// sizes ran 0.85–2.41 in debug against 1.13–1.58 in release.
+fn timings_are_evidence() -> bool {
+    if !cfg!(debug_assertions) || std::env::var("BECK_GATE_DEBUG_TIMING").is_ok_and(|v| v == "1") {
+        return true;
+    }
+    // A skip prints itself, once for the run rather than once per assertion.
+    static SAID: std::sync::Once = std::sync::Once::new();
+    SAID.call_once(|| {
+        println!(
+            "skipped the shape assertions: a debug build's wall clock is not evidence for one. \
+             Set BECK_GATE_DEBUG_TIMING=1 to assert them anyway, or run this suite with --release, \
+             which is how CI gates it."
+        );
+    });
+    false
+}
+
+/// `assert!`, for a claim whose only evidence is a wall clock: it holds where the clock is
+/// evidence ([`timings_are_evidence`]) and prints itself where it is not, the way every other
+/// conditional skip in this workspace does.
+macro_rules! shape {
+    ($cond:expr, $($arg:tt)+) => {
+        if timings_are_evidence() {
+            assert!($cond, $($arg)+);
+        }
+    };
+}
+
 fn compile(name: &str, src: &str) -> Arc<Program> {
     let (placed, diags, map) = beck_core::compile_or_library_str(name, src);
     assert!(!diags.has_errors(), "{name}:\n{}", diags.render(&map));
@@ -178,7 +221,7 @@ fn what_native_code_costs_against_the_tree_walker() {
     // holds or rises, because its fixed cost — the round trip — is amortised. The bound is
     // deliberately loose for `scaling.rs`'s reason: a gate that flakes gets deleted.
     for (name, small, large) in &ratios {
-        assert!(
+        shape!(
             large > &(small * 0.5),
             "`{name}` was {small:.1}× faster at the small size and only {large:.1}× at the large \
              one — the advantage is shrinking as the problem grows, which is the shape a compiling \
@@ -331,7 +374,7 @@ def scan(n: Int, acc: Acc, sum: Int) -> Int:
     // What *is* asserted is the direction, which no profile changes: a compiled backend that is
     // slower than the tree-walker is a finding rather than a number.
     for (name, small, large) in &ratios {
-        assert!(
+        shape!(
             *small > 1.0 && *large > 1.0,
             "`{name}` was {small:.1}× at the small size and {large:.1}× at the large one"
         );
@@ -461,7 +504,7 @@ def grown(s: Str, n: Int, acc: Str) -> Int:
         if *name == "grown" {
             continue;
         }
-        assert!(
+        shape!(
             *small > 1.0 && *large > 1.0,
             "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
         );
@@ -572,7 +615,7 @@ def windows(xs: list[Int], i: Int, acc: Int) -> Int:
         ratios.push((name, seen[0], seen[1]));
     }
     for (name, small, large) in &ratios {
-        assert!(
+        shape!(
             *small > 1.0 && *large > 1.0,
             "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
         );
@@ -691,7 +734,7 @@ def joined_up(xss: list[list[Int]]) -> Int:
     }
     for (name, small, large, faster) in &ratios {
         if *faster {
-            assert!(
+            shape!(
                 *small > 1.0 && *large > 1.0,
                 "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
             );
@@ -702,7 +745,7 @@ def joined_up(xss: list[list[Int]]) -> Int:
             // between two `Vec`s, while a compiled call sends 2,000 list objects down a pipe and
             // reads the answer back out of the reply's arena. `docs/93` §93.1's round trip is the
             // whole of the difference, and it is a property of every call rather than of this one.
-            assert!(
+            shape!(
                 *small < 1.0 && *large < 1.0,
                 "`{name}` was expected to lose to the tree-walker and was {small:.2}× and {large:.2}×"
             );
@@ -730,7 +773,7 @@ def joined_up(xss: list[list[Int]]) -> Int:
          Rust's stable sort. A quadratic would have lost about a factor of six",
         large / small
     );
-    assert!(
+    shape!(
         large > &(small * 0.3),
         "the sort was {small:.2}× at the small size and only {large:.2}× at the large one — {:.2}× \
          of the ratio kept, and a quadratic merge is what 0.17× would mean",
@@ -846,7 +889,7 @@ def spin(m: Map[Int, Int], k: Int, times: Int, acc: Int) -> Int:
         ratios.push((name, seen[0], seen[1]));
     }
     for (name, small, large) in &ratios {
-        assert!(
+        shape!(
             *small > 1.0 && *large > 1.0,
             "`{name}` was {small:.2}× at the small size and {large:.2}× at the large one"
         );
@@ -1175,7 +1218,7 @@ def down(n: Int) -> Int:
         seen.push((name, ratios[0], ratios[1]));
     }
     for (name, small, large) in &seen {
-        assert!(
+        shape!(
             *small > 1.0 && *large > 1.0,
             "`{name}` was {small:.2}× at the small depth and {large:.2}× at the large one"
         );
@@ -1292,7 +1335,7 @@ def add_from(xs: list[Int], i: Int, acc: Int) -> Int:
         // Four times the elements. A copying append costs about four times as much *per element*;
         // one that pushes costs about the same. Three is the bound the rest of this project's shape
         // gates use (`scaling.rs`), and it sits well clear of both.
-        assert!(
+        shape!(
             large / small < 3.0,
             "`{name}` cost {small:.2} ns per element at 2,000 and {large:.2} ns at 8,000, which is \
              {:.2}× — the shape of an append that copies rather than one that pushes (docs/93 §93.7)",

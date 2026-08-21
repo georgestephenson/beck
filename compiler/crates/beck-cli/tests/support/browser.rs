@@ -164,7 +164,7 @@ impl Browser {
         let _ = std::fs::remove_dir_all(&profile);
         std::fs::create_dir_all(&profile).expect("a profile directory");
 
-        let child = Command::new(binary)
+        let mut child = Command::new(binary)
             .args([
                 "--headless=new",
                 // Root in a container, and no /dev/shm worth the name. Neither is a property of
@@ -184,8 +184,15 @@ impl Browser {
 
         // Chromium writes `<port>\n<browser ws path>` here once it is listening. Reading the file
         // rather than its stderr is what makes this independent of its logging.
+        let started_at = Instant::now();
         let stamp = profile.join("DevToolsActivePort");
-        let deadline = Instant::now() + Duration::from_secs(30);
+        // Long enough that only a browser which is never coming answers it. This bound is not a
+        // gate on anything under test — it exists so a dead browser fails instead of hanging — so
+        // the cost of setting it too high is nil and the cost of setting it too low is a red suite
+        // on unrelated code. Every test in the suite launches its own chromium and the harness runs
+        // them in parallel, so on a loaded CI runner the first launch waits behind the rest; at 30
+        // seconds that lost a run whose other twenty tests all passed.
+        let deadline = Instant::now() + Duration::from_secs(120);
         let endpoint = loop {
             if let Ok(text) = std::fs::read_to_string(&stamp) {
                 let mut lines = text.lines();
@@ -193,7 +200,18 @@ impl Browser {
                     break format!("ws://127.0.0.1:{port}{path}");
                 }
             }
-            assert!(Instant::now() < deadline, "chromium never opened a port");
+            // Say which of the two it was. A browser that exited has a status and a reason to look
+            // for; one still running was only slow, and the deadline is the thing to question.
+            assert!(
+                Instant::now() < deadline,
+                "chromium never opened a port within {:?}: {}",
+                deadline - started_at,
+                match child.try_wait() {
+                    Ok(Some(status)) => format!("it exited with {status}"),
+                    Ok(None) => "it is still running".to_string(),
+                    Err(e) => format!("its status could not be read: {e}"),
+                }
+            );
             tokio::time::sleep(Duration::from_millis(50)).await;
         };
 
