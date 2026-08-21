@@ -1440,3 +1440,73 @@ fn totalling_a_group_does_not_build_it() {
          copied out of an arrangement whatever the ledger holds — docs/99 §99.9 item 6"
     );
 }
+
+/// **Reconciling a reordered keyed list costs the same per row however many rows it has.**
+///
+/// The client applies a patch against the children it already holds, so every index the differ
+/// emits has to be the one that child occupies *at that point in the stream* — and reading that
+/// off the list is a scan. One scan per child is quadratic over the list: invisible at the three
+/// and four rows a hand-written differ test uses, and severe at the size a real table reaches.
+/// Reversing 4,000 keyed rows cost 25 ms of diffing before `diff::Unclaimed` replaced the scan
+/// with a rank query, and each doubling of the rows roughly quadrupled the cost per row.
+///
+/// A reorder is the case that matters because it is the one the trim cannot help with: sorting a
+/// table by another column shares no prefix or suffix between the two pages, so the whole list is
+/// the window.
+///
+/// This gates the *shape* and not the rate (`docs/64`): the per-row cost at the larger size is
+/// compared against the per-row cost at the smaller, so a slow machine moves both and only a
+/// change in the order of growth fails it.
+#[test]
+fn reordering_a_keyed_list_costs_the_same_per_row_however_long_it_gets() {
+    use beck_core::html::Html;
+    use std::sync::Arc;
+
+    fn list(keys: impl Iterator<Item = usize>) -> Html {
+        let mut ul = Html::el("ul");
+        for k in keys {
+            ul = ul.child(
+                Html::el("li")
+                    .key(format!("k{k}"))
+                    .child(Html::text(format!("row {k}"))),
+            );
+        }
+        ul
+    }
+
+    let per_row_ns = |n: usize| -> f64 {
+        let old = list(0..n);
+        // The same children in the opposite order — shared handles, so this measures
+        // reconciliation and not the rebuilding of the rows.
+        let mut rev = Html::el("ul");
+        if let Html::Element { children, .. } = &old {
+            for c in children.iter().rev() {
+                rev = rev.child_shared(Arc::clone(c));
+            }
+        }
+        let mut best = f64::MAX;
+        for _ in 0..3 {
+            let started = Instant::now();
+            let ops = beck_core::diff(&old, &rev);
+            let elapsed = started.elapsed().as_secs_f64() * 1e9;
+            assert!(
+                ops.len() >= n - 1,
+                "a full reversal of {n} rows should move nearly every row, not {} ops — the \
+                 measurement is not reconciling anything",
+                ops.len()
+            );
+            best = best.min(elapsed);
+        }
+        best / n as f64
+    };
+
+    let short = per_row_ns(500);
+    let long = per_row_ns(4_000);
+    println!("keyed reorder: {short:.0} ns/row at 500 and {long:.0} ns/row at 4,000");
+    assert!(
+        long < short * 3.0,
+        "eight times the rows cost {:.1}× as much per row ({short:.0} ns → {long:.0} ns), which \
+         is the shape of a scan per child rather than a rank query — see docs/23 §23.8",
+        long / short
+    );
+}

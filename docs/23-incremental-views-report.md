@@ -365,14 +365,16 @@ against the one the client already holds, and both are on the interaction path:
 ```
    rows     render µs      diff µs     total µs  diff %
      10            16            1           17      6%
-    100            30            6           36     17%
-   1000           163           71          234     30%
-   5000          1672         1036         2708     38%
+    100            33            6           39     15%
+   1000           148           55          203     27%
+   5000          1448          929         2377     39%
 ```
 
 `measure_incremental.rs::what_one_event_costs_the_runtime_end_to_end`. Before the children were
-shared the diff was the *smaller* half at every size; it is now comparable, because only one of the
-two got cheaper. A table showing the render alone was describing half the process.
+shared the diff was the *smaller* half at every size; it is now **39% of the per-event cost at
+5,000 rows**, because only one of the two got cheaper — and it was 54% of it in the window between
+the children being shared and the trim landing. A table showing the render alone was describing
+half the process.
 
 **The differ trims the ends the two pages physically share** — a run of children that are the same
 allocation in both needs no ops and no examination — which is worth 2–3× (203 µs → 71 µs at a
@@ -383,13 +385,51 @@ handle. `diff::tests::a_shared_page_and_a_copied_one_produce_the_same_ops` is th
 differ's other tests cannot do that job — they build every node fresh, so nothing in them is ever
 shared and the trim would never run.
 
-**What is left of the diff cannot be removed by a better differ**, and that is the argument rather
-than an excuse. The residue is `keyed`, which hashes every child's key into a set on both lists to
-decide whether the list reconciles by key at all — before any trim can help. Checking only the
-trimmed window would change which ops a mixed-key list produces, which is a worse trade than the
-constant factor is worth. Given two pages and nothing else, finding what moved means looking at what
-is there: whatever the engine knew about its own changes, the differ has to rediscover. That is the
-whole of §8.5.4's open item, stated from the other end.
+**Every number above is an *edit*, and the edit is the case the trim flatters.** One changed row
+leaves a window of one, so what the table measures is mostly the two `keyed` passes over the full
+lists. **A reorder is the opposite case**: sorting a table by another column shares no prefix and no
+suffix, so the whole list is the window — and there reconciliation was **quadratic in the rows that
+move**.
+
+```
+   rows     scan µs     rank µs
+    500         506         196
+   1000        2786         396
+   2000        5981        1216
+   4000       25476        2105
+```
+
+`beck-cli/tests/scaling.rs::reordering_a_keyed_list_costs_the_same_per_row_however_long_it_gets`.
+Per row, the scan cost 1.01 µs at 500 rows and 6.37 µs at 4,000 — each doubling roughly quadrupling
+it — where the replacement holds 0.39–0.56 µs/row out to 8,000. The cause is that the client applies
+a patch against the children it already holds, so every index the differ emits must be the one that
+child occupies *at that point in the stream*, and reading that off the list is a scan; one scan per
+child is `O(w²)`. Because a `Move` lifts a child out and re-inserts it at the front, the children
+nobody has claimed yet keep their relative order, so the distance a child sits ahead of where it
+belongs is exactly the number of unclaimed children before it — a **rank query**, `O(log w)` against
+a Fenwick tree, making the pass `O(w log w)`.
+
+**The op stream is unchanged, and that had to be proved rather than assumed.** Reconciliation's
+output is a contract with a client that has already applied everything before it, so a faster route
+to the same *page* is not good enough. Round-tripping cannot see the difference — many distinct
+streams land on the same tree — so the scan is kept as the oracle in
+`diff::tests::the_rank_structure_and_the_scan_it_replaced_emit_the_same_ops`, and 300 generated
+cases assert the two streams equal. Making the new code emit one redundant no-op `Move` leaves
+`round_trips_over_a_long_random_walk` green and turns that test red, which is the difference between
+the two gates stated as a fact.
+
+**This corrects the scope of a claim this section previously made.** It said the residue could not
+be removed by a better differ. That was measured on edits only, and a quadratic was hiding in the
+case the measurement did not cover — which is the argument for two sizes made against the report
+that made it.
+
+**What is left now genuinely is not a differ problem.** The residue is `keyed`, which hashes every
+child's key into a set on both lists to decide whether the list reconciles by key at all — before
+any trim or rank query can help. Checking only the trimmed window would change which ops a
+mixed-key list produces, which is a worse trade than the constant factor is worth. Given two pages
+and nothing else, finding what moved means looking at what is there: whatever the engine knew about
+its own changes, the differ has to rediscover. That is the whole of §8.5.4's open item, stated from
+the other end.
 
 So the maintained view is **not** `O(δ)` end to end. It is `O(δ)` in the *elements it computes* and
 `O(n)` in the *page it assembles*, and the measured 4–37× is a constant factor on an unchanged
