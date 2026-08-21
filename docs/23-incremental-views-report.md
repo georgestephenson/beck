@@ -423,13 +423,46 @@ be removed by a better differ. That was measured on edits only, and a quadratic 
 case the measurement did not cover — which is the argument for two sizes made against the report
 that made it.
 
-**What is left now genuinely is not a differ problem.** The residue is `keyed`, which hashes every
-child's key into a set on both lists to decide whether the list reconciles by key at all — before
-any trim or rank query can help. Checking only the trimmed window would change which ops a
-mixed-key list produces, which is a worse trade than the constant factor is worth. Given two pages
-and nothing else, finding what moved means looking at what is there: whatever the engine knew about
-its own changes, the differ has to rediscover. That is the whole of §8.5.4's open item, stated from
-the other end.
+**The residue was `keyed`, and it was most of the cost.** Deciding whether a list reconciles by key
+at all means hashing every child's key into a set, on both lists, before any trim or rank query can
+help — and on a page where one row changed that was **62% of the diff at 1,000 rows, 87% at 5,000
+and 89% at 8,000**. This section twice said the remainder was not a differ problem. Both times that
+was reasoning rather than measurement, and both times measuring it disagreed; the second time is
+recorded here rather than quietly fixed, because the pattern is the finding.
+
+**It is asked once now instead of twice.** Whether a list is keyed is a question about the *whole*
+list — a key repeated anywhere makes the reconciliation ambiguous — so unlike the reconciliation it
+cannot be narrowed to the window. But the children at the shared ends are the same allocations in
+both lists and so carry the same keys, so hashing them once answers for both, and only the windows
+are hashed twice. Measured A/B in one process, alternating between the two predicates so that
+nothing about the machine separates them:
+
+```
+   rows    two passes    one pass
+   1000       53.7 µs     26.3 µs   2.04×
+   5000      343.3 µs    174.2 µs   1.97×
+   8000      593.2 µs    306.0 µs   1.94×
+```
+
+**The predicate is unchanged, and that is what makes this safe**: it computes the same answer, so no
+op moves, and the two differentials above hold it. A microbenchmark of the predicate alone reads
+only 1.3–1.4×, which is the smaller and more flattering number for the *old* code — calling the two
+implementations back to back leaves the second pass reading keys the first has just pulled into
+cache, which is a luxury the full diff does not have.
+
+**Narrowing the question to the window would have been worth more and was refused.** It would leave
+a window of one to hash instead of a list of 8,000 — but a page whose shared prefix repeats a key
+would then reconcile by key while the same page assembled without sharing would not, and "the same
+two pages produce the same ops however they were built" is the property the trim is only sound
+under. `diff::tests::a_repeated_key_in_the_part_two_pages_share_forces_the_positional_path` is the
+gate, and it was written because nothing else in the file could fail for it: a predicate that
+skipped the shared ends passed all fifteen other tests.
+
+**What is left after that is the walk itself** — the trim compares `n` pointers, which is cheap per
+element and still `O(n)`. Given two pages and nothing else, finding what moved means looking at what
+is there: whatever the engine knew about its own changes, the differ has to rediscover. That is
+§8.5.4's open item, stated from the other end — and this time the claim is that the *asymptote* is
+the differ's floor, not that the constant in front of it cannot move.
 
 So the maintained view is **not** `O(δ)` end to end. It is `O(δ)` in the *elements it computes* and
 `O(n)` in the *page it assembles*, and the measured 4–37× is a constant factor on an unchanged

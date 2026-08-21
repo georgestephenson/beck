@@ -522,9 +522,11 @@ rows.
   reconciliation turned out to be **quadratic in the rows that move**: reversing 4,000 keyed rows
   cost 25 ms, each doubling roughly quadrupling the cost per row, because naming a child's current
   index meant scanning for it. A rank query makes that pass `O(w log w)` — 25,476 µs → 2,105 µs —
-  and `scaling.rs` gates the shape now. What is left in the diff is not a differ problem: deciding
-  whether a list reconciles by key means examining every child, so given two pages and nothing
-  else, what moved has to be rediscovered. Both halves of the remaining cost now point at the same
+  and `scaling.rs` gates the shape now. Then the question *whether* a list reconciles by key turned
+  out to be 62–89% of the per-event diff, and it is asked once over what the two pages share
+  instead of once per list — **1.94–2.04×**, measured A/B in one process. What is left is the walk:
+  deciding this at all means examining every child, so given two pages and nothing else, what moved
+  has to be rediscovered. Both halves of the remaining cost now point at the same
   fix, which is what an F item looks like when its successors have been measured. What it was missing was never a design — it was a **position**, and a piece
   of work written down as "a known piece of work rather than an open question" in a report is
   exactly the shape §8.5's preamble says never comes due.

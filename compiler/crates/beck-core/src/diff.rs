@@ -143,24 +143,91 @@ fn diff_attrs(old: &[(String, String)], new: &[(String, String)], path: &Path, o
 }
 
 fn diff_children(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut Vec<Op>) {
-    if keyed(old) && keyed(new) {
-        diff_keyed(old, new, path, ops);
+    let (head, tail) = shared_ends(old, new);
+    if both_keyed(old, new, head, tail) {
+        diff_keyed_from(
+            &old[head..old.len() - tail],
+            &new[head..new.len() - tail],
+            head as u32,
+            path,
+            ops,
+        );
     } else {
+        // The full lists, deliberately. Trimming here would make a shared page and a copied one
+        // patch differently — `Remove` and `Insert` are index-based, so dropping a shared suffix
+        // moves the indices the positional path emits. `diff::tests::
+        // a_shared_page_and_a_copied_one_produce_the_same_ops` is the property that forbids it.
         diff_positional(old, new, path, ops);
     }
 }
 
-/// Keyed iff every child carries a key and the keys are unique — otherwise the reconciliation
-/// below would be ambiguous, and a positional diff is the honest fallback.
-fn keyed(children: &[Arc<Html>]) -> bool {
-    if children.is_empty() {
+/// How many children the two lists hold as the *same allocation* at each end.
+///
+/// An untouched child is literally the node it was, so a run of them needs no ops and no
+/// examination. This is a fact about how the page was assembled rather than about what it
+/// contains, which is why nothing downstream may let it change the ops it emits.
+fn shared_ends(old: &[Arc<Html>], new: &[Arc<Html>]) -> (usize, usize) {
+    let mut head = 0;
+    while head < old.len() && head < new.len() && Arc::ptr_eq(&old[head], &new[head]) {
+        head += 1;
+    }
+    let mut tail = 0;
+    while head + tail < old.len()
+        && head + tail < new.len()
+        && Arc::ptr_eq(&old[old.len() - 1 - tail], &new[new.len() - 1 - tail])
+    {
+        tail += 1;
+    }
+    (head, tail)
+}
+
+/// `keyed(old) && keyed(new)`, computed once over what the two lists share instead of twice.
+///
+/// Whether a list reconciles by key is a question about the **whole** list — a key repeated
+/// anywhere makes the reconciliation ambiguous — so this cannot be narrowed to the window the way
+/// the reconciliation itself is. But the children at the shared ends are the same allocations in
+/// both lists and therefore carry the same keys, so hashing them once answers for both: only the
+/// windows differ, and only the windows need hashing twice.
+///
+/// That is worth having because this check, not the reconciliation, is what one event pays. On a
+/// page where a single row changed, the trim leaves a window of one and the two full-list passes
+/// were **62% of the diff at 1,000 rows, 87% at 5,000 and 89% at 8,000**.
+///
+/// The answer is unchanged, and that is the point: this is the same predicate, so no op moves.
+fn both_keyed(old: &[Arc<Html>], new: &[Arc<Html>], head: usize, tail: usize) -> bool {
+    // `keyed` was false for an empty list, and an empty list on either side still means the
+    // positional path.
+    if old.is_empty() || new.is_empty() {
         return false;
     }
-    let mut seen = HashSet::with_capacity(children.len());
-    children.iter().all(|c| match c.key_of() {
-        Some(k) => seen.insert(k),
-        None => false,
-    })
+    let mut seen: HashSet<&str> = HashSet::with_capacity(old.len());
+    // The shared ends, hashed once. Their keys are the same in both lists by construction.
+    let shared = old[..head]
+        .iter()
+        .chain(&old[old.len() - tail..])
+        .map(|c| c.key_of());
+    for key in shared {
+        match key {
+            Some(k) if seen.insert(k) => {}
+            _ => return false,
+        }
+    }
+    // Each window against those, and against itself. The first window is taken back out so the
+    // second is measured against the shared ends alone.
+    let old_window = &old[head..old.len() - tail];
+    let new_window = &new[head..new.len() - tail];
+    for window in [old_window, new_window] {
+        for child in window {
+            match child.key_of() {
+                Some(k) if seen.insert(k) => {}
+                _ => return false,
+            }
+        }
+        for child in window {
+            seen.remove(child.key_of().expect("just inserted"));
+        }
+    }
+    true
 }
 
 fn diff_positional(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut Vec<Op>) {
@@ -183,44 +250,6 @@ fn diff_positional(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &
             html: (**node).clone(),
         });
     }
-}
-
-/// Reconcile a keyed child list, after trimming the ends the two lists **physically share**.
-///
-/// The reconciliation below costs the list: it hashes every key into a set, mirrors the client's
-/// children, and searches that mirror for each wanted key. That is the price of being handed two
-/// pages and asked what moved — whatever the engine knew about its own changes, the differ has to
-/// rediscover (`docs/23` §23.8).
-///
-/// What it need not rediscover is a child that is the **same allocation** in both lists at the same
-/// end. Since a page's children became shared handles, an untouched row is literally the node it
-/// was, so a run of them at the front or the back is common by pointer and can be skipped without
-/// being hashed, mirrored or searched. Everything between the two runs still goes through the full
-/// reconciliation, so this changes what the pass *costs* and never what it emits — which is the
-/// property `a_shared_page_and_a_copied_one_produce_the_same_ops` holds, by running both.
-///
-/// It is a constant factor and not a change of asymptote: the runs are still walked, one pointer
-/// comparison each. Making one event cost its own changes needs the engine to say what they were,
-/// which is [`docs/08`](../../../../../docs/08-roadmap.md) §8.5.4's open item.
-fn diff_keyed(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut Vec<Op>) {
-    let mut head = 0;
-    while head < old.len() && head < new.len() && Arc::ptr_eq(&old[head], &new[head]) {
-        head += 1;
-    }
-    let mut tail = 0;
-    while head + tail < old.len()
-        && head + tail < new.len()
-        && Arc::ptr_eq(&old[old.len() - 1 - tail], &new[new.len() - 1 - tail])
-    {
-        tail += 1;
-    }
-    diff_keyed_from(
-        &old[head..old.len() - tail],
-        &new[head..new.len() - tail],
-        head as u32,
-        path,
-        ops,
-    )
 }
 
 /// The reconciliation itself, over a window of the two child lists.
@@ -671,6 +700,80 @@ mod tests {
             exercised > 100,
             "only {exercised} of 200 cases shared an end, so the trim was barely exercised"
         );
+    }
+
+    /// **Whether a list reconciles by key is a question about the whole list, including the part
+    /// the two pages share.**
+    ///
+    /// [`both_keyed`] hashes the shared ends once instead of twice, which is only sound because it
+    /// still asks about every child. Narrowing the question to the window — which is what the
+    /// reconciliation itself is narrowed to, and so the tempting next step — would answer
+    /// differently here: the window below is cleanly keyed while the list holding it is not.
+    ///
+    /// Nothing else in this file can tell those two apart. Every other case builds children whose
+    /// keys are distinct, so a predicate that skipped the shared ends entirely passed all fifteen
+    /// of them; this is the one that goes red, which is the whole reason it exists
+    /// (`docs/82` §82.10).
+    #[test]
+    fn a_repeated_key_in_the_part_two_pages_share_forces_the_positional_path() {
+        // The duplicate sits in the prefix the two pages hold as the same allocations, and the
+        // window between them is a clean two-key reorder.
+        let dup_a = Arc::new(li("dup", "first", false));
+        let dup_b = Arc::new(li("dup", "second", false));
+        let x = Arc::new(li("x", "x", false));
+        let y = Arc::new(li("y", "y", false));
+        let end = Arc::new(li("end", "end", false));
+
+        let old = Html::el("ul").children_shared([
+            Arc::clone(&dup_a),
+            Arc::clone(&dup_b),
+            Arc::clone(&x),
+            Arc::clone(&y),
+            Arc::clone(&end),
+        ]);
+        let new = Html::el("ul").children_shared([
+            Arc::clone(&dup_a),
+            Arc::clone(&dup_b),
+            Arc::clone(&y),
+            Arc::clone(&x),
+            Arc::clone(&end),
+        ]);
+
+        let ops = diff(&old, &new);
+        assert!(
+            !ops.iter().any(|o| matches!(o, Op::Move { .. })),
+            "`dup` is carried by two children, so this list cannot reconcile by key and the \
+             positional path is the honest answer — but the ops moved something: {ops:?}"
+        );
+        assert_eq!(
+            apply(&old, &ops),
+            new.rehash(),
+            "and it still has to round trip"
+        );
+
+        // The same two pages with the duplicate resolved *do* reconcile by key, so the assertion
+        // above is about the repeat and not about the shape of the test.
+        let un_dup = Arc::new(li("dup2", "second", false));
+        let keyed_old = Html::el("ul").children_shared([
+            Arc::clone(&dup_a),
+            Arc::clone(&un_dup),
+            Arc::clone(&x),
+            Arc::clone(&y),
+            Arc::clone(&end),
+        ]);
+        let keyed_new = Html::el("ul").children_shared([
+            Arc::clone(&dup_a),
+            Arc::clone(&un_dup),
+            Arc::clone(&y),
+            Arc::clone(&x),
+            Arc::clone(&end),
+        ]);
+        let keyed_ops = diff(&keyed_old, &keyed_new);
+        assert!(
+            keyed_ops.iter().any(|o| matches!(o, Op::Move { .. })),
+            "with distinct keys the same reorder should move rather than rebuild: {keyed_ops:?}"
+        );
+        assert_eq!(apply(&keyed_old, &keyed_ops), keyed_new.rehash());
     }
 
     /// `diff_keyed_from` as it was before the rank structure: a scan of the child list for every
