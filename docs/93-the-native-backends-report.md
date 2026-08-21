@@ -7,15 +7,15 @@ backends** — carried since Phase 1 as a shape with the evaluator on both sides
 file — is a three-way one: the tree-walker, LLVM and Cranelift on every call.
 
 Across the corpus, both benchmark suites, both SICP chapters, the examples and the standard library,
-**972 definitions compile and 140 are refused**, and `examples/todo.beck` compiles **all nine of its
+**975 definitions compile and 143 are refused**, and `examples/todo.beck` compiles **all nine of its
 definitions** — the sentence that used to name `validate` as the one left, for a Unicode table, was
 out of date rather than made true again by §93.12: `validate` reaches none of the fifteen primitives
-that section is about. **All thirty-six** corpus programs compile their `apply_event` — the step
-function of a `durable` fold — and **twenty-five of thirty-six** compile their `view`
-(`BECK_REQUIRE_LLVM=1 cargo test --release --test native -- --nocapture`, re-read 2026-08-19; the
-figures this replaces were 963, thirty-four and twenty-four of thirty-four, and both the numerator
-and the corpus have grown since — [`DEFECTS.md`](../DEFECTS.md)'s `corpus-wide-counts-drift` is why
-that keeps happening).
+that section is about. **All thirty-seven** corpus programs compile their `apply_event` — the step
+function of a `durable` fold — and **twenty-five of thirty-seven** compile their `view`
+(`BECK_REQUIRE_LLVM=1 cargo test --release --test native -- --nocapture`, re-read 2026-08-20; the
+figures this replaces were 972, thirty-six and twenty-five of thirty-six, and both the numerator and
+the corpus have grown since — [`DEFECTS.md`](../DEFECTS.md)'s `corpus-wide-counts-drift` is why that
+keeps happening).
 
 This chapter is the whole of Lane E. It arrived in fifteen pieces over as many changes, and for
 fourteen of them the frame was the same: a thing gets a layout, both emitters learn it, the
@@ -1151,7 +1151,7 @@ anything but a benchmark uses this backend, and it is the first thing a second v
 opposite direction from the WebAssembly a browser needs — Wasmtime uses Cranelift to compile wasm, not to
 produce it — so it is a **third** emitter against a wasm target, and it is written. What it shares with
 this chapter is the monomorphiser, the trap codes, the layout module and these fixtures; what it does not
-share is the heap, which it does not lay out, so it compiles **0 of the corpus's 213 definitions**.
+share is the heap, which it does not lay out, so it compiles **0 of the corpus's 225 definitions**.
 [`94`](94-the-client-report.md) §94.12's measurement still says what a finished one would buy: a code
 generator divides the constant and leaves the growth.
 

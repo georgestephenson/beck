@@ -659,6 +659,28 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
             Prim::ListMax,
             poly(&[A], fun(vec![Ty::list(v(A))], Ty::option(v(A)))),
         ),
+        // **A sum is its answer, not the order it was added in** — which is the whole of the
+        // decision [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9
+        // item 6 said had to be taken before an operator could be written. `list_sum` is the exact
+        // sum of the list and raises when *that* does not fit an `Int`, so it is a function of the
+        // multiset of its elements and of nothing else: a running total maintained by adding what
+        // arrived and subtracting what left is the same number, and fails on the same lists.
+        //
+        // That makes it a **conservative extension** of the `+` above rather than a rival to it.
+        // Where `x1 + x2 + …` has an answer this is the same answer; where the fold raises on the
+        // way to a total that fits — `[Int_MAX, Int_MAX, -Int_MAX]` — this one has it. Nothing that
+        // held before holds differently.
+        //
+        // **`Int` only, and that is a decision.** The same definition over `Float` would not be an
+        // extension of the fold, it would disagree with it: an order-independent float sum is a
+        // *different number* in the last bits, on ordinary inputs, so a program with one of each in
+        // it would have two answers to one question. A float total stays the fold a program writes,
+        // and `beck explain cost` prices it as the recompute it is (§46.16).
+        (
+            "list_sum",
+            Prim::ListSum,
+            Scheme::mono(fun(vec![Ty::list(int.clone())], int.clone())),
+        ),
         // §3.2, verbatim: `map : (list[a], (a -> b ! e)) -> list[b] ! e`. Mapping a function that
         // touches the dom over a list touches the dom; mapping a pure one does not.
         (

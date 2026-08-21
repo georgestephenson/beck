@@ -1,6 +1,6 @@
 # The corpus
 
-Thirty-six single-file programs and a three-module project, and the Phase 2 exit criterion measured
+Thirty-seven single-file programs and a three-module project, and the Phase 2 exit criterion measured
 against them:
 
 > On a corpus of 20+ programs, placement is inferred with no annotations for the common cases.
@@ -58,12 +58,17 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
   has to move every issue assigned to them and none of the issues that are not. The differential
   harness is what holds that, since it compares the maintained page with the recomputed one after
   every event and an in-language `contains` can only ask about a string somebody thought to name.
-- **a question *about* a group rather than for its members** (programs 35 and 36,
+- **a question *about* a group rather than for its members** (programs 35, 36 and 37,
   [`docs/99`](../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6). Program 35 asks
   each group how big it is, which a tally answers; program 36 asks what its rows say — the lowest
-  and the highest bid on a lot — which a tally cannot. Neither page ever holds a group, and the
-  second is where the events a generated log reaches only by luck are written out: the standing
-  minimum withdrawn, the standing maximum withdrawn, half of a tie, and the last row of a group.
+  and the highest bid on a lot — which a tally cannot; program 37 asks for a ledger account's
+  balance, which is the aggregate that reads nothing at all, since a running total moves by `±n` and
+  the group's rows are never a thing the operator holds. No page here ever holds a group. The second
+  and third are where the events a generated log reaches only by luck are written out: for the
+  extremes, the standing minimum withdrawn, the standing maximum withdrawn, half of a tie and the
+  last row of a group; for the total, a credit voided, one of two identical amounts voided, and a
+  group emptied to `0` and then rebuilt — `0` rather than nothing, because the sum of no numbers is
+  a number where the smallest of no rows is not.
 
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.

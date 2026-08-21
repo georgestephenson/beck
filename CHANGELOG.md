@@ -17,6 +17,206 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-21 — The question "does this list reconcile by key" was most of what an event paid,
+  and it was being asked twice.**
+  With the trim and the rank query in place, what remained of the per-event diff was `keyed`:
+  hashing every child's key into a set, on **both** lists, before either can help. On a page where
+  one row changed that was **62% of the diff at 1,000 rows, 87% at 5,000 and 89% at 8,000** —
+  measured, after [`docs/23`](docs/23-incremental-views-report.md) §23.8 had twice claimed from
+  reasoning that the remainder was not a differ problem. Both claims were wrong and the second is
+  corrected in place, because the pattern is the finding.
+  The children at the shared ends are the same allocations in both lists and so carry the same keys,
+  so hashing them once answers for both; only the windows are hashed twice. **1.94–2.04× on the
+  whole diff**, measured A/B in one process alternating between the two predicates so nothing about
+  the machine separates them (53.7→26.3 µs at 1,000, 343.3→174.2 at 5,000, 593.2→306.0 at 8,000).
+  The predicate computes the same answer, so no op moves — the shared/copied differential and the
+  rank-structure oracle both hold it.
+  **The bigger win was available and refused.** Narrowing the question to the window would leave one
+  child to hash instead of 8,000, but then a page whose shared prefix repeats a key would reconcile
+  by key while the same page built without sharing would not — and "the same two pages produce the
+  same ops however they were built" is the property the trim is only sound under.
+  `diff::tests::a_repeated_key_in_the_part_two_pages_share_forces_the_positional_path` is the gate,
+  written because **nothing else in the file could fail for it**: a predicate that skipped the shared
+  ends passed all fifteen other tests, which is `docs/82` §82.10's pattern caught in the act.
+
+- **2026-08-21 — Two gates that were failing on the machine rather than on the program.**
+  Both were red on this branch, neither on anything the branch changed, and CI's own record is what
+  says so: on one commit the `measurements` job passed `measure_native` under `--release` while the
+  `check` job failed it under `cargo test`, **same commit, same runner class**.
+  **A measurement suite is a release suite, and `--all-targets` had been defeating that.**
+  [`AGENTS.md`](AGENTS.md) says so and `.github/workflows/compiler.yml` says it again in a comment —
+  "it runs here rather than under `cargo test` because it is a release measurement" — but
+  `cargo test --workspace --all-targets` builds and runs the suite too, in debug, where the harness
+  around each native call (marshalling an 8,000-element list, cloning it per run) costs several
+  times the generated code it is timing. Measured four times at each profile, `doubled`'s per-element
+  ratio across the two sizes ran **0.85–2.41 in debug against 1.13–1.58 in release**, and CI read
+  3.24 — past a bound of 3.0 chosen to sit between a flat append (1×) and a copying one (4×). All
+  ten of that file's wall-clock thresholds now go through `shape!`, which asserts where the clock is
+  evidence and prints one skip line where it is not; `BECK_GATE_DEBUG_TIMING=1` asserts anyway.
+  Release still runs every one of them — tightening the bound to 1.0 turns it red, so the gate still
+  bites where it means something. `measure_native` was the only suite carrying that class of
+  threshold; `measure_concurrency`'s one bound is 200 ms against 300 ms testing parallel-against-
+  serial, a gap a profile does not close.
+  **And the browser suite's launch deadline was a gate on the runner.** Every test launches its own
+  chromium and the harness runs them in parallel, so on a loaded runner the first launch waits
+  behind the rest; at 30 seconds that lost a run whose other twenty tests all passed. It is 120
+  seconds now — the bound exists so a dead browser fails instead of hanging, so being generous
+  costs nothing — and the message says which case it was, because "chromium never opened a port"
+  could not tell a crash from a slow start. It now reports the child's exit status, or that it was
+  still running.
+  **Left undone, deliberately**: the debug sweep still *runs* those suites (~3.5 minutes, of which
+  `measure_awfy` is 134 s) and prints ratios that are not evidence. Suppressing that means changing
+  which targets the workflow's test step builds, which is wider than this fix.
+
+- **2026-08-21 — Reordering a keyed list was quadratic, and the measurement that missed it only
+  ever moved one row.**
+  `diff_keyed_from` named each child's current index by scanning the child list for it — one scan
+  per child, so `O(w²)` over the window. Reversing 4,000 keyed rows cost **25,476 µs**, and each
+  doubling of the rows roughly quadrupled the cost *per row* (1.01 µs/row at 500, 6.37 µs/row at
+  4,000). A sort-toggle on a large table is exactly this case: it shares no prefix and no suffix, so
+  the previous change's trim cannot help and the whole list is the window.
+  Because a `Move` lifts a child out and re-inserts it at the front, the children nobody has claimed
+  yet keep their relative order — so the distance a child sits ahead of where it belongs is the
+  number of unclaimed children before it. That is a **rank query**, `O(log w)` against a Fenwick
+  tree, and it makes the pass `O(w log w)`: **25,476 µs → 2,105 µs at 4,000 rows**, with per-row
+  cost flat (0.39–0.56 µs) out to 8,000. Dropping the child list from the removal pass took the
+  other quadratic with it.
+  **Two gates, because the change owes two different promises.**
+  `scaling.rs::reordering_a_keyed_list_costs_the_same_per_row_however_long_it_gets` compares per-row
+  cost at 500 and 4,000 rows, so it fails on a change in the order of growth rather than on a slow
+  machine — restoring the scan makes it red at 5.4×. And because reconciliation's output is a
+  contract with a client that has already applied everything before it, the op stream had to be
+  proved unchanged rather than assumed: the old scan is kept as the oracle in
+  `diff::tests::the_rank_structure_and_the_scan_it_replaced_emit_the_same_ops`, which asserts the
+  two streams equal over 300 generated cases. Round-tripping cannot do that job — emitting one
+  redundant no-op `Move` leaves `round_trips_over_a_long_random_walk` green and turns the oracle
+  test red.
+  This **corrects [`docs/23`](docs/23-incremental-views-report.md) §23.8**, which said the diff's
+  residue could not be removed by a better differ. That was measured on single-row edits, and the
+  quadratic was in the case the measurement did not cover.
+
+- **2026-08-21 — The differ is half of what an event costs, and it only became visible once the
+  page stopped being copied.**
+  Making a page's children shared handles took one event on a 5,000-row page from 14,827 µs to
+  697 µs — and moved the bottleneck. `Feed::Dom` does two things per event: it maintains the page,
+  and it structurally diffs it against the one the client holds.
+  [`docs/23`](docs/23-incremental-views-report.md) §23.8's table has only ever shown the first.
+  Measured end to end, the diff is **54% of the per-event cost at 5,000 rows** — it was the smaller
+  half before, because only one of the two got cheaper. (The trim below takes that share to 39%.)
+  `measure_incremental.rs::what_one_event_costs_the_runtime_end_to_end` is the measurement and the
+  table is in §23.8 beside the render's.
+  **`diff_keyed` now trims the ends the two pages physically share** — a run of children that are
+  the same allocation in both needs no ops and no examination — worth 203 µs → 71 µs at a thousand
+  rows and 1,961 µs → 1,036 µs at five thousand, and available only because a child is a handle now.
+  The gate is a **differential rather than an assertion**: every scenario runs twice, once shared and
+  once through `rehash`, which rebuilds node by node and shares nothing, and the two op streams must
+  be equal. The differ's other tests could not have caught a wrong index — they build every node
+  fresh, so nothing in them is ever shared and the trim never runs.
+  **What is left is not a differ problem.** The residue is `keyed`, which hashes every child's key
+  to decide whether the list reconciles by key at all, before any trim can help; checking only the
+  trimmed window would change which ops a mixed-key list emits, which is a worse trade than the
+  constant is worth. Given two pages and nothing else, what moved has to be rediscovered — so both
+  halves of the per-event cost now point at [`docs/08`](docs/08-roadmap.md) §8.5.4's open item, the
+  engine emitting patches from the changes it already holds.
+
+- **2026-08-21 — The page's children were copied, not shared, and "n handles" was never true.**
+  [`docs/23`](docs/23-incremental-views-report.md) §23.8 has always named the one cost a maintained
+  view does not remove: `html_el` is pointwise, so one event reassembles every element from the page
+  down to the list. It described that as "`n` handles are copied". It was not handles.
+  `Html::Element` held `children: Vec<Html>` — **owned subtrees** — so `child` deep-copied each child
+  it was given, and because every enclosing element re-copied what its own children had just copied,
+  one event rebuilt *every node of the page* and the cost compounded with nesting depth. A column
+  counting entries cannot see that, which is how it sat behind an accepted number.
+  Children are `Vec<Arc<Html>>` now, and an untouched subtree costs a refcount. Same harness, same
+  program: **one event on a 5,000-row page goes 14,827 µs → 697 µs**, and the maintained-to-recomputed
+  ratio goes 3.4× → 35.0×. The cold render halves too (50,845 µs → 24,370 µs), because
+  `beck_core::html::element` is the single function the evaluator *and* both native backends assemble
+  a page with — the reason that function was written once.
+  **The gate counts allocations, not microseconds**, because §13.7 forbids a shared runner a timing
+  threshold and identity is the fact the cost follows from:
+  `incremental_engine.rs::one_event_allocates_a_handful_of_html_nodes_whatever_the_page_holds` reports
+  **9 new nodes on a 200-row page and 9 on a 1,600-row page** — measured at two sizes, since one
+  measurement cannot tell a constant from a linear one. Putting the copy back reports **211 and
+  1,611**, which is the shape of the gap it exists to catch.
+  This does **not** make a maintained view `O(δ)` end to end, and [`docs/08`](docs/08-roadmap.md)
+  §8.5.4's item stays open: the assembly is `n` refcounts instead of `n` subtree copies, which is a
+  smaller `n` and still an `n`. What closes it is the engine emitting patches from its own output
+  changes, and this was the representation change that had to come first.
+
+- **2026-08-20 — The sweep that found the nested-loop join is a gate, and the cost it leaves is
+  the last one.**
+  [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.3 found the defect the view algebra
+  was missing an operator for by **sweeping the tree by hand**: a per-element function that reads the
+  accumulator is a different function after every event, so its whole collection is reapplied. That
+  sweep was read three times and went stale twice, always in the flattering direction — the third
+  reading found a site that had arrived with `awareness(f)` one change after the second and that
+  nothing re-ran the sweep to catch.
+  It is now `Plan::reapplied_per_event`, and
+  `incremental.rs::no_program_in_the_tree_reapplies_a_collection_per_event` is what re-runs it:
+  **42 programs across `corpus/` and `examples/` plan, and none of them reapplies a collection per
+  event — against 8 sites in 8 programs with the recognition switched off.** The second number is
+  what makes the first mean anything, and it is carried by the green run rather than promised by it.
+  `beck explain cost` prints its capture lines from the same computation the gate counts, so the
+  report and the gate cannot disagree — §99.9 item 2's lesson applied to a second reader instead of
+  rediscovered.
+  **What the zero exposes is the entry.** Every one of those 42 programs still has an operator
+  costing `O(n)` per event and they all have the *same* reason: a recompute needs a `list` and an
+  arrangement is a keyed collection. That is now the only per-event linear cost in the tree.
+  [`docs/23`](docs/23-incremental-views-report.md) §23.8 measured it when the engine landed, named
+  the fix — the delta at the top of the plan **is** the patch set, so an engine emitting patches from its
+  own output changes skips the assembly and the diff together — and called it "a known piece of work
+  rather than an open question". It had **no position in [`docs/08`](docs/08-roadmap.md) §8.5's
+  order**, which is verbatim the failure mode that section opens by describing. It has one now, as an
+  **F** item ahead of Mode B's codegen, because §23.8 says it is the same work that kernel needs.
+
+- **2026-08-20 — The corpus-wide counts, re-derived against thirty-seven programs.**
+  `corpus/37-ledger.beck` is the 37th, and [`DEFECTS.md`](DEFECTS.md)'s `corpus-wide-counts-drift`
+  says what that costs. It had drifted again, and this time in three directions at once: the
+  WebAssembly emitter's corpus denominator read **195** in [`docs/08`](docs/08-roadmap.md), **213**
+  in [`docs/93`](docs/93-the-native-backends-report.md) and **220** in
+  [`docs/103`](docs/103-the-wasm-emitter-report.md) and [`docs/README`](docs/README.md) — three
+  numbers for one quantity, in four places.
+  Re-derived: the native backends compile **975** definitions against **143** refused, **all
+  thirty-seven** corpus programs compile their `apply_event` and **twenty-five of thirty-seven**
+  their `view`; the WebAssembly emitter is measured against **225** corpus definitions, of which
+  **220** are refused for one shape — a parameter that lives on the heap, where §103.6 said 138 of
+  195 were a `Str` parameter; and the corpus places **382** definitions and signals, not 373, with
+  the tier table moved with it — `any` 201 (52.6%), `server` 83, `data` 61, `client` 37.
+  [`docs/65`](docs/65-the-editor-report.md)'s rename figure was the worst of them, **316 of 325**
+  against a true **366 of 376**, and the reason is worth the entry: the test that derives it never
+  printed it. The count lived in a *comment* beside an assertion with a floor of 250, so the only
+  way to read today's value was to edit the test. It prints it now, as `native.rs` and
+  `wasm_backend.rs` print theirs, which is the cheapest half of the gate that entry still owes.
+
+- **2026-08-20 — A group's total, and the decision that a sum is its answer.**
+  [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's last aggregate, and the
+  only one that owed a **decision** rather than an operator. The two edges it named were real: a
+  float total maintained by adding what arrived and subtracting what left is not the number a left
+  fold produces, and an integer one passes through intermediate values `checked_add` raises on, so
+  the maintained plan and the recompute could disagree about whether the program *failed*. Both are
+  edges of the fold rather than of the sum. **A sum is its answer, not the order it was added in**:
+  `list_sum` is the exact total and raises only when *that* leaves `Int`, which makes it a function
+  of the numbers alone — and a **conservative extension** of `+`, with the same answer wherever the
+  fold has one and an answer for `[Int_MAX, Int_MAX, -Int_MAX]`, where the fold has none.
+  `interp.rs::a_sum_is_its_answer_and_not_the_order_it_was_added_in` is that sentence at the two
+  functions themselves. **`Float` gets no `sum`**, because there the same definition would *disagree*
+  with the fold rather than extend it — a different number in the last bits, on ordinary inputs
+  ([`docs/46`](docs/46-standard-library-report.md) §46.16).
+  `Agg::Sum` therefore keeps a running total and **no multiset**, since a sum does not care which
+  distinct values its group holds: `corpus/37-ledger.beck` shows every account's balance in **47
+  backend steps at 200 postings and at 1,600, against 2,060 and 16,060** with the operator switched
+  off (`scaling.rs::totalling_a_group_does_not_build_it`, which measures both settings). Unlike the
+  extremes there is no worst case to choose — every posting moves its account's total, so an ordinary
+  event is already the reassembling one.
+  Two things it does that the extremes do not. An empty group is `0` rather than `None`, so the join
+  above it reads a missing entry as a *value* — `Matching::Total`, gated by
+  `incremental.rs::a_total_is_a_group_by_probed_as_a_value_rather_than_an_option`. And a total no
+  `Int` holds is **published rather than raised**: the operator maintains every group while the
+  recompute only sums the groups the loop reaches, so raising at maintenance time would fail renders
+  that never asked. The raise lands at the probe, and
+  `incremental_engine.rs::a_total_outside_int_fails_where_it_is_asked_for_and_nowhere_else` holds the
+  two plans to the same failure as well as to the same answer.
+
 - **2026-08-20 — A malicious `arrayref` release, and the gate that saw the pin for it expire.**
   The `licences` job went red on a yank rather than an advisory: crates.io withdrew `arrayref 0.3.9`,
   which reaches this tree through `blake3`. **The fix `cargo-deny` suggests was the attack.**

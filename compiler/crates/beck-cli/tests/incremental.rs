@@ -409,6 +409,55 @@ fn one_end_of_a_group_is_a_group_by_and_not_an_index_over_its_rows() {
     );
 }
 
+/// **A total is the same operator probed as a value rather than as an option**, which is the one
+/// place the aggregates differ downstream of the group.
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 6's last
+/// aggregate. `list_sum` over the same `filter_list` compiles to the same [`Op::GroupBy`] the
+/// extremes do — no `arrange_by`, one entry per group — and the join above it reads a missing entry
+/// as `0` rather than as `None`, because a group with no rows has a sum and has no smallest
+/// element. The body says so by not needing `unwrap_or` at all: `list_sum` answers with an `Int`.
+#[test]
+fn a_total_is_a_group_by_probed_as_a_value_rather_than_an_option() {
+    use beck_core::plan::{Agg, Matching, Op, Plan};
+
+    let plan = Plan::compile(&ok(
+        "total.beck",
+        &capturing(
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return map_list(map_keys(s.items), \
+                                 lambda k: str(list_sum(map_list(\
+                                                  filter_list(map_values(s.items), \
+                                                              lambda v: str(v) == k), \
+                                                  lambda v: v + 1))))\n",
+        ),
+    ));
+    assert!(
+        !plan
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::ArrangeBy { .. })),
+        "the total built an index over the group's rows, which is the collection the question was \
+         avoiding"
+    );
+    assert_eq!(
+        plan.nodes.iter().find_map(|n| match n.op {
+            Op::GroupBy { agg, .. } => Some(agg),
+            _ => None,
+        }),
+        Some(Agg::Sum),
+    );
+    assert_eq!(
+        plan.nodes.iter().find_map(|n| match n.op {
+            Op::Join { matched, .. } => Some(matched),
+            _ => None,
+        }),
+        Some(Matching::Total),
+        "a total probed as an option would make an account nobody has posted to render nothing \
+         where the program says `0`"
+    );
+}
+
 /// **Two lookups that index the same collection by the same key build one index.**
 ///
 /// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.5 decision 4: an
@@ -783,4 +832,104 @@ fn every_corpus_program_is_assessable_and_none_of_them_is_a_mystery() {
             "{name}"
         );
     }
+}
+
+/// **No program in the tree reapplies a collection on every event.**
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.3's sweep, as a
+/// standing property rather than a thing somebody re-runs. A per-element function that reads the
+/// accumulator is a *different function* after every event, so §23.13's rebuild rule reapplies it
+/// to every element — the nested-loop join §99 exists to remove, invisible until the collection is
+/// large because nothing about it fails.
+///
+/// **It was a hand sweep three times and went stale in between.** The second reading found three
+/// such sites; the third found a fourth that had arrived with `awareness(f)` one change after the
+/// second and that nothing re-ran the sweep to catch (§99.3). That is
+/// [`docs/08`](../../../../docs/08-roadmap.md) §8.5.6's third decay direction — a quoted figure
+/// going stale because the tree grew under it — demonstrated one commit after the paragraph
+/// describing it. A number in a document cannot notice a new program; this can.
+///
+/// The corpus **and** the examples, because the examples are where the sketches live and
+/// `examples/board.beck` was the last site to close. A program that legitimately cannot be
+/// recognised is not forbidden — §99.6's rule for that case is "compile it the slow way and say
+/// so" — but it may not arrive *silently*, which is the whole difference between this gate and the
+/// sweep it replaces.
+#[test]
+fn no_program_in_the_tree_reapplies_a_collection_per_event() {
+    use beck_core::plan::Plan;
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut checked = 0usize;
+    let mut guilty: Vec<String> = Vec::new();
+    let mut refused: Vec<String> = Vec::new();
+    for dir in ["corpus", "examples"] {
+        let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(root.join(dir))
+            .expect("the directory is there")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "beck"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .expect("a file name")
+                .to_string();
+            let src = std::fs::read_to_string(&path).expect("a program");
+            let (placed, diags, map) = beck_core::compile_or_library_str(&name, &src);
+            assert!(!diags.has_errors(), "{dir}/{name}:\n{}", diags.render(&map));
+            let placed = placed.unwrap_or_else(|| panic!("{dir}/{name} did not compile"));
+            // A library has no merge point, so its roles are placeholders and it has no view to
+            // plan. `Placed::is_application` is the question rather than the shape of an error,
+            // because a library is not a failure.
+            if !placed.is_application() {
+                continue;
+            }
+            checked += 1;
+            let plan = Plan::compile(&placed);
+            for id in plan.reapplied_per_event() {
+                guilty.push(format!(
+                    "{dir}/{name} #{id} {} — `beck explain cost {dir}/{name}` says which condition \
+                     refused it",
+                    plan.nodes[id].op.name()
+                ));
+            }
+            let without = Plan::compile_with(&placed, beck_core::plan::Relate::Refuse);
+            for id in without.reapplied_per_event() {
+                refused.push(format!("{dir}/{name} #{id}"));
+            }
+        }
+    }
+    assert!(
+        guilty.is_empty(),
+        "a per-element function captured the accumulator, so its whole collection is reapplied on \
+         every event (docs/99 §99.3):\n  {}\n\nEither the shape is one §99.6 should recognise and \
+         does not — teach the recogniser — or it is one it cannot, in which case say so here \
+         rather than letting it arrive silently.",
+        guilty.join("\n  ")
+    );
+    // The control, because a gate that checked nothing would pass loudest of all.
+    assert!(
+        checked >= 40,
+        "only {checked} programs had a plan to check, which is fewer than this tree has"
+    );
+    // And the evidence that it *can* go red, carried by the green run rather than promised by it
+    // (§99.9 item 1's pattern): with the recognition switched off, the sites come back. A sweep
+    // that reports "none" says nothing on its own — this is what makes the zero above a
+    // difference rather than an assertion.
+    assert!(
+        !refused.is_empty(),
+        "`Relate::Refuse` left no operator reapplying its collection per event, so this gate \
+         cannot distinguish an engine that recognises these shapes from one that does not"
+    );
+    println!(
+        "{checked} programs planned: 0 reapply a collection per event, against {} sites in {} \
+         programs with the recognition switched off",
+        refused.len(),
+        refused
+            .iter()
+            .map(|s| s.split(' ').next().unwrap_or(s))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    );
 }

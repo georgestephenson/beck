@@ -179,7 +179,7 @@ impl From<&Html> for WireHtml {
                 tag: tag.clone(),
                 attrs: attrs.clone(),
                 key: key.clone(),
-                children: children.iter().map(WireHtml::from).collect(),
+                children: children.iter().map(|c| WireHtml::from(&**c)).collect(),
             },
         }
     }

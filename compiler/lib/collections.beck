@@ -124,6 +124,21 @@ def min_of[T](xs: list[T]) -> Option[T]:
 def max_of[T](xs: list[T]) -> Option[T]:
     return list_max(xs)
 
+## The total, which is not a fold of `+` and is not meant to be.
+##
+## `list_sum` is the *exact* sum of the list and raises only when that does not fit an `Int`, so it
+## has an answer wherever adding left to right has one, and it also has one where the running total
+## passes outside `Int` on the way back in. That is what lets the view engine maintain a balance by
+## adding what arrived and taking back what left: the answer depends on the numbers and not on the
+## order, so the maintained total and the recomputed one are the same number (`docs/99` §99.9).
+##
+## `Int` only, where `min_of` and `max_of` are generic. Over `Float` an order-independent sum is a
+## *different* number from the fold's, in the last bits, on ordinary inputs — so a program holding
+## both would have two answers to one question, and a float total stays the fold the program writes
+## (`docs/46` §46.16).
+def sum_of(ns: list[Int]) -> Int:
+    return list_sum(ns)
+
 # ---------------------------------------------------------------------------------------------
 # Grouping and deduplication
 # ---------------------------------------------------------------------------------------------

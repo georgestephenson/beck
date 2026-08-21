@@ -338,8 +338,8 @@ says it cannot be rented.
 means of combination only** — every operator took one collection — and that join, `group by`,
 aggregates other than a whole-collection count, `distinct` and difference were all missing. §99.2
 establishes this was an oversight rather than a decision: "joins have no argument anywhere in the
-document set." The join, both of its indexes and three of the four per-group aggregates have since
-landed; `sum`, `distinct` and difference have not.
+document set." The join, both of its indexes and all four per-group aggregates have since landed;
+`distinct` and difference have not.
 
 Set §99.9's order of work beside the pandas core API:
 
@@ -348,7 +348,7 @@ Set §99.9's order of work beside the pandas core API:
 | 3. `arrange_by` — **built** | `set_index` | index | — |
 | 4. `join` — **built** | `merge` | `.join()` | `Join` |
 | 5. recognise loop-plus-lookup — **built** | — | — | — |
-| 6. `count`/`min`/`max` per group — **built**; `sum` and a `group by` over the groups themselves | `groupby().agg()` | `.group_by().agg()` | `GroupBy`, `Sum` |
+| 6. `count`/`min`/`max`/`sum` per group — **built**; a `group by` over the groups themselves is not | `groupby().agg()` | `.group_by().agg()` | `GroupBy`, `Sum` |
 | 7. `distinct`, difference | `drop_duplicates` | `.unique()` | `Distinct`, `Except` |
 | built | `apply`, masks, `sort_values` | `.select()`, `.filter()`, `.sort()` | `Select`, `Where`, `OrderBy` |
 

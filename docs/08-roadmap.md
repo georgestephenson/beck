@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **972 definitions compiled against 140 refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **975 definitions compiled against 143 refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -95,7 +95,7 @@ ask in order:
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
-| "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for three questions about that group, and you write all of them as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that asks `list_len`, `list_min` or `list_max` of that filter is answered without the group being built at all — the count from a tally the join keeps, the two ends from a `group_by` holding one multiset per group. All are maintained from both sides and `beck explain query` shows them. `sum` per group and `distinct` are still missing, and `beck explain cost` says so on the loop that pays for it |
+| "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for four questions about that group, and you write all of them as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that asks `list_len`, `list_min`, `list_max` or `list_sum` of that filter is answered without the group being built at all — the count from a tally the join keeps, the two ends from a `group_by` holding one multiset per group, and the total from one holding a running sum. All are maintained from both sides and `beck explain query` shows them. `distinct` and difference are still missing, and `beck explain cost` says so on the loop that pays for it |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
 | "How do I make it look like anything?" | **With Tailwind's names and no Tailwind**, which is the row that moved. `beck build` writes `styles.css` and a running program serves the same bytes: one rule per class your pages can carry, worked out from the program rather than scanned for, with the theme tokens those rules read and nothing else ([`104`](104-styling-and-the-component-library.md) §104.4a). **3,474 of the 3,625 names Tailwind emits a rule for are rendered identically here**, held byte for byte against Tailwind's own compiler; the sketch's sheet is 2.3 KB and `beck-rt/src/css.rs` is deleted. What is still missing is a way to write a rule of *your own* — `css:` has no parser — so a class the compiler did not define gets no rule, and `beck explain style` says which of yours are which. What the compiler *will* say is that `rounded-ful` is one edit from `rounded-full` (`B0222`), and your editor completes and explains a utility from the same table |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
@@ -176,13 +176,15 @@ read it.**
   per §101.9, and the rest of §101.7's edge ledger — idempotency, `seq`-derived ETags, the response
   vocabulary, deprecation headers — arriving with the forms that need them.
 - **What is left of the data tier's means of combination**
-  ([`99`](99-the-data-tier-means-of-combination.md)): `sum` per group, `distinct` and difference,
-  fusion for the new operators, and the read-model SQL compiling into the plan rather than growing a
-  second interpreter. The join, both of its indexes and per-group `count`, `min` and `max` have
-  landed and are §8.5.4's row; what remains is §99.9 items 6 (`sum` only), 7, 8 and 9, and the first
-  of those is a **surface decision** — `Int` and `Float` disagree about whether a maintained sum is
-  the recomputed one — rather than a delta rule. This is what §8.4's Phase 5 TPC-H row has always
-  been conditioned on.
+  ([`99`](99-the-data-tier-means-of-combination.md)): `distinct` and difference, fusion for the new
+  operators, and the read-model SQL compiling into the plan rather than growing a second
+  interpreter. The join, both of its indexes and **all four aggregates** have landed and are
+  §8.5.4's row; what remains is §99.9 items 7, 8 and 9. `sum` was the surface decision this bullet
+  named, and it was taken rather than deferred: **a sum is its answer and not the order it was added
+  in**, so `list_sum` is exact over `Int` and raises only on a total no `Int` holds, and `Float` has
+  none — there the same definition would disagree with the `+` the language already has rather than
+  extend it ([`46`](46-standard-library-report.md) §46.16). This is what §8.4's Phase 5 TPC-H row
+  has always been conditioned on.
 - **The log's own lifecycle, and the substrate that reads it** ([`10`](10-decisions.md) D3's
   obligations, [`09`](09-risks-and-open-questions.md) R6): segment archival to Parquet on object
   storage, bounded retention for the stores that opt down from `retain=forever`, and **DataFusion**
@@ -454,17 +456,21 @@ rows.
   32,097** with the operator switched off. §99.9 item 6 had forecast that `max` would cost more than
   `min`; it does not, and the asymmetry turned out to belong to the design rather than to the
   problem — a tree the operator builds itself is bounded at both ends, and what cannot be entered
-  from its end is a prefix range of *somebody else's* arrangement. What is left, in §99.9's order:
-  **`sum` per group**, which waits on a surface rather than on a delta rule — the `Int`-versus-`Float`
-  decision in §99.9 item 6, and the only one of the four the language has no spelling for — then
-  `distinct` and difference, fusion for the new operators, and the read-model SQL compiling into the
-  plan. This was a Phase 4 bullet from the
+  from its end is a prefix range of *somebody else's* arrangement. **And the fourth has taken it,
+  which needed a decision rather than a delta rule**: `sum` had no spelling in the language, and
+  giving it one meant answering what a maintained total *is* — the answer, not the order it was
+  added in, so `list_sum` is the exact total over `Int`, raises only when that total leaves `Int`,
+  and has no `Float` form at all (§99.9 item 6). `Agg::Sum` keeps a running total and no multiset,
+  so `corpus/37-ledger.beck` shows every account's balance in **47 backend steps at 200 postings and
+  at 1,600, against 2,060 and 16,060** with the operator switched off. What is left, in §99.9's
+  order: `distinct` and difference, fusion for the new operators, and the read-model SQL compiling
+  into the plan. This was a Phase 4 bullet from the
   day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list,
   which is the same defect §8.5 opens by describing one level down — a phase is not a position. It
   lives in **Lane B** (`engine.rs`, `plan.rs`, `relate.rs`) and contends with nothing in Lane A.
   §99.8's convergence rungs interleave with it rather than following it, and **rungs 0–1 have now
-  failed to come due twice**: a join inferred from a loop has the loop's order to preserve, which
-  fixes which side is the left before any cost is consulted. An inferred surface postpones the
+  failed to come due four times**: a join inferred from a loop has the loop's order to preserve,
+  which fixes which side is the left before any cost is consulted. An inferred surface postpones the
   solver, and §99.8's ladder says so now rather than predicting otherwise.
 - **A columnar value, and Arrow** (F, after the aggregates): the second representation
   [`105`](105-the-ecosystem-answer.md) §105.10 argues for — `Value::List(Arc<Vec<Value>>)` is 16
@@ -492,9 +498,41 @@ rows.
     which half of D9 that leaves open.
   - **Salsa-memoised expansion**, §2.4's "macro-heavy code must not destroy IDE latency" — which
     now has something to memoise.
+- **The delta at the top of the plan is the patch set** (F, and it had **no position in this list
+  until it was measured**, which is the failure §8.5 opens by describing). Now that the aggregates
+  have closed §99.3's captures, the sweep across `corpus/` and `examples/` finds **42 programs
+  planning and not one of them reapplying a collection per event** — and every one of them still
+  has an operator costing `O(n)` per event, all for the same reason: *a recompute needs a `list`
+  and an arrangement is a keyed collection.* That is the last per-event linear cost in the tree,
+  and [`23`](23-incremental-views-report.md) §23.8 both measured it and named the fix — `beck-rt`
+  renders a whole page and structurally diffs it, where an engine emitting patches from its own
+  output changes would skip the assembly *and* the diff.
+  **Its first stage has landed, and it was a defect rather than a stage.** §23.8 described the
+  residue as "`n` handles are copied"; `Html::Element` in fact held owned subtrees, so one event
+  deep-copied *every node of the page* and the cost compounded with nesting depth. Children are
+  shared handles now: **14,827 µs → 697 µs for one event on a 5,000-row page**, the cold recompute
+  halved with it, and the maintained-to-recomputed ratio went from 5× to 35×. What remains is the
+  item as originally stated — the assembly is `n` refcounts rather than `n` copies, which is a
+  smaller `n` and still an `n`. It is **F** rather than **S** because §23.8 says
+  it is the same work Mode B's per-component kernel needs, so the item below inherits it; it sits
+  here for that reason. **What that fix revealed has sharpened the item rather than moved it.**
+  Halving the assembly exposed the *diff* as the other half of what the server pays per event —
+  39% of it at 5,000 rows, which §23.8's table had never shown — and two things have come out of
+  that half since. Trimming the ends the two pages physically share is worth a further 2–3× on an edit. And
+  reconciliation turned out to be **quadratic in the rows that move**: reversing 4,000 keyed rows
+  cost 25 ms, each doubling roughly quadrupling the cost per row, because naming a child's current
+  index meant scanning for it. A rank query makes that pass `O(w log w)` — 25,476 µs → 2,105 µs —
+  and `scaling.rs` gates the shape now. Then the question *whether* a list reconciles by key turned
+  out to be 62–89% of the per-event diff, and it is asked once over what the two pages share
+  instead of once per list — **1.94–2.04×**, measured A/B in one process. What is left is the walk:
+  deciding this at all means examining every child, so given two pages and nothing else, what moved
+  has to be rediscovered. Both halves of the remaining cost now point at the same
+  fix, which is what an F item looks like when its successors have been measured. What it was missing was never a design — it was a **position**, and a piece
+  of work written down as "a known piece of work rather than an open question" in a report is
+  exactly the shape §8.5's preamble says never comes due.
 - **Mode B's codegen: the heap on a wasm target** (S, and the item with a user in front of it).
   The emitter is written and the scalar subset compiles, in a real engine, against the
-  tree-walker ([`103`](103-the-wasm-emitter-report.md)) — and it compiles **0 of the corpus's 195
+  tree-walker ([`103`](103-the-wasm-emitter-report.md)) — and it compiles **0 of the corpus's 225
   definitions**, because an application is records, lists and a page. What is left is therefore one
   thing and it is the big one: a value representation in linear memory, string and collection
   primitives, closures through an indirect call table, and §5.1's unanswered choice between the GC

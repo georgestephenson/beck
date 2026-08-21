@@ -11,8 +11,10 @@ here rather than in a footnote:
 
 - `remaining` updates by **±1 per event, never by recount** — ten units of delta work at ten rows and
   at five thousand (§23.8).
-- Assembling the page's children is **still linear**, so the end-to-end win is a 3–5× constant factor
-  rather than a change of asymptote (§23.8).
+- Assembling the page's children is **still linear**, so the end-to-end win is a 4–37× constant
+  factor rather than a change of asymptote (§23.8). It was 3–5× until the children became shared
+  handles rather than owned subtrees — the copy that sentence had always described as "`n` handles"
+  was in fact every node of the page, compounding with depth.
 - Sharing the dataflow is worth **55× less work per event** on a public feed and **1.3×** on the todo
   sketch, at 256 subscribers. **Where a program reads the session decides what its fanout costs**
   (§23.10).
@@ -317,10 +319,10 @@ state that already holds `n`:
 
 ```
    rows       delta materialise   recomp   maintain µs recompute µs  ratio
-     10          10         11        9            44          133   3.0×
-    100          10        101        9           194         1014   5.2×
-   1000          10       1001        9          1656         9017   5.4×
-   5000          10       5001        9          9128        47293   5.2×
+     10           9         11        9            15           66   4.4×
+    100           9        101        9            28          532  19.0×
+   1000           9       1001        9           125         4585  36.7×
+   5000           9       5001        9           697        24370  35.0×
 ```
 
 **The `delta` column is the deliverable.** Ten units of work — per-element functions applied plus
@@ -335,10 +337,138 @@ table.** It is the cost of handing a *pointwise* operator a `Value::List`:
 so `n` handles are copied and an `n`-child element is constructed per event even though one child
 changed.
 
+**"`n` handles" was not true when this sentence was first written, and the difference was the
+larger half of the cost.** `Html::Element` held `children: Vec<Html>` — owned subtrees — so `child`
+deep-copied every child it was given, and because each enclosing element copied what its own
+children had just copied, one event rebuilt *every node of the page* rather than `n` of them. The
+cost therefore compounded with nesting depth, which is invisible in a column counting entries. It is
+`Vec<Arc<Html>>` now and the sentence above is true as written: an untouched subtree costs a
+refcount. The table is the same measurement before and after —
+
+| rows | maintain µs, owned | maintain µs, shared |
+|---|---|---|
+| 10 | 34 | **15** |
+| 100 | 182 | **28** |
+| 1,000 | 2,336 | **125** |
+| 5,000 | 14,827 | **697** |
+
+— and the recompute path halves as well (50,845 µs → 24,370 µs at 5,000 rows), because
+`beck_core::html::element` is the one function the evaluator *and* both native backends build a page
+with. `incremental_engine.rs::one_event_allocates_a_handful_of_html_nodes_whatever_the_page_holds`
+is the gate, and it is counted by pointer identity rather than by a clock (§13.7): **9 new nodes on
+a 200-row page and 9 on a 1,600-row page, against 211 and 1,611 with the copy put back**.
+
+**And the render is only half of what the server does per event**, which this section did not say
+until the assembly stopped dominating it. `Feed::Dom` maintains the page *and* structurally diffs it
+against the one the client already holds, and both are on the interaction path:
+
+```
+   rows     render µs      diff µs     total µs  diff %
+     10            16            1           17      6%
+    100            33            6           39     15%
+   1000           148           55          203     27%
+   5000          1448          929         2377     39%
+```
+
+`measure_incremental.rs::what_one_event_costs_the_runtime_end_to_end`. Before the children were
+shared the diff was the *smaller* half at every size; it is now **39% of the per-event cost at
+5,000 rows**, because only one of the two got cheaper — and it was 54% of it in the window between
+the children being shared and the trim landing. A table showing the render alone was describing
+half the process.
+
+**The differ trims the ends the two pages physically share** — a run of children that are the same
+allocation in both needs no ops and no examination — which is worth 2–3× (203 µs → 71 µs at a
+thousand rows, 1,961 µs → 1,036 µs at five thousand) and is available only because a child is now a
+handle. `diff::tests::a_shared_page_and_a_copied_one_produce_the_same_ops` is the gate, and it is a
+**differential rather than an assertion**: every scenario runs twice, once shared and once through
+`rehash`, which rebuilds node by node and shares nothing, and the two op streams must be equal. The
+differ's other tests cannot do that job — they build every node fresh, so nothing in them is ever
+shared and the trim would never run.
+
+**Every number above is an *edit*, and the edit is the case the trim flatters.** One changed row
+leaves a window of one, so what the table measures is mostly the two `keyed` passes over the full
+lists. **A reorder is the opposite case**: sorting a table by another column shares no prefix and no
+suffix, so the whole list is the window — and there reconciliation was **quadratic in the rows that
+move**.
+
+```
+   rows     scan µs     rank µs
+    500         506         196
+   1000        2786         396
+   2000        5981        1216
+   4000       25476        2105
+```
+
+`beck-cli/tests/scaling.rs::reordering_a_keyed_list_costs_the_same_per_row_however_long_it_gets`.
+Per row, the scan cost 1.01 µs at 500 rows and 6.37 µs at 4,000 — each doubling roughly quadrupling
+it — where the replacement holds 0.39–0.56 µs/row out to 8,000. The cause is that the client applies
+a patch against the children it already holds, so every index the differ emits must be the one that
+child occupies *at that point in the stream*, and reading that off the list is a scan; one scan per
+child is `O(w²)`. Because a `Move` lifts a child out and re-inserts it at the front, the children
+nobody has claimed yet keep their relative order, so the distance a child sits ahead of where it
+belongs is exactly the number of unclaimed children before it — a **rank query**, `O(log w)` against
+a Fenwick tree, making the pass `O(w log w)`.
+
+**The op stream is unchanged, and that had to be proved rather than assumed.** Reconciliation's
+output is a contract with a client that has already applied everything before it, so a faster route
+to the same *page* is not good enough. Round-tripping cannot see the difference — many distinct
+streams land on the same tree — so the scan is kept as the oracle in
+`diff::tests::the_rank_structure_and_the_scan_it_replaced_emit_the_same_ops`, and 300 generated
+cases assert the two streams equal. Making the new code emit one redundant no-op `Move` leaves
+`round_trips_over_a_long_random_walk` green and turns that test red, which is the difference between
+the two gates stated as a fact.
+
+**This corrects the scope of a claim this section previously made.** It said the residue could not
+be removed by a better differ. That was measured on edits only, and a quadratic was hiding in the
+case the measurement did not cover — which is the argument for two sizes made against the report
+that made it.
+
+**The residue was `keyed`, and it was most of the cost.** Deciding whether a list reconciles by key
+at all means hashing every child's key into a set, on both lists, before any trim or rank query can
+help — and on a page where one row changed that was **62% of the diff at 1,000 rows, 87% at 5,000
+and 89% at 8,000**. This section twice said the remainder was not a differ problem. Both times that
+was reasoning rather than measurement, and both times measuring it disagreed; the second time is
+recorded here rather than quietly fixed, because the pattern is the finding.
+
+**It is asked once now instead of twice.** Whether a list is keyed is a question about the *whole*
+list — a key repeated anywhere makes the reconciliation ambiguous — so unlike the reconciliation it
+cannot be narrowed to the window. But the children at the shared ends are the same allocations in
+both lists and so carry the same keys, so hashing them once answers for both, and only the windows
+are hashed twice. Measured A/B in one process, alternating between the two predicates so that
+nothing about the machine separates them:
+
+```
+   rows    two passes    one pass
+   1000       53.7 µs     26.3 µs   2.04×
+   5000      343.3 µs    174.2 µs   1.97×
+   8000      593.2 µs    306.0 µs   1.94×
+```
+
+**The predicate is unchanged, and that is what makes this safe**: it computes the same answer, so no
+op moves, and the two differentials above hold it. A microbenchmark of the predicate alone reads
+only 1.3–1.4×, which is the smaller and more flattering number for the *old* code — calling the two
+implementations back to back leaves the second pass reading keys the first has just pulled into
+cache, which is a luxury the full diff does not have.
+
+**Narrowing the question to the window would have been worth more and was refused.** It would leave
+a window of one to hash instead of a list of 8,000 — but a page whose shared prefix repeats a key
+would then reconcile by key while the same page assembled without sharing would not, and "the same
+two pages produce the same ops however they were built" is the property the trim is only sound
+under. `diff::tests::a_repeated_key_in_the_part_two_pages_share_forces_the_positional_path` is the
+gate, and it was written because nothing else in the file could fail for it: a predicate that
+skipped the shared ends passed all fifteen other tests.
+
+**What is left after that is the walk itself** — the trim compares `n` pointers, which is cheap per
+element and still `O(n)`. Given two pages and nothing else, finding what moved means looking at what
+is there: whatever the engine knew about its own changes, the differ has to rediscover. That is
+§8.5.4's open item, stated from the other end — and this time the claim is that the *asymptote* is
+the differ's floor, not that the constant in front of it cannot move.
+
 So the maintained view is **not** `O(δ)` end to end. It is `O(δ)` in the *elements it computes* and
-`O(n)` in the *page it assembles*, and the measured 3–5× is a constant factor on an unchanged
-asymptote rather than a change of asymptote. **A report that quoted "5× faster" without that sentence
-would be describing a different system.**
+`O(n)` in the *page it assembles*, and the measured 4–37× is a constant factor on an unchanged
+asymptote rather than a change of asymptote. **A report that quoted "37× faster" without that
+sentence would be describing a different system** — the assembly is `n` refcounts now instead of `n`
+subtree copies, which is a much smaller `n` term and still an `n` term.
 
 Removing the remainder is a known piece of work rather than an open question, and it is the same
 piece of work in both directions: **the delta at the top of the plan *is* the patch set.** `beck-rt`
@@ -367,8 +497,20 @@ compile it to ([`99`](99-the-data-tier-means-of-combination.md) §99.6): `27-rev
 transcripts and the sweep that found three such sites in the tree among fifteen benign ones the same
 line reported identically — **all four are now closed**, the last of them (`board`) being a grouping
 rather than a lookup, which took the `arrange_by` §99.9 item 3 schedules. Four rather than three
-because a fourth site arrived with `awareness(f)` after that sweep was run and nothing re-ran it. What the episode leaves behind is the lesson rather than
-the case: two commands that are each true about one operator, and no reader who would run both.
+because a fourth site arrived with `awareness(f)` after that sweep was run and nothing re-ran it.
+That last clause is why the sweep is now a gate:
+`incremental.rs::no_program_in_the_tree_reapplies_a_collection_per_event` plans all 42 programs in
+`corpus/` and `examples/` and holds the count at zero, against 8 sites with the recognition switched
+off. What the episode leaves behind is the lesson rather than the case: two commands that are each
+true about one operator, and no reader who would run both.
+
+**So this section's `materialise` column is now the whole of what is left**, and that is a change in
+its standing rather than in its number. When it was written it was one of two per-event linear costs
+and the smaller-sounding one; with the captures closed it is the only one, in every program in the
+tree. It also had no position in [`08`](08-roadmap.md) §8.5's order until that was measured —
+"a known piece of work rather than an open question" is precisely the description §8.5's preamble
+gives of an item that never comes due — and it has one now, as an **F** item, because the fix is the
+work Mode B's per-component kernel needs anyway.
 
 ## 23.9 One shared dataflow: the three choices
 
@@ -990,7 +1132,7 @@ itself.
 | Partial state and upqueries | **Not built.** [`38`](38-literature-survey.md) §38.2's **borrow** verdict on Noria — evicted arrangements refilled on demand — is the finer-grained version of the lifecycle. What is built is all-or-nothing per dataflow |
 | Per-operator lifecycle | **Not built.** An operator no *connected* subscriber reads is still maintained if any operator does |
 | A gate on any of the exported numbers | **Not built.** A subscription over a thousand rows is 5.4 MB and nothing covers that case |
-| Joins, subqueries, `group by`, aggregates other than `count(*)`, `distinct` | **Not built in this surface**, and the reason is below the SQL rather than in it. The plan now **has a join** ([`99`](99-the-data-tier-means-of-combination.md) §99.6, `Op::Join`), inferred from a loop that looks something up or filters another collection by an equality rather than written as one, over either a unique index or an `arrange_by`; what the read-model SQL still lacks is the compilation *into* it, which is §99.9 item 9. The plan now has three of the four aggregates too — `count` from a tally the join keeps, `min` and `max` from `Op::GroupBy`'s multiset per group (§99.9 item 6) — so what is missing from the plan itself is `sum`, `distinct` and a `group by` that answers with the groups rather than with a question about each; for those there is still nothing to compile into. The view algebra's combining forms were all unary until the join — every other operator takes one collection, and `concat_lists`, the one that takes several, unions same-typed streams rather than relating them. [`99`](99-the-data-tier-means-of-combination.md) is the design that closes it, and §99.2 argues the absence is an oversight rather than a decision. When the plan has them, this surface grows by compiling *into* it rather than by growing a second interpreter |
+| Joins, subqueries, `group by`, aggregates other than `count(*)`, `distinct` | **Not built in this surface**, and the reason is below the SQL rather than in it. The plan now **has a join** ([`99`](99-the-data-tier-means-of-combination.md) §99.6, `Op::Join`), inferred from a loop that looks something up or filters another collection by an equality rather than written as one, over either a unique index or an `arrange_by`; what the read-model SQL still lacks is the compilation *into* it, which is §99.9 item 9. The plan now has all four aggregates too — `count` from a tally the join keeps, `min` and `max` from `Op::GroupBy`'s multiset per group, and `sum` from a running total the same operator keeps instead of one (§99.9 item 6) — so what is missing from the plan itself is `distinct` and a `group by` that answers with the groups rather than with a question about each; for those there is still nothing to compile into. The view algebra's combining forms were all unary until the join — every other operator takes one collection, and `concat_lists`, the one that takes several, unions same-typed streams rather than relating them. [`99`](99-the-data-tier-means-of-combination.md) is the design that closes it, and §99.2 argues the absence is an oversight rather than a decision. When the plan has them, this surface grows by compiling *into* it rather than by growing a second interpreter |
 | `count(*)` without scanning | **Built, ungrouped.** `select count(*) from t`, with nothing narrowing it, is answered from the collection's own size: a maintained arrangement is a `BTreeMap` and a `Map` in the accumulator knows its length, and neither was being asked — the query cloned every value and built a `Cell` per column of every one to answer with an integer. `read::Rows::count` is the seam and it defaults to "not without a scan", so a reader that does not implement it is exactly as correct and exactly as slow as it was. Gated by `read_models.rs::a_bare_count_is_answered_without_building_a_row`, whose instrument is a reader that knows the size and **refuses to produce a row** — a query that scanned cannot be answered by it at all. `a_count_that_narrows_anything_still_scans` says where the fast path stops. The *grouped* form is not a SQL question at all but [`99`](99-the-data-tier-means-of-combination.md) §99.4's aggregation half, which the **plan** now has for `count`, `min` and `max` and this surface still cannot reach — §99.9 item 9 is the compilation into it |
 | `pg_catalog`, and therefore `psql`'s `\d` | **Not built.** `select * from beck_columns` is the substitute, and it is a table this project invented rather than what any tool expects. The correct long-run answer is a small read-only emulation of `pg_class` and friends — which needs joins, so the two are the same item |
 | TLS and authentication on the read-model port | **Not built**, and the port is loopback-only and off by default because of it |

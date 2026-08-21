@@ -129,7 +129,7 @@ rented, because an RPC hop destroys the composition that was its value (§102.5)
 | | |
 |---|---|
 | **Dissolved** | The library patches a problem Beck's semantics do not have — DI containers, ORMs and migration tools, cache libraries, runtime schema validators, logging frameworks, build plumbing. [`29`](29-domain-driven-design.md) §29.1 does exactly this to four DDD patterns |
-| **Absorbed into the language** | HTTP, JSON, dates, digests, decimals — [`46`](46-standard-library-report.md) — and the two that are missing rather than optional: the view algebra's join and aggregates ([`99`](99-the-data-tier-means-of-combination.md)), which is what pandas actually is — the join, both indexes and per-group `count`/`min`/`max` have since landed; `sum` and `distinct` have not, and an `svg:` vocabulary, which is what charting actually is |
+| **Absorbed into the language** | HTTP, JSON, dates, digests, decimals — [`46`](46-standard-library-report.md) — and the two that are missing rather than optional: the view algebra's join and aggregates ([`99`](99-the-data-tier-means-of-combination.md)), which is what pandas actually is — the join, both indexes and per-group `count`/`min`/`max`/`sum` have since landed; `distinct` and difference have not, and an `svg:` vocabulary, which is what charting actually is |
 | **Rented (bridged)** | ML inference, scientific computing, PDF — at **merge points only**, per §9.2 |
 | **Linked** | BLAS, compression, crypto primitives — somebody's kernel behind a primitive, legal in a fold because the function is pure |
 

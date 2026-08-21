@@ -15,7 +15,8 @@
 //!   index is valid against the DOM as it exists at that moment, which is why removals descend and
 //!   insertions ascend.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
@@ -141,28 +142,95 @@ fn diff_attrs(old: &[(String, String)], new: &[(String, String)], path: &Path, o
     }
 }
 
-fn diff_children(old: &[Html], new: &[Html], path: &mut Path, ops: &mut Vec<Op>) {
-    if keyed(old) && keyed(new) {
-        diff_keyed(old, new, path, ops);
+fn diff_children(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut Vec<Op>) {
+    let (head, tail) = shared_ends(old, new);
+    if both_keyed(old, new, head, tail) {
+        diff_keyed_from(
+            &old[head..old.len() - tail],
+            &new[head..new.len() - tail],
+            head as u32,
+            path,
+            ops,
+        );
     } else {
+        // The full lists, deliberately. Trimming here would make a shared page and a copied one
+        // patch differently — `Remove` and `Insert` are index-based, so dropping a shared suffix
+        // moves the indices the positional path emits. `diff::tests::
+        // a_shared_page_and_a_copied_one_produce_the_same_ops` is the property that forbids it.
         diff_positional(old, new, path, ops);
     }
 }
 
-/// Keyed iff every child carries a key and the keys are unique — otherwise the reconciliation
-/// below would be ambiguous, and a positional diff is the honest fallback.
-fn keyed(children: &[Html]) -> bool {
-    if children.is_empty() {
-        return false;
+/// How many children the two lists hold as the *same allocation* at each end.
+///
+/// An untouched child is literally the node it was, so a run of them needs no ops and no
+/// examination. This is a fact about how the page was assembled rather than about what it
+/// contains, which is why nothing downstream may let it change the ops it emits.
+fn shared_ends(old: &[Arc<Html>], new: &[Arc<Html>]) -> (usize, usize) {
+    let mut head = 0;
+    while head < old.len() && head < new.len() && Arc::ptr_eq(&old[head], &new[head]) {
+        head += 1;
     }
-    let mut seen = HashSet::with_capacity(children.len());
-    children.iter().all(|c| match c.key_of() {
-        Some(k) => seen.insert(k),
-        None => false,
-    })
+    let mut tail = 0;
+    while head + tail < old.len()
+        && head + tail < new.len()
+        && Arc::ptr_eq(&old[old.len() - 1 - tail], &new[new.len() - 1 - tail])
+    {
+        tail += 1;
+    }
+    (head, tail)
 }
 
-fn diff_positional(old: &[Html], new: &[Html], path: &mut Path, ops: &mut Vec<Op>) {
+/// `keyed(old) && keyed(new)`, computed once over what the two lists share instead of twice.
+///
+/// Whether a list reconciles by key is a question about the **whole** list — a key repeated
+/// anywhere makes the reconciliation ambiguous — so this cannot be narrowed to the window the way
+/// the reconciliation itself is. But the children at the shared ends are the same allocations in
+/// both lists and therefore carry the same keys, so hashing them once answers for both: only the
+/// windows differ, and only the windows need hashing twice.
+///
+/// That is worth having because this check, not the reconciliation, is what one event pays. On a
+/// page where a single row changed, the trim leaves a window of one and the two full-list passes
+/// were **62% of the diff at 1,000 rows, 87% at 5,000 and 89% at 8,000**.
+///
+/// The answer is unchanged, and that is the point: this is the same predicate, so no op moves.
+fn both_keyed(old: &[Arc<Html>], new: &[Arc<Html>], head: usize, tail: usize) -> bool {
+    // `keyed` was false for an empty list, and an empty list on either side still means the
+    // positional path.
+    if old.is_empty() || new.is_empty() {
+        return false;
+    }
+    let mut seen: HashSet<&str> = HashSet::with_capacity(old.len());
+    // The shared ends, hashed once. Their keys are the same in both lists by construction.
+    let shared = old[..head]
+        .iter()
+        .chain(&old[old.len() - tail..])
+        .map(|c| c.key_of());
+    for key in shared {
+        match key {
+            Some(k) if seen.insert(k) => {}
+            _ => return false,
+        }
+    }
+    // Each window against those, and against itself. The first window is taken back out so the
+    // second is measured against the shared ends alone.
+    let old_window = &old[head..old.len() - tail];
+    let new_window = &new[head..new.len() - tail];
+    for window in [old_window, new_window] {
+        for child in window {
+            match child.key_of() {
+                Some(k) if seen.insert(k) => {}
+                _ => return false,
+            }
+        }
+        for child in window {
+            seen.remove(child.key_of().expect("just inserted"));
+        }
+    }
+    true
+}
+
+fn diff_positional(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut Vec<Op>) {
     let common = old.len().min(new.len());
     for i in 0..common {
         path.push(i as u32);
@@ -179,59 +247,134 @@ fn diff_positional(old: &[Html], new: &[Html], path: &mut Path, ops: &mut Vec<Op
         ops.push(Op::Insert {
             path: path.clone(),
             index: i as u32,
-            html: node.clone(),
+            html: (**node).clone(),
         });
     }
 }
 
-fn diff_keyed(old: &[Html], new: &[Html], path: &mut Path, ops: &mut Vec<Op>) {
-    let wanted: HashSet<&str> = new.iter().filter_map(Html::key_of).collect();
+/// The reconciliation itself, over a window of the two child lists.
+///
+/// `base` is where that window starts in the client's children, so every index this emits is the
+/// index the client will see — the same contract the whole module keeps ("each index is valid
+/// against the DOM as it exists at that moment").
+fn diff_keyed_from(
+    old: &[Arc<Html>],
+    new: &[Arc<Html>],
+    base: u32,
+    path: &mut Path,
+    ops: &mut Vec<Op>,
+) {
+    let wanted: HashSet<&str> = new.iter().filter_map(|c| c.key_of()).collect();
 
-    // `cursor` mirrors the client's child list as the ops are applied, so every index emitted
-    // below is the index the client will see at that point in the stream.
-    let mut cursor: Vec<&Html> = old.iter().collect();
-
-    let mut i = 0;
-    while i < cursor.len() {
-        if cursor[i].key_of().is_some_and(|k| wanted.contains(k)) {
-            i += 1;
+    // Drop the children the new list has no key for, in one pass. A child that survives lands at
+    // the index `kept.len()` had when it was reached, because every drop before it has already
+    // been applied — so the index each `Remove` carries is the one the client will see, without
+    // the list ever being shifted to find it.
+    let mut kept: Vec<&Html> = Vec::with_capacity(old.len().min(new.len()));
+    for c in old {
+        if c.key_of().is_some_and(|k| wanted.contains(k)) {
+            kept.push(c);
         } else {
             ops.push(Op::Remove {
                 path: path.clone(),
-                index: i as u32,
+                index: base + kept.len() as u32,
             });
-            cursor.remove(i);
         }
     }
 
+    // Where each surviving child started, and it is what turns "find this key ahead of `j`" into
+    // a lookup. A key is taken out as it is claimed, so a list that repeats one — which `keyed`
+    // rules out before reconciliation is reached, but which this function should not depend on —
+    // treats the second occurrence as new, exactly as searching the remaining children did.
+    let mut origin: HashMap<&str, usize> = HashMap::with_capacity(kept.len());
+    for (p, c) in kept.iter().enumerate() {
+        if let Some(k) = c.key_of() {
+            origin.insert(k, p);
+        }
+    }
+
+    let mut unclaimed = Unclaimed::new(kept.len());
     for (j, want) in new.iter().enumerate() {
-        let key = want.key_of();
-        let found = cursor[j..].iter().position(|c| c.key_of() == key);
-        match found {
-            Some(0) => {}
-            Some(offset) => {
-                let from = (j + offset) as u32;
-                ops.push(Op::Move {
-                    path: path.clone(),
-                    from,
-                    to: j as u32,
-                });
-                let node = cursor.remove(j + offset);
-                cursor.insert(j, node);
+        let node = match want.key_of().and_then(|k| origin.remove(k)) {
+            Some(p) => {
+                // A `Move` lifts a child out and puts it back at `j`, so the children nobody has
+                // claimed yet keep their relative order: the one at `p` currently sits exactly as
+                // far past `j` as there are unclaimed children before it.
+                let offset = unclaimed.ahead_of(p);
+                if offset > 0 {
+                    ops.push(Op::Move {
+                        path: path.clone(),
+                        from: base + (j + offset) as u32,
+                        to: base + j as u32,
+                    });
+                }
+                unclaimed.claim(p);
+                kept[p]
             }
             None => {
                 ops.push(Op::Insert {
                     path: path.clone(),
-                    index: j as u32,
-                    html: want.clone(),
+                    index: base + j as u32,
+                    html: (**want).clone(),
                 });
-                cursor.insert(j, want);
                 continue; // freshly inserted: nothing to diff against
             }
-        }
-        path.push(j as u32);
-        diff_node(cursor[j], want, path, ops);
+        };
+        path.push(base + j as u32);
+        diff_node(node, want, path, ops);
         path.pop();
+    }
+}
+
+/// How many of the client's children, ahead of a given one, the new list has not claimed yet.
+///
+/// A Fenwick tree over the surviving children's starting positions, holding one for each child
+/// still unclaimed. Phase two needs one number per child — the distance it currently sits ahead of
+/// where it belongs — and reading that off the child list is a scan, which made reconciliation
+/// quadratic in the window: reordering 4,000 keyed rows cost 25 ms of diffing, and doubling the
+/// rows quadrupled it. As a rank query it is `O(log w)`, so the pass is `O(w log w)`.
+///
+/// The op stream is unchanged. This computes the same offsets the scan did.
+struct Unclaimed {
+    /// One-based, as Fenwick trees are: `tree[0]` is unused so that `i & i.wrapping_neg()`
+    /// terminates.
+    tree: Vec<u32>,
+}
+
+impl Unclaimed {
+    /// All `n` children start unclaimed, built in `O(n)` by carrying each cell into its parent
+    /// rather than by `n` separate updates.
+    fn new(n: usize) -> Self {
+        let mut tree = vec![0u32; n + 1];
+        for i in 1..=n {
+            tree[i] += 1;
+            let parent = i + (i & i.wrapping_neg());
+            if parent <= n {
+                let carried = tree[i];
+                tree[parent] += carried;
+            }
+        }
+        Self { tree }
+    }
+
+    /// The number of still-unclaimed children whose starting position is before `p`.
+    fn ahead_of(&self, p: usize) -> usize {
+        let mut i = p;
+        let mut sum = 0u32;
+        while i > 0 {
+            sum += self.tree[i];
+            i -= i & i.wrapping_neg();
+        }
+        sum as usize
+    }
+
+    /// Mark the child that started at `p` as claimed, so it stops counting towards later offsets.
+    fn claim(&mut self, p: usize) {
+        let mut i = p + 1;
+        while i < self.tree.len() {
+            self.tree[i] -= 1;
+            i += i & i.wrapping_neg();
+        }
     }
 }
 
@@ -257,7 +400,7 @@ pub fn apply(root: &Html, ops: &[Op]) -> Html {
             Op::Insert { path, index, html } => {
                 let parent = node_mut(&mut root, path);
                 *parent = rebuild(parent.clone(), |cs| {
-                    cs.insert(*index as usize, html.clone());
+                    cs.insert(*index as usize, Arc::new(html.clone()));
                 });
             }
             Op::Remove { path, index } => {
@@ -284,7 +427,10 @@ fn node_mut<'a>(root: &'a mut Html, path: &[u32]) -> &'a mut Html {
     let mut node = root;
     for step in path {
         node = match node {
-            Html::Element { children, .. } => &mut children[*step as usize],
+            // `make_mut` and not an index: children are shared with whatever other tree holds
+            // them, so descending to patch one has to unshare exactly the spine it walks. Nodes
+            // off the path keep their allocation and their refcount.
+            Html::Element { children, .. } => Arc::make_mut(&mut children[*step as usize]),
             Html::Text { .. } => panic!("patch path descends into a text node"),
         };
     }
@@ -296,7 +442,7 @@ fn set_node(root: &mut Html, path: &[u32], value: Html) {
 }
 
 /// Rebuild an element through the `Html` builder so the structural hash stays consistent.
-fn rebuild(node: Html, f: impl FnOnce(&mut Vec<Html>)) -> Html {
+fn rebuild(node: Html, f: impl FnOnce(&mut Vec<Arc<Html>>)) -> Html {
     match node {
         Html::Element {
             tag,
@@ -313,7 +459,7 @@ fn rebuild(node: Html, f: impl FnOnce(&mut Vec<Html>)) -> Html {
             if let Some(k) = key {
                 el = el.key(k);
             }
-            el.children(children)
+            el.children_shared(children)
         }
         text => text,
     }
@@ -349,7 +495,7 @@ fn with_attr(node: Html, name: &str, value: Option<&str>) -> Html {
             if let Some(k) = key {
                 el = el.key(k);
             }
-            el.children(children)
+            el.children_shared(children)
         }
         text => text,
     }
@@ -457,6 +603,321 @@ mod tests {
         let ops = diff(&a, &b);
         assert!(matches!(ops.as_slice(), [Op::Replace { .. }]));
         assert_eq!(apply(&a, &ops), b);
+    }
+
+    /// **The same two pages, shared and copied, produce the same ops.**
+    ///
+    /// [`diff_keyed`] skips the runs of children the two lists hold as the *same allocation*, which
+    /// is a fact about how the page was assembled and not about what it contains. So the risk the
+    /// trim carries is precisely that it changes the answer — an index computed against a window
+    /// rather than the whole list, a move whose source is counted from the wrong place.
+    ///
+    /// `rehash` rebuilds a tree node for node, so the copy shares nothing and takes the full
+    /// reconciliation while the original takes the trimmed one. Every scenario below runs both and
+    /// requires the two op streams to be **equal**, and requires each to carry the client from the
+    /// old page to the new one. The unit tests above cannot do this job: they build every node
+    /// fresh, so nothing in them is ever shared and the trim never runs.
+    #[test]
+    fn a_shared_page_and_a_copied_one_produce_the_same_ops() {
+        fn shared(items: &[Arc<Html>]) -> Html {
+            let mut el = Html::el("ul");
+            for i in items {
+                el = el.child_shared(i.clone());
+            }
+            el
+        }
+        let pool: Vec<Arc<Html>> = (0..24)
+            .map(|i| Arc::new(li(&format!("k{i}"), &format!("item {i}"), i % 3 == 0)))
+            .collect();
+
+        // A deterministic walk over the shapes a page actually takes: prepend (the sketch's own),
+        // append, remove from either end and the middle, reorder, and an edit in place.
+        let mut seed = 0x5eedu64;
+        let mut rand = move |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n.max(1)
+        };
+        let mut exercised = 0usize;
+        for case in 0..200 {
+            let take = 4 + rand(16);
+            let old_rows: Vec<Arc<Html>> = pool.iter().take(take).cloned().collect();
+            let mut new_rows = old_rows.clone();
+            match case % 6 {
+                0 => new_rows.insert(0, pool[23].clone()),
+                1 => new_rows.push(pool[23].clone()),
+                2 => {
+                    if !new_rows.is_empty() {
+                        new_rows.remove(rand(new_rows.len()));
+                    }
+                }
+                3 => new_rows.reverse(),
+                4 => {
+                    if new_rows.len() > 2 {
+                        let n = new_rows.len();
+                        new_rows.swap(1, n - 1);
+                    }
+                }
+                _ => {
+                    // An edit in place: a *different* node under a key that stays, which is what
+                    // makes the trim stop rather than run to the end.
+                    let at = rand(new_rows.len());
+                    new_rows[at] = Arc::new(li(&format!("k{at}"), "edited", true));
+                }
+            }
+            let (old, new) = (shared(&old_rows), shared(&new_rows));
+            // The same two pages with nothing shared: `rehash` rebuilds every node.
+            let (old_copy, new_copy) = (old.rehash(), new.rehash());
+            assert_eq!(old, old_copy, "rehash must preserve the value, case {case}");
+
+            let trimmed = diff(&old, &new);
+            let full = diff(&old_copy, &new_copy);
+            assert_eq!(
+                trimmed, full,
+                "case {case}: trimming the shared ends changed the ops"
+            );
+            assert_eq!(
+                apply(&old, &trimmed),
+                new.rehash(),
+                "case {case}: round trip"
+            );
+            if old_rows
+                .first()
+                .zip(new_rows.first())
+                .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+                || old_rows
+                    .last()
+                    .zip(new_rows.last())
+                    .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+            {
+                exercised += 1;
+            }
+        }
+        // The control: if nothing had a shared end, the two sides above would be the same code
+        // path and this test would prove nothing.
+        assert!(
+            exercised > 100,
+            "only {exercised} of 200 cases shared an end, so the trim was barely exercised"
+        );
+    }
+
+    /// **Whether a list reconciles by key is a question about the whole list, including the part
+    /// the two pages share.**
+    ///
+    /// [`both_keyed`] hashes the shared ends once instead of twice, which is only sound because it
+    /// still asks about every child. Narrowing the question to the window — which is what the
+    /// reconciliation itself is narrowed to, and so the tempting next step — would answer
+    /// differently here: the window below is cleanly keyed while the list holding it is not.
+    ///
+    /// Nothing else in this file can tell those two apart. Every other case builds children whose
+    /// keys are distinct, so a predicate that skipped the shared ends entirely passed all fifteen
+    /// of them; this is the one that goes red, which is the whole reason it exists
+    /// (`docs/82` §82.10).
+    #[test]
+    fn a_repeated_key_in_the_part_two_pages_share_forces_the_positional_path() {
+        // The duplicate sits in the prefix the two pages hold as the same allocations, and the
+        // window between them is a clean two-key reorder.
+        let dup_a = Arc::new(li("dup", "first", false));
+        let dup_b = Arc::new(li("dup", "second", false));
+        let x = Arc::new(li("x", "x", false));
+        let y = Arc::new(li("y", "y", false));
+        let end = Arc::new(li("end", "end", false));
+
+        let old = Html::el("ul").children_shared([
+            Arc::clone(&dup_a),
+            Arc::clone(&dup_b),
+            Arc::clone(&x),
+            Arc::clone(&y),
+            Arc::clone(&end),
+        ]);
+        let new = Html::el("ul").children_shared([
+            Arc::clone(&dup_a),
+            Arc::clone(&dup_b),
+            Arc::clone(&y),
+            Arc::clone(&x),
+            Arc::clone(&end),
+        ]);
+
+        let ops = diff(&old, &new);
+        assert!(
+            !ops.iter().any(|o| matches!(o, Op::Move { .. })),
+            "`dup` is carried by two children, so this list cannot reconcile by key and the \
+             positional path is the honest answer — but the ops moved something: {ops:?}"
+        );
+        assert_eq!(
+            apply(&old, &ops),
+            new.rehash(),
+            "and it still has to round trip"
+        );
+
+        // The same two pages with the duplicate resolved *do* reconcile by key, so the assertion
+        // above is about the repeat and not about the shape of the test.
+        let un_dup = Arc::new(li("dup2", "second", false));
+        let keyed_old = Html::el("ul").children_shared([
+            Arc::clone(&dup_a),
+            Arc::clone(&un_dup),
+            Arc::clone(&x),
+            Arc::clone(&y),
+            Arc::clone(&end),
+        ]);
+        let keyed_new = Html::el("ul").children_shared([
+            Arc::clone(&dup_a),
+            Arc::clone(&un_dup),
+            Arc::clone(&y),
+            Arc::clone(&x),
+            Arc::clone(&end),
+        ]);
+        let keyed_ops = diff(&keyed_old, &keyed_new);
+        assert!(
+            keyed_ops.iter().any(|o| matches!(o, Op::Move { .. })),
+            "with distinct keys the same reorder should move rather than rebuild: {keyed_ops:?}"
+        );
+        assert_eq!(apply(&keyed_old, &keyed_ops), keyed_new.rehash());
+    }
+
+    /// `diff_keyed_from` as it was before the rank structure: a scan of the child list for every
+    /// child. Kept as the oracle for the thing that replaced it.
+    fn scan_keyed_from(
+        old: &[Arc<Html>],
+        new: &[Arc<Html>],
+        base: u32,
+        path: &mut Path,
+        ops: &mut Vec<Op>,
+    ) {
+        let wanted: HashSet<&str> = new.iter().filter_map(|c| c.key_of()).collect();
+        let mut cursor: Vec<&Html> = old.iter().map(|c| &**c).collect();
+        let mut i = 0;
+        while i < cursor.len() {
+            if cursor[i].key_of().is_some_and(|k| wanted.contains(k)) {
+                i += 1;
+            } else {
+                ops.push(Op::Remove {
+                    path: path.clone(),
+                    index: base + i as u32,
+                });
+                cursor.remove(i);
+            }
+        }
+        for (j, want) in new.iter().enumerate() {
+            let key = want.key_of();
+            let found = cursor[j..].iter().position(|c| c.key_of() == key);
+            match found {
+                Some(0) => {}
+                Some(offset) => {
+                    ops.push(Op::Move {
+                        path: path.clone(),
+                        from: base + (j + offset) as u32,
+                        to: base + j as u32,
+                    });
+                    let node = cursor.remove(j + offset);
+                    cursor.insert(j, node);
+                }
+                None => {
+                    ops.push(Op::Insert {
+                        path: path.clone(),
+                        index: base + j as u32,
+                        html: (**want).clone(),
+                    });
+                    cursor.insert(j, want);
+                    continue;
+                }
+            }
+            path.push(base + j as u32);
+            diff_node(cursor[j], want, path, ops);
+            path.pop();
+        }
+    }
+
+    /// **The rank structure emits the same ops as the scan it replaced.**
+    ///
+    /// Reconciliation's output is a contract with a client that has already applied everything
+    /// before it, so replacing the scan had to be a faster route to the *same stream* rather than
+    /// merely to the same page. Round-tripping cannot see that difference — many distinct streams
+    /// land on the same tree, so a differ that emitted `n` redundant moves would still round-trip.
+    /// The scan is therefore kept above as the oracle and asserted against directly.
+    ///
+    /// The cases are built to reach all four outcomes — a child already in place, one that has to
+    /// move, one that is new, one that is dropped — and the run asserts it saw each, because a
+    /// generator that quietly stopped producing moves would leave this green while testing
+    /// nothing.
+    #[test]
+    fn the_rank_structure_and_the_scan_it_replaced_emit_the_same_ops() {
+        let mut seed = 0xd1ffu64;
+        let mut rand = move |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n.max(1)
+        };
+        let (mut moved, mut inserted, mut removed, mut in_place) = (0usize, 0, 0, 0);
+
+        for case in 0..300 {
+            let n = rand(24);
+            let old: Vec<Arc<Html>> = (0..n)
+                .map(|i| Arc::new(li(&format!("k{i}"), &format!("row {i}"), false)))
+                .collect();
+
+            // Keep a random subset, permute it by repeated random rotation, edit some of the
+            // survivors' content, and splice in children with keys the old list never had.
+            let mut kept: Vec<Arc<Html>> = Vec::new();
+            for c in &old {
+                if rand(4) == 0 {
+                    continue;
+                }
+                if rand(3) == 0 {
+                    let key = c.key_of().expect("a keyed child").to_string();
+                    let done = rand(2) == 0;
+                    kept.push(Arc::new(li(&key, "edited", done)));
+                } else {
+                    kept.push(Arc::clone(c));
+                }
+            }
+            for _ in 0..rand(6) {
+                if !kept.is_empty() {
+                    let from = rand(kept.len());
+                    let to = rand(kept.len());
+                    let node = kept.remove(from);
+                    kept.insert(to, node);
+                }
+            }
+            for fresh in 0..rand(4) {
+                let at = rand(kept.len() + 1);
+                kept.insert(at, Arc::new(li(&format!("fresh{fresh}"), "new", false)));
+            }
+            let new = kept;
+
+            let mut fast = Vec::new();
+            let mut scan = Vec::new();
+            diff_keyed_from(&old, &new, 0, &mut Path::default(), &mut fast);
+            scan_keyed_from(&old, &new, 0, &mut Path::default(), &mut scan);
+            assert_eq!(
+                fast,
+                scan,
+                "case {case}: the rank structure diverged from the scan\n  old {:?}\n  new {:?}",
+                old.iter().map(|c| c.key_of()).collect::<Vec<_>>(),
+                new.iter().map(|c| c.key_of()).collect::<Vec<_>>(),
+            );
+
+            for op in &fast {
+                match op {
+                    Op::Move { .. } => moved += 1,
+                    Op::Insert { .. } => inserted += 1,
+                    Op::Remove { .. } => removed += 1,
+                    _ => {}
+                }
+            }
+            in_place += new.len().saturating_sub(
+                fast.iter()
+                    .filter(|o| matches!(o, Op::Move { .. } | Op::Insert { .. }))
+                    .count(),
+            );
+        }
+        assert!(
+            moved > 100 && inserted > 100 && removed > 100 && in_place > 100,
+            "the generator stopped covering an outcome: {moved} moves, {inserted} inserts, \
+             {removed} removes, {in_place} left in place"
+        );
     }
 
     #[test]

@@ -1,0 +1,150 @@
+# The program that asks a group for its *total* (docs/99 §99.9 item 6, `sum`).
+#
+# `36-auction.beck` asks a group for one of its ends, which a tree per group answers by being read
+# from one side or the other. A sum is the aggregate that reads nothing: a running total moves by
+# `+n` and `-n` as postings arrive and are voided, so the group's rows — and its distinct values —
+# are never a thing the operator has to hold.
+#
+# What it exists to hold that the ends cannot:
+#
+#   * **an empty group is `0`, not `None`**. `list_min` of no bids has no answer and says so;
+#     `list_sum` of no postings is the sum of no numbers. So the join above this aggregate reads a
+#     missing entry as a value rather than as an absence, and an account nobody has posted to
+#     renders a balance rather than a dash;
+#   * **an answer that moves whenever the group does**. Every posting changes the total of its
+#     account, so this is the one aggregate that never takes the "the group moved and the answer
+#     did not" discount — which is worth a program of its own, because a gate written over
+#     `36-auction` would be measuring the discount rather than the operator.
+#
+# The projection is the point of the shape, as it is there: what is added is the posting's
+# *amount*, so no page ever holds a posting. Amounts are signed because a ledger's are — which is
+# also what makes the total a question no count and no extreme can answer.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model State:
+    accounts: Map[Str, Account]
+    postings: Map[Str, Posting]
+
+model Account:
+    id: Str
+    name: Str
+
+model Posting:
+    id: Str
+    account: Str
+    amount: Int
+
+union Command:
+    Open(id: Str, name: Str)
+    Post(id: Str, account: Str, amount: Int)
+    Void(id: Str)
+
+union Event:
+    Opened(id: Str, name: Str)
+    Posted(id: Str, account: Str, amount: Int)
+    Voided(id: Str)
+
+union Rejection:
+    Blank
+    NoSuchAccount
+    NoSuchPosting
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Opened(id, name):
+            return s.with(accounts=map_insert(s.accounts, id, Account(id=id, name=name)))
+        case Posted(id, account, amount):
+            return s.with(postings=map_insert(s.postings, id,
+                                              Posting(id=id, account=account, amount=amount)))
+        case Voided(id):
+            return s.with(postings=map_remove(s.postings, id))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Open(id, name):
+            if str_is_empty(str_trim(name)):
+                return Err(error=Blank)
+            return Ok(value=[Opened(id=id, name=name)])
+        case Post(id, account, amount):
+            if not map_contains(s.accounts, account):
+                return Err(error=NoSuchAccount)
+            return Ok(value=[Posted(id=id, account=account, amount=amount)])
+        case Void(id):
+            if not map_contains(s.postings, id):
+                return Err(error=NoSuchPosting)
+            return Ok(value=[Voided(id=id)])
+
+# The question, written the way anybody would write it: the postings on this account, taken down to
+# their amounts, added up. No `group by` and no `sum by` appear in this file.
+def balance(s: State, account: Str) -> Int:
+    return list_sum(map_list(filter_list(map_values(s.postings), lambda p: p.account == account),
+                             lambda p: p.amount))
+
+def ledger(s: State) -> list[Account]:
+    return sort_by(map_values(s.accounts), lambda a: a.name)
+
+def view(s: State, session: Session) -> Html:
+    return ui:
+        main:
+            h1: "ledger"
+            ul:
+                for account in ledger(s):
+                    li(key=account.id):
+                        (account.name + ": " + str(balance(s, account.id)) + "p")
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, book, validate)
+book: Signal[State] = durable(fold(apply_event, State(accounts={}, postings={}), events))
+page: Signal[Html] = per_session(book, view)
+
+test "an account nobody has posted to has a balance of nothing":
+    given [Opened(id="a1", name="cash")]
+    expect page contains "cash: 0p"
+
+test "the balance is the postings added up":
+    given [Opened(id="a1", name="cash"),
+           Posted(id="p1", account="a1", amount=250),
+           Posted(id="p2", account="a1", amount=125)]
+    expect page contains "cash: 375p"
+
+test "a credit is a posting like any other":
+    given [Opened(id="a1", name="cash"),
+           Posted(id="p1", account="a1", amount=250),
+           Posted(id="p2", account="a1", amount=-90)]
+    expect page contains "cash: 160p"
+
+test "voiding a posting takes its amount back out":
+    given [Opened(id="a1", name="cash"),
+           Posted(id="p1", account="a1", amount=250),
+           Posted(id="p2", account="a1", amount=125)]
+    when Void(id="p2")
+    expect page contains "cash: 250p"
+
+test "two postings of the same amount are two postings":
+    given [Opened(id="a1", name="cash"),
+           Posted(id="p1", account="a1", amount=250),
+           Posted(id="p2", account="a1", amount=250)]
+    when Void(id="p1")
+    expect page contains "cash: 250p"
+
+test "a posting on one account is no posting on another":
+    given [Opened(id="a1", name="cash"), Opened(id="a2", name="stock"),
+           Posted(id="p1", account="a1", amount=250)]
+    expect page contains "cash: 250p"
+    expect page contains "stock: 0p"
+
+test "postings that cancel leave the account where it started":
+    given [Opened(id="a1", name="cash"),
+           Posted(id="p1", account="a1", amount=250),
+           Posted(id="p2", account="a1", amount=-250)]
+    expect page contains "cash: 0p"
+
+test "a posting to an account that was never opened never reaches the log":
+    given []
+    when Post(id="p1", account="ghost", amount=250)
+    expect Err(error=NoSuchAccount)
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "ledger"

@@ -5,7 +5,7 @@ held to the tree-walker by a differential of **12,852 calls run in a real WebAss
 a million-deep tail recursion proving `return_call` is a jump.
 
 **What it does not establish, said first because it is the number that matters**: it compiles
-**0 of the corpus's 220 definitions**. An application is records, lists and a page; the heap is not
+**0 of the corpus's 225 definitions**. An application is records, lists and a page; the heap is not
 laid out on this target, so [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) is **not
 reversed** — Mode B still ships the interpreter, and this buys a running program nothing yet. What
 it is, is the half of a Mode B code generator that has no heap in it, and the half where everything
@@ -98,15 +98,16 @@ Two details of that harness are decisions:
 
 | | Compiled | Refused |
 |---|---|---|
-| [`corpus/`](../compiler/corpus/) — 32 applications | **0** | 195 |
+| [`corpus/`](../compiler/corpus/) — 37 applications | **0** | 225 |
 | [`awfy/`](../compiler/awfy/) — Are We Fast Yet | 58 | 344 |
 
 The corpus row is the finding, and it is [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)'s
 argument arriving as a measurement rather than a forecast: "a component's `view` is nothing but
 heap… the work that would let it — a value representation, an allocator, string and collection
 primitives, closures through an indirect call table, and a collector or a refcounting discipline —
-is the work that is missing on *both* targets." It still is. **138 of the corpus's 195 refusals are
-one shape**: a parameter that is a `Str`.
+is the work that is missing on *both* targets." It still is. **220 of the corpus's 225 refusals are
+one shape**: a parameter that lives on the heap. The other five are three definitions that *return*
+one, a `now`, and a definition generic over a type parameter.
 
 So this emitter is a foundation and not a feature, and the two rows say which. It is also why the
 tally is printed by its own test rather than gated: a threshold on a number nobody is optimising
