@@ -185,7 +185,56 @@ fn diff_positional(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &
     }
 }
 
+/// Reconcile a keyed child list, after trimming the ends the two lists **physically share**.
+///
+/// The reconciliation below costs the list: it hashes every key into a set, mirrors the client's
+/// children, and searches that mirror for each wanted key. That is the price of being handed two
+/// pages and asked what moved — whatever the engine knew about its own changes, the differ has to
+/// rediscover (`docs/23` §23.8).
+///
+/// What it need not rediscover is a child that is the **same allocation** in both lists at the same
+/// end. Since a page's children became shared handles, an untouched row is literally the node it
+/// was, so a run of them at the front or the back is common by pointer and can be skipped without
+/// being hashed, mirrored or searched. Everything between the two runs still goes through the full
+/// reconciliation, so this changes what the pass *costs* and never what it emits — which is the
+/// property `a_shared_page_and_a_copied_one_produce_the_same_ops` holds, by running both.
+///
+/// It is a constant factor and not a change of asymptote: the runs are still walked, one pointer
+/// comparison each. Making one event cost its own changes needs the engine to say what they were,
+/// which is [`docs/08`](../../../../../docs/08-roadmap.md) §8.5.4's open item.
 fn diff_keyed(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut Vec<Op>) {
+    let mut head = 0;
+    while head < old.len() && head < new.len() && Arc::ptr_eq(&old[head], &new[head]) {
+        head += 1;
+    }
+    let mut tail = 0;
+    while head + tail < old.len()
+        && head + tail < new.len()
+        && Arc::ptr_eq(&old[old.len() - 1 - tail], &new[new.len() - 1 - tail])
+    {
+        tail += 1;
+    }
+    diff_keyed_from(
+        &old[head..old.len() - tail],
+        &new[head..new.len() - tail],
+        head as u32,
+        path,
+        ops,
+    )
+}
+
+/// The reconciliation itself, over a window of the two child lists.
+///
+/// `base` is where that window starts in the client's children, so every index this emits is the
+/// index the client will see — the same contract the whole module keeps ("each index is valid
+/// against the DOM as it exists at that moment").
+fn diff_keyed_from(
+    old: &[Arc<Html>],
+    new: &[Arc<Html>],
+    base: u32,
+    path: &mut Path,
+    ops: &mut Vec<Op>,
+) {
     let wanted: HashSet<&str> = new.iter().filter_map(|c| c.key_of()).collect();
 
     // `cursor` mirrors the client's child list as the ops are applied, so every index emitted
@@ -199,7 +248,7 @@ fn diff_keyed(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut V
         } else {
             ops.push(Op::Remove {
                 path: path.clone(),
-                index: i as u32,
+                index: base + i as u32,
             });
             cursor.remove(i);
         }
@@ -211,11 +260,11 @@ fn diff_keyed(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut V
         match found {
             Some(0) => {}
             Some(offset) => {
-                let from = (j + offset) as u32;
+                let from = base + (j + offset) as u32;
                 ops.push(Op::Move {
                     path: path.clone(),
                     from,
-                    to: j as u32,
+                    to: base + j as u32,
                 });
                 let node = cursor.remove(j + offset);
                 cursor.insert(j, node);
@@ -223,14 +272,14 @@ fn diff_keyed(old: &[Arc<Html>], new: &[Arc<Html>], path: &mut Path, ops: &mut V
             None => {
                 ops.push(Op::Insert {
                     path: path.clone(),
-                    index: j as u32,
+                    index: base + j as u32,
                     html: (**want).clone(),
                 });
                 cursor.insert(j, want);
                 continue; // freshly inserted: nothing to diff against
             }
         }
-        path.push(j as u32);
+        path.push(base + j as u32);
         diff_node(cursor[j], want, path, ops);
         path.pop();
     }
@@ -461,6 +510,103 @@ mod tests {
         let ops = diff(&a, &b);
         assert!(matches!(ops.as_slice(), [Op::Replace { .. }]));
         assert_eq!(apply(&a, &ops), b);
+    }
+
+    /// **The same two pages, shared and copied, produce the same ops.**
+    ///
+    /// [`diff_keyed`] skips the runs of children the two lists hold as the *same allocation*, which
+    /// is a fact about how the page was assembled and not about what it contains. So the risk the
+    /// trim carries is precisely that it changes the answer — an index computed against a window
+    /// rather than the whole list, a move whose source is counted from the wrong place.
+    ///
+    /// `rehash` rebuilds a tree node for node, so the copy shares nothing and takes the full
+    /// reconciliation while the original takes the trimmed one. Every scenario below runs both and
+    /// requires the two op streams to be **equal**, and requires each to carry the client from the
+    /// old page to the new one. The unit tests above cannot do this job: they build every node
+    /// fresh, so nothing in them is ever shared and the trim never runs.
+    #[test]
+    fn a_shared_page_and_a_copied_one_produce_the_same_ops() {
+        fn shared(items: &[Arc<Html>]) -> Html {
+            let mut el = Html::el("ul");
+            for i in items {
+                el = el.child_shared(i.clone());
+            }
+            el
+        }
+        let pool: Vec<Arc<Html>> = (0..24)
+            .map(|i| Arc::new(li(&format!("k{i}"), &format!("item {i}"), i % 3 == 0)))
+            .collect();
+
+        // A deterministic walk over the shapes a page actually takes: prepend (the sketch's own),
+        // append, remove from either end and the middle, reorder, and an edit in place.
+        let mut seed = 0x5eedu64;
+        let mut rand = move |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n.max(1)
+        };
+        let mut exercised = 0usize;
+        for case in 0..200 {
+            let take = 4 + rand(16);
+            let old_rows: Vec<Arc<Html>> = pool.iter().take(take).cloned().collect();
+            let mut new_rows = old_rows.clone();
+            match case % 6 {
+                0 => new_rows.insert(0, pool[23].clone()),
+                1 => new_rows.push(pool[23].clone()),
+                2 => {
+                    if !new_rows.is_empty() {
+                        new_rows.remove(rand(new_rows.len()));
+                    }
+                }
+                3 => new_rows.reverse(),
+                4 => {
+                    if new_rows.len() > 2 {
+                        let n = new_rows.len();
+                        new_rows.swap(1, n - 1);
+                    }
+                }
+                _ => {
+                    // An edit in place: a *different* node under a key that stays, which is what
+                    // makes the trim stop rather than run to the end.
+                    let at = rand(new_rows.len());
+                    new_rows[at] = Arc::new(li(&format!("k{at}"), "edited", true));
+                }
+            }
+            let (old, new) = (shared(&old_rows), shared(&new_rows));
+            // The same two pages with nothing shared: `rehash` rebuilds every node.
+            let (old_copy, new_copy) = (old.rehash(), new.rehash());
+            assert_eq!(old, old_copy, "rehash must preserve the value, case {case}");
+
+            let trimmed = diff(&old, &new);
+            let full = diff(&old_copy, &new_copy);
+            assert_eq!(
+                trimmed, full,
+                "case {case}: trimming the shared ends changed the ops"
+            );
+            assert_eq!(
+                apply(&old, &trimmed),
+                new.rehash(),
+                "case {case}: round trip"
+            );
+            if old_rows
+                .first()
+                .zip(new_rows.first())
+                .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+                || old_rows
+                    .last()
+                    .zip(new_rows.last())
+                    .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+            {
+                exercised += 1;
+            }
+        }
+        // The control: if nothing had a shared end, the two sides above would be the same code
+        // path and this test would prove nothing.
+        assert!(
+            exercised > 100,
+            "only {exercised} of 200 cases shared an end, so the trim was barely exercised"
+        );
     }
 
     #[test]

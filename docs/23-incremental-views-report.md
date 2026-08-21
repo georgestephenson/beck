@@ -358,6 +358,39 @@ with. `incremental_engine.rs::one_event_allocates_a_handful_of_html_nodes_whatev
 is the gate, and it is counted by pointer identity rather than by a clock (§13.7): **9 new nodes on
 a 200-row page and 9 on a 1,600-row page, against 211 and 1,611 with the copy put back**.
 
+**And the render is only half of what the server does per event**, which this section did not say
+until the assembly stopped dominating it. `Feed::Dom` maintains the page *and* structurally diffs it
+against the one the client already holds, and both are on the interaction path:
+
+```
+   rows     render µs      diff µs     total µs  diff %
+     10            16            1           17      6%
+    100            30            6           36     17%
+   1000           163           71          234     30%
+   5000          1672         1036         2708     38%
+```
+
+`measure_incremental.rs::what_one_event_costs_the_runtime_end_to_end`. Before the children were
+shared the diff was the *smaller* half at every size; it is now comparable, because only one of the
+two got cheaper. A table showing the render alone was describing half the process.
+
+**The differ trims the ends the two pages physically share** — a run of children that are the same
+allocation in both needs no ops and no examination — which is worth 2–3× (203 µs → 71 µs at a
+thousand rows, 1,961 µs → 1,036 µs at five thousand) and is available only because a child is now a
+handle. `diff::tests::a_shared_page_and_a_copied_one_produce_the_same_ops` is the gate, and it is a
+**differential rather than an assertion**: every scenario runs twice, once shared and once through
+`rehash`, which rebuilds node by node and shares nothing, and the two op streams must be equal. The
+differ's other tests cannot do that job — they build every node fresh, so nothing in them is ever
+shared and the trim would never run.
+
+**What is left of the diff cannot be removed by a better differ**, and that is the argument rather
+than an excuse. The residue is `keyed`, which hashes every child's key into a set on both lists to
+decide whether the list reconciles by key at all — before any trim can help. Checking only the
+trimmed window would change which ops a mixed-key list produces, which is a worse trade than the
+constant factor is worth. Given two pages and nothing else, finding what moved means looking at what
+is there: whatever the engine knew about its own changes, the differ has to rediscover. That is the
+whole of §8.5.4's open item, stated from the other end.
+
 So the maintained view is **not** `O(δ)` end to end. It is `O(δ)` in the *elements it computes* and
 `O(n)` in the *page it assembles*, and the measured 4–37× is a constant factor on an unchanged
 asymptote rather than a change of asymptote. **A report that quoted "37× faster" without that

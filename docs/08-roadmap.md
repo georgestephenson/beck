@@ -515,7 +515,14 @@ rows.
   item as originally stated — the assembly is `n` refcounts rather than `n` copies, which is a
   smaller `n` and still an `n`. It is **F** rather than **S** because §23.8 says
   it is the same work Mode B's per-component kernel needs, so the item below inherits it; it sits
-  here for that reason. What it was missing was never a design — it was a **position**, and a piece
+  here for that reason. **Two measurements since have sharpened it rather than moved it.** A page's
+  children became shared handles, which took one event on a 5,000-row page from 14,827 µs to 697 µs
+  — and revealed that the *diff* is the other half of what the server pays per event (38–54% of it),
+  which §23.8's table had never shown. Trimming the ends the two pages share is worth another 2–3×,
+  and the rest of the diff is not a differ problem: deciding whether a list reconciles by key means
+  examining every child, so given two pages and nothing else, what moved has to be rediscovered.
+  Both halves of the remaining cost now point at the same fix, which is what an F item looks like
+  when its successors have been measured. What it was missing was never a design — it was a **position**, and a piece
   of work written down as "a known piece of work rather than an open question" in a report is
   exactly the shape §8.5's preamble says never comes due.
 - **Mode B's codegen: the heap on a wasm target** (S, and the item with a user in front of it).

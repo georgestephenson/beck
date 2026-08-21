@@ -1037,3 +1037,57 @@ fn what_answering_a_group_from_its_ends_saves() {
          \x20 the group's size and nothing else."
     );
 }
+
+/// What the **runtime** pays for one event, which is not what [`Engine::render`] costs.
+///
+/// §23.8's table measures the render alone. The server does two things per event: it maintains the
+/// page, and it structurally diffs the page against the one the client already has to produce the
+/// patch. Both are on the interaction path, and a table that shows one of them is describing half
+/// of what the process does.
+///
+/// The diff cannot be `O(δ)` on its own and that is not an implementation shortfall: given two
+/// pages and nothing else, finding what moved between them means looking at what is there.
+/// Whatever the engine already knows about its own changes, the differ has to rediscover.
+#[test]
+fn what_one_event_costs_the_runtime_end_to_end() {
+    let bench = Bench::new(support::todo_program());
+    let session = bench.runtime.session("ana");
+    let here = beck_core::edge::presence_of("ana");
+
+    println!(
+        "\n{:>7}  {:>12} {:>12} {:>12}  {:>6}",
+        "rows", "render µs", "diff µs", "total µs", "diff %"
+    );
+    for n in [10usize, 100, 1_000, 5_000] {
+        let state = bench.state_with(n);
+        let next = bench.add(&state, n as u64 + 1);
+
+        let (mut render, mut differ) = (u128::MAX, u128::MAX);
+        for _ in 0..5 {
+            let mut e = bench.engine();
+            let before = e.render(&state, &session, &here).expect("warm");
+            let t = Instant::now();
+            let after = e.render(&next, &session, &here).expect("step");
+            render = render.min(t.elapsed().as_micros());
+
+            let (Value::Html(before), Value::Html(after)) = (&before, &after) else {
+                panic!("a page is Html");
+            };
+            let t = Instant::now();
+            let ops = beck_core::diff::diff(before, after);
+            differ = differ.min(t.elapsed().as_micros());
+            assert!(!ops.is_empty(), "one added row is at least one op");
+        }
+        let total = render + differ;
+        println!(
+            "{n:>7}  {render:>12} {differ:>12} {total:>12}  {:>5.0}%",
+            100.0 * differ as f64 / total.max(1) as f64
+        );
+    }
+    println!(
+        "\n  render — `Engine::render`: the plan's operators, and assembling the page above them.\n  \
+         diff   — `beck_core::diff::diff` of the two pages, which is what `Feed::Dom` runs per\n  \
+         \x20        event to produce the patch the client applies.\n  \
+         Both grow with the collection. docs/23 §23.8 states the first and this states the second."
+    );
+}
