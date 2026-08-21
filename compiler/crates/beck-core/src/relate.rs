@@ -78,6 +78,24 @@
 //! of an empty one. For a total it is a [`crate::plan::Matching::Total`], and the difference is
 //! what a *missing* entry means: `list_sum` of no rows is `0`, so the probe answers with a value
 //! where the extremes answer with an absence.
+//!
+//! # The fifth shape, which is not a loop at all
+//!
+//! `filter_list(xs, lambda x: map_contains(m, k(x)))` and its negation are the algebra's
+//! **intersection** and **difference** by key — [`crate::plan::Op::Restrict`], §99.9 item 7 — and
+//! [`restriction`] is where they are read. The conditions are the same two conditions again: `m`
+//! reads only what the function captured, `k` reads only the element.
+//!
+//! What differs is *where* the shape is looked for, and the reason is what comes out of the
+//! operator. A join is recognised at a **site inside a body**, because a loop does other things
+//! besides look up and the body has to be rewritten around the row. A restriction has no body to
+//! rewrite: it keeps and drops the elements the filter was keeping and dropping, so the predicate
+//! is not rewritten, it is *deleted*. That is also why a `filter_list` can have this operator when
+//! it cannot have a join — a join's element is a row, and a filter's consumers read the element.
+//!
+//! The cost it removes is the same one, arrived at from the other side. A predicate that reads a
+//! collection is a different predicate whenever that collection moves, so [`crate::engine`]'s
+//! rebuild rule reconsiders every element on every event — a nested-loop anti-join with no index.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -86,7 +104,7 @@ use beck_diag::Span;
 
 use crate::check::Def;
 use crate::core::{free_vars, Arm, Core, CoreKind, Prim, VarId};
-use crate::plan::Agg;
+use crate::plan::{Agg, Presence};
 use crate::ty::{Tier, Ty};
 
 /// The two halves of a joined row, as the field names the rewritten body reads them by.
@@ -196,6 +214,25 @@ pub struct Recognised {
     pub row: VarId,
 }
 
+/// One membership test, as the restriction that answers it.
+///
+/// [`Lookup`]'s sibling, and the difference is what comes out: a lookup produces a *row* and this
+/// produces the element the filter was given, kept or dropped. So there is no rewritten body here
+/// — the operator has no per-element function beyond the key, because a predicate the index
+/// answers is not a predicate any more.
+pub struct Membership {
+    /// The collection whose keys decide, in the caller's variables: the first argument of the
+    /// `map_contains`.
+    pub over: Core,
+    /// The key to probe it by, as a function of the element. This is the `Fun` body of
+    /// [`crate::plan::Op::Restrict`].
+    pub key: Core,
+    /// The parameter `key` is written over — the filtered element.
+    pub param: VarId,
+    /// Which answer keeps the row: the predicate as written, or its negation.
+    pub keep: Presence,
+}
+
 /// Why a body that contained a `map_get` was not recognised as a join.
 ///
 /// §99.6's rule for the case inference cannot see: "compile it the slow way and *say so*". These
@@ -217,6 +254,12 @@ pub enum Refusal {
     ProjectionReadsMoreThanTheRow,
     /// Recognising it would not remove the capture that costs the rebuild, so it buys nothing.
     NothingSaved,
+    /// Nothing in the predicate asks another collection whether it holds a key, so there is no
+    /// difference and no intersection here.
+    NoMembership,
+    /// The predicate asks a collection whether it holds a key **and something else besides**, so
+    /// the filter is not the membership test — it contains one.
+    MembershipAndMore,
 }
 
 impl Refusal {
@@ -245,8 +288,17 @@ impl Refusal {
                     .into()
             }
             Refusal::NothingSaved => {
-                "rewriting it as a join would not remove what its function captured, so it would \
-                 cost an index and save nothing"
+                "rewriting it against an index would not remove what its function captured, so it \
+                 would cost an index and save nothing"
+                    .into()
+            }
+            Refusal::NoMembership => {
+                "its predicate asks no other collection whether it holds a key".into()
+            }
+            Refusal::MembershipAndMore => {
+                "its predicate asks another collection whether it holds a key and asks something \
+                 else as well, so the filter is not that question — splitting it into two \
+                 operators is a rewrite rather than a reading"
                     .into()
             }
         }
@@ -358,6 +410,107 @@ pub fn recognise(
         body,
         row,
     })
+}
+
+/// Try to read a filter's predicate as a **membership test** against another collection.
+///
+/// `filter_list(xs, lambda x: map_contains(m, k(x)))` is the intersection of `xs` with `m`'s keys
+/// and its negation is the difference — [`crate::plan::Op::Restrict`], and
+/// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7. The two
+/// conditions are [`recognise`]'s, for [`recognise`]'s reasons: `m` may read only what the function
+/// **captured**, so the collection is a node the plan can index once, and `k` may read only the
+/// **element**, so the probe is a function of the row alone.
+///
+/// What it does *not* share with [`recognise`] is the search. A join is recognised at a site
+/// *inside* a body, because a loop does other things as well as look up; a filter's predicate is
+/// the whole of what the operator computes, so a predicate that is a membership test **and
+/// something else** is not this shape at all. Splitting `p(x) and map_contains(m, k(x))` into two
+/// operators is a rewrite the fuser owns rather than a recognition, and it is named as absent in
+/// §99.10 rather than attempted here.
+pub fn restriction(
+    f: &Core,
+    defs: &BTreeMap<Arc<str>, Def>,
+    captured: &BTreeSet<VarId>,
+) -> Result<Membership, Refusal> {
+    let Some((elem, body)) = lambda(f, defs) else {
+        return Err(Refusal::NoMembership);
+    };
+    let mut fresh = 1 + max_var(&body).max(captured.iter().copied().max().unwrap_or(0));
+    let body = inline(&body, defs, &mut Vec::new(), &mut fresh, DEPTH);
+
+    // A predicate that *contains* a membership test without being one is told apart from a
+    // predicate that has nothing to do with one, because the two want opposite things said about
+    // them: the first is a program left at `O(n)` per event by a rewrite this does not do, which
+    // §99.9 item 5 is explicit is not a conservative choice, and the second is every ordinary
+    // filter in the tree.
+    let refuse = |c: &Core| match contains_membership(c, captured) {
+        true => Refusal::MembershipAndMore,
+        false => Refusal::NoMembership,
+    };
+
+    let mut lets = BTreeMap::new();
+    let mut at = peel(&body, &mut lets);
+    // One `not` and no more. Two would cancel, and a predicate written `not not c` is not a shape
+    // worth carrying a loop for — it is refused with the same sentence anything else gets.
+    let mut keep = Presence::In;
+    if let CoreKind::Prim {
+        op: Prim::Not,
+        args,
+    } = &at.kind
+    {
+        if args.len() != 1 {
+            return Err(refuse(&body));
+        }
+        keep = Presence::NotIn;
+        at = peel(&args[0].clone(), &mut lets);
+    }
+    let CoreKind::Prim {
+        op: Prim::MapContains,
+        args,
+    } = &at.kind
+    else {
+        return Err(refuse(&body));
+    };
+    if args.len() != 2 {
+        return Err(refuse(&body));
+    }
+
+    let over = resolve(&args[0], &lets, DEPTH);
+    let reads_over = reads(&over);
+    if reads_over.contains(&elem) || !reads_over.is_subset(captured) {
+        return Err(Refusal::CollectionReadsTheElement);
+    }
+    let key = resolve(&args[1], &lets, DEPTH);
+    if !reads(&key).is_subset(&BTreeSet::from([elem])) {
+        return Err(Refusal::KeyReadsMoreThanTheElement);
+    }
+    Ok(Membership {
+        over,
+        key,
+        param: elem,
+        keep,
+    })
+}
+
+/// Whether an expression asks a collection the plan could index whether it holds a key.
+///
+/// Not "whether there is a `map_contains`" — the collection has to be one the plan already has, or
+/// the answer would be about a map built per element and there would be nothing to index. That is
+/// the same first condition [`qualify`] applies, checked here only to decide which sentence a
+/// refusal carries.
+fn contains_membership(c: &Core, captured: &BTreeSet<VarId>) -> bool {
+    if let CoreKind::Prim {
+        op: Prim::MapContains,
+        args,
+    } = &c.kind
+    {
+        if args.len() == 2 && reads(&args[0]).is_subset(captured) {
+            return true;
+        }
+    }
+    children(c)
+        .into_iter()
+        .any(|child| contains_membership(child, captured))
 }
 
 /// One site, as the index that answers it — or the condition that failed.

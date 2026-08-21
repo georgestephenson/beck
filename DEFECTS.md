@@ -172,15 +172,23 @@ how many of its folds and pages compile natively (`docs/93`), and how many of it
 ([`docs/65`](docs/65-the-editor-report.md), twice).
 **Adding one program to `compiler/corpus/` changes every one of them, and nothing says so.**
 
-**It has already happened, three times, and each re-derivation found the last one stale.** The three
-figures were re-derived while `corpus/35-workload.beck` was being added and came back **963/137**,
-**208** and **362** *before* the new program — so 941, 195 and 353 had been wrong since the corpus
-program before that, in six places, through a merge. Program 36 found 963 in one document against 968
-in three. Program 37 found the WebAssembly denominator reading **195**, **213** and **220** in four
-places — three numbers for one quantity — and [`docs/65`](docs/65-the-editor-report.md)'s rename
-figure fifty names light, because the test that derives it kept the number in a *comment*: the
-assertion beside it has a floor of 250, so nothing went red and nothing printed. That test prints its
-tally now. This tree reads **975/143**, **225** and **382**.
+**It has already happened, four times.** The three figures were re-derived while
+`corpus/35-workload.beck` was being added and came back **963/137**, **208** and **362** *before* the
+new program — so 941, 195 and 353 had been wrong since the corpus program before that, in six places,
+through a merge. Program 36 found 963 in one document against 968 in three. Program 37 found the
+WebAssembly denominator reading **195**, **213** and **220** in four places — three numbers for one
+quantity — and [`docs/65`](docs/65-the-editor-report.md)'s rename figure fifty names light, because
+the test that derives it kept the number in a *comment*: the assertion beside it has a floor of 250,
+so nothing went red and nothing printed. That test prints its tally now.
+
+**Program 38 is the first re-derivation that found nothing stale**, and that is the entry's own
+argument rather than a reason to close it: the figures were re-read with the new program held out of
+the corpus and came back **975/143**, **225**, **382** and **366 of 376** — exactly what the
+documents said. What made this one clean is that the last two re-derivations left every figure
+printed by a test rather than kept in a comment, so the cost was reading five outputs instead of
+finding out which of three numbers was current. The cost is still a person remembering to look, and
+that is what the gate below is for. This tree reads **982/143**, **232**, **393** and **377 of
+387**.
 
 **Why it is a defect rather than untidiness.** The numbers are the evidence for claims a reader acts
 on: 975-of-1118 is what "the heap is whole" is worth, and the tier table is Phase 2's exit

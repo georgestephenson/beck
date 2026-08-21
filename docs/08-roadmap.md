@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **975 definitions compiled against 143 refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **982 definitions compiled against 143 refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -462,8 +462,18 @@ rows.
   added in, so `list_sum` is the exact total over `Int`, raises only when that total leaves `Int`,
   and has no `Float` form at all (§99.9 item 6). `Agg::Sum` keeps a running total and no multiset,
   so `corpus/37-ledger.beck` shows every account's balance in **47 backend steps at 200 postings and
-  at 1,600, against 2,060 and 16,060** with the operator switched off. What is left, in §99.9's
-  order: `distinct` and difference, fusion for the new operators, and the read-model SQL compiling
+  at 1,600, against 2,060 and 16,060** with the operator switched off. **And the difference has
+  taken it, which needed nothing added to the language at all**: `map_contains` was already a
+  primitive, so `filter_list(xs, lambda x: not map_contains(m, k(x)))` is the difference by key
+  written out and its mirror is the intersection, and `Op::Restrict` is the one binary operator
+  whose *output is one of its inputs* — which is what lets a `filter_list` have it where the rule
+  that a join's element is a row says a `filter_list` may not have a join. `corpus/38-backorders.beck`
+  shows the orders for something in stock and the orders for something not in **134 backend steps
+  at 200 orders and at 1,600, against 10,064 and 80,064** with the operator switched off, measured
+  on a *delivery* rather than on an order because the left-hand half was never what cost anything
+  (§99.9 item 7). What is left, in §99.9's order: `distinct` — for which the arrangement is already
+  built and the **spelling** is the open decision, since the library has two duplicate-dropping
+  functions with different answers — fusion for the new operators, and the read-model SQL compiling
   into the plan. This was a Phase 4 bullet from the
   day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list,
   which is the same defect §8.5 opens by describing one level down — a phase is not a position. It
@@ -532,7 +542,7 @@ rows.
   exactly the shape §8.5's preamble says never comes due.
 - **Mode B's codegen: the heap on a wasm target** (S, and the item with a user in front of it).
   The emitter is written and the scalar subset compiles, in a real engine, against the
-  tree-walker ([`103`](103-the-wasm-emitter-report.md)) — and it compiles **0 of the corpus's 225
+  tree-walker ([`103`](103-the-wasm-emitter-report.md)) — and it compiles **0 of the corpus's 232
   definitions**, because an application is records, lists and a page. What is left is therefore one
   thing and it is the big one: a value representation in linear memory, string and collection
   primitives, closures through an indirect call table, and §5.1's unanswered choice between the GC

@@ -695,6 +695,228 @@ fn a_bid_between_the_ends_does_not_re_render_the_page() {
     );
 }
 
+/// A **difference** is maintained from both sides, and the events a generated log reaches only by
+/// luck are written out.
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7.
+/// `corpus/38-backorders.beck` shows the orders for something in stock and the orders for something
+/// not, and what can go wrong is what happens on the **right**: an index entry decides which list a
+/// row is on without anything about the row moving.
+///
+///   * an item is **stocked**, so several orders leave one list and appear on the other at once —
+///     an operator maintained only from the left is correct until this event and silently stale
+///     after it;
+///   * an item is **delisted**, so rows this operator dropped come back. It is not holding them, so
+///     they have to be read back from the collection that is;
+///   * an order is **amended while it is waiting**, so what comes back is the order as it is now
+///     rather than as it was when it was dropped — the one failure a cached value would produce and
+///     a generated log would need a key collision to reach;
+///   * an order is **cancelled while it is ready**, and then its item delisted, so a row that left
+///     the left side must not be resurrected by a change on the right;
+///   * an order is **placed for something already in stock**, so the left-hand insert meets an
+///     index that answers rather than one that does not;
+///   * an item is **stocked that nobody ordered**, which must move nothing at all.
+///
+/// The closing assertion is on the end state, because a green run over a log that only ever stocked
+/// things says nothing: two of the three surviving orders arrived after the item did, and one of
+/// them was amended while it was off the page.
+#[test]
+fn a_maintained_difference_survives_the_events_that_move_it_from_the_right() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/38-backorders.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let mut subject = Subject::new(
+        "corpus/38-backorders.beck",
+        compile("38-backorders.beck", &src),
+    );
+
+    let event = |variant: &str, fields: Vec<(&str, Value)>| {
+        Value::data(
+            Arc::from("Event"),
+            Some(Arc::from(variant)),
+            beck_core::core::Fields::from_iter(fields.into_iter().map(|(k, v)| (Arc::from(k), v))),
+        )
+    };
+    let placed = |id: &str, customer: &str, sku: &str, qty: i64| {
+        event(
+            "Placed",
+            vec![
+                ("id", Value::str_(id)),
+                ("customer", Value::str_(customer)),
+                ("sku", Value::str_(sku)),
+                ("qty", Value::Int(qty)),
+            ],
+        )
+    };
+    let amended = |id: &str, qty: i64| {
+        event(
+            "Amended",
+            vec![("id", Value::str_(id)), ("qty", Value::Int(qty))],
+        )
+    };
+    let cancelled = |id: &str| event("Cancelled", vec![("id", Value::str_(id))]);
+    let stocked = |sku: &str| {
+        event(
+            "Stocked",
+            vec![("sku", Value::str_(sku)), ("name", Value::str_(sku))],
+        )
+    };
+    let delisted = |sku: &str| event("Delisted", vec![("sku", Value::str_(sku))]);
+
+    let log = vec![
+        placed("o1", "ana", "fig", 2),
+        placed("o2", "bo", "fig", 1),
+        placed("o3", "cy", "pear", 4),
+        // Two orders move on one entry, and the third does not.
+        stocked("fig"),
+        amended("o1", 9),
+        // And back, which is where the values have to come from somewhere.
+        delisted("fig"),
+        amended("o2", 7),
+        cancelled("o3"),
+        // An entry nobody is waiting on any more.
+        stocked("pear"),
+        stocked("fig"),
+        // A row that leaves the left side while the index answers, and the entry that answered it
+        // going afterwards.
+        cancelled("o1"),
+        delisted("fig"),
+        placed("o4", "di", "fig", 3),
+        stocked("fig"),
+        // The left-hand insert that meets an index which already answers.
+        placed("o5", "ed", "fig", 5),
+    ];
+
+    let mut compared = subject.agrees("the empty log");
+    for (i, e) in log.into_iter().enumerate() {
+        subject.fold(e);
+        compared += subject.agrees(&format!("event {}", i + 1));
+    }
+    assert!(compared >= 32, "only {compared} pages were compared");
+
+    let page = subject
+        .runtime
+        .view(&subject.state, ACTORS[0])
+        .expect("recompute")
+        .render();
+    assert!(
+        page.contains("ready: 3") && page.contains("waiting: 0") && page.contains("bo wants 7 fig"),
+        "the log this test is written around no longer ends with a rebuilt list whose rows outlived \
+         being dropped:\n{page}"
+    );
+}
+
+/// **An index entry nobody is waiting on re-renders nothing.**
+///
+/// [`a_bid_between_the_ends_does_not_re_render_the_page`]'s property, arrived at from the other
+/// operator: a change on the right of a [`beck_core::plan::Op::Restrict`] reaches the rows waiting
+/// on its key through the reverse index, so a key with no rows waiting stops there. Stocking
+/// something nobody has ordered moves neither list, and nothing below either of them runs.
+///
+/// This is the half of the bilinear rule that a cost measured on the *left* cannot see, and it is
+/// what separates the operator from a `filter_list` whose predicate reads the stock: that one
+/// reconsiders every order on every delivery, whether or not any order cared.
+///
+/// Measured as a difference between two events on the same program rather than against a constant,
+/// for [`a_bid_between_the_ends_does_not_re_render_the_page`]'s reason.
+#[test]
+fn stocking_something_nobody_ordered_re_renders_nothing() {
+    use beck_core::plan::Plan;
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/38-backorders.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let placed = compile("38-backorders.beck", &src);
+    let backend = beck_eval::backend(&placed);
+    let plan = Arc::new(Plan::compile(&placed));
+    let prepared = Arc::new(Prepared::new(plan, backend.as_ref()).expect("the plan prepares"));
+    let runtime = Runtime::new(placed, backend).expect("the program prepares");
+
+    let event = |variant: &str, fields: Vec<(&str, Value)>| {
+        Value::data(
+            Arc::from("Event"),
+            Some(Arc::from(variant)),
+            beck_core::core::Fields::from_iter(fields.into_iter().map(|(k, v)| (Arc::from(k), v))),
+        )
+    };
+
+    // Two orders, both for `fig`. Stocking `fig` moves them; stocking anything else does not.
+    let cost_of_stocking = |sku: &str| -> beck_core::engine::Work {
+        let mut engine = Engine::new(prepared.clone());
+        let session = runtime.session(ACTORS[0]);
+        let here = beck_core::edge::presence_of(ACTORS[0]);
+        let mut state = runtime.initial_state().expect("an initial accumulator");
+        let mut seq = 0u64;
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: Instant(seq as i64),
+                actor: ACTORS[0].to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("folds")
+        };
+        for body in [
+            event(
+                "Placed",
+                vec![
+                    ("id", Value::str_("o1")),
+                    ("customer", Value::str_("ana")),
+                    ("sku", Value::str_("fig")),
+                    ("qty", Value::Int(2)),
+                ],
+            ),
+            event(
+                "Placed",
+                vec![
+                    ("id", Value::str_("o2")),
+                    ("customer", Value::str_("bo")),
+                    ("sku", Value::str_("fig")),
+                    ("qty", Value::Int(1)),
+                ],
+            ),
+        ] {
+            seq += 1;
+            state = fold(&state, body, seq);
+        }
+        engine.render(&state, &session, &here).expect("renders");
+        seq += 1;
+        state = fold(
+            &state,
+            event(
+                "Stocked",
+                vec![("sku", Value::str_(sku)), ("name", Value::str_("a thing"))],
+            ),
+            seq,
+        );
+        engine.render(&state, &session, &here).expect("renders");
+        engine.work()
+    };
+
+    let wanted = cost_of_stocking("fig");
+    let unwanted = cost_of_stocking("pear");
+    println!(
+        "stocking what two orders want: {} recomputed, {} touched; stocking what nobody wants: {} \
+         recomputed, {} touched",
+        wanted.recomputed, wanted.touched, unwanted.recomputed, unwanted.touched
+    );
+    assert!(
+        unwanted.recomputed < wanted.recomputed,
+        "stocking something nobody ordered cost {} recomputes and stocking something two orders \
+         wanted cost {} — so the operator published a change for rows that did not move, and every \
+         subscriber reassembled a page identical to the one it had",
+        unwanted.recomputed,
+        wanted.recomputed
+    );
+    assert_eq!(
+        unwanted.touched, 1,
+        "stocking something nobody ordered touched {} arrangement entries; one is the \
+         `map_values` diff of the accumulator's own map, and anything more is an operator below \
+         the difference reacting to a key nobody was waiting on",
+        unwanted.touched
+    );
+}
+
 /// Fold one `Added` event into the sketch's accumulator.
 fn fold_added(runtime: &Runtime, state: &Value, n: u64, actor: &str) -> Value {
     let id = Value::data(

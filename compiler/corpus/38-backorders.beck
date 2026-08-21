@@ -1,0 +1,210 @@
+# The program whose page is a *difference* (docs/99 §99.9 item 7).
+#
+# Every other program here that relates two collections asks the second one a question and shows the
+# answer: 34 shows who an issue is assigned to, 35 how many issues name a person, 36 and 37 what a
+# group's rows add up to. This one asks the second collection nothing at all. It asks only
+# **whether it holds the key**, and the answer decides which of two lists the row is on — which is
+# the algebra's difference and the intersection beside it, and the one row of docs/99 §99.4 that had
+# no operator.
+#
+# What that costs when nobody recognises it is 27's defect arrived at from another direction: a
+# predicate that reads `s.stock` is a *different predicate* whenever anything is stocked, so one
+# delivery reconsiders every order ever placed. The shape is a `filter_list` rather than a loop, so
+# the join could not take it — a join's element is a row, and a filter's consumers read the element.
+#
+# Four shapes, on purpose:
+#
+#   * **both halves of the partition**, ready and waiting, so the operator that keeps a row when the
+#     index answers and the one that keeps it when the index does not are one delta rule read twice
+#     — and the two of them index the stock **once**;
+#   * **many orders on one sku**, so what waits on a key is a set rather than an entry, and stocking
+#     one item moves several orders at once while visiting no order that wants something else. This
+#     is the interesting half of the bilinear rule (docs/99 §99.5), which is the half no test over a
+#     single collection can see: nothing about those orders moved;
+#   * an item **delisted**, which is that delta with the sign flipped — rows this operator dropped
+#     come back, and they have to come back with their values, which the operator is not holding;
+#   * an order **amended while it is waiting**, so the value that comes back is the one the order has
+#     now rather than the one it had when it was dropped.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model State:
+    orders: Map[Str, Order]
+    stock: Map[Str, Item]
+
+model Order:
+    id: Str
+    customer: Str
+    sku: Str
+    qty: Int
+
+model Item:
+    sku: Str
+    name: Str
+
+union Command:
+    Place(id: Str, customer: Str, sku: Str, qty: Int)
+    Amend(id: Str, qty: Int)
+    Cancel(id: Str)
+    Stock(sku: Str, name: Str)
+    Delist(sku: Str)
+
+union Event:
+    Placed(id: Str, customer: Str, sku: Str, qty: Int)
+    Amended(id: Str, qty: Int)
+    Cancelled(id: Str)
+    Stocked(sku: Str, name: Str)
+    Delisted(sku: Str)
+
+union Rejection:
+    Blank
+    NotPositive
+    NoSuchOrder
+    NoSuchItem
+    AlreadyStocked
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Placed(id, customer, sku, qty):
+            return s.with(orders=map_insert(s.orders, id,
+                                            Order(id=id, customer=customer, sku=sku, qty=qty)))
+        case Amended(id, qty):
+            match map_get(s.orders, id):
+                case Some(order):
+                    return s.with(orders=map_insert(s.orders, id, order.with(qty=qty)))
+                case None:
+                    return s
+        case Cancelled(id):
+            return s.with(orders=map_remove(s.orders, id))
+        case Stocked(sku, name):
+            return s.with(stock=map_insert(s.stock, sku, Item(sku=sku, name=name)))
+        case Delisted(sku):
+            return s.with(stock=map_remove(s.stock, sku))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Place(id, customer, sku, qty):
+            if str_is_empty(str_trim(customer)):
+                return Err(error=Blank)
+            if qty <= 0:
+                return Err(error=NotPositive)
+            return Ok(value=[Placed(id=id, customer=customer, sku=sku, qty=qty)])
+        case Amend(id, qty):
+            if not map_contains(s.orders, id):
+                return Err(error=NoSuchOrder)
+            if qty <= 0:
+                return Err(error=NotPositive)
+            return Ok(value=[Amended(id=id, qty=qty)])
+        case Cancel(id):
+            if not map_contains(s.orders, id):
+                return Err(error=NoSuchOrder)
+            return Ok(value=[Cancelled(id=id)])
+        case Stock(sku, name):
+            if map_contains(s.stock, sku):
+                return Err(error=AlreadyStocked)
+            return Ok(value=[Stocked(sku=sku, name=name)])
+        case Delist(sku):
+            if not map_contains(s.stock, sku):
+                return Err(error=NoSuchItem)
+            return Ok(value=[Delisted(sku=sku)])
+
+# The two questions, written the way anybody would write them: the orders for something we have,
+# and the orders for something we do not. No `except` and no `semi join` appear in this file, and
+# neither function mentions an index.
+def placed(s: State) -> list[Order]:
+    return sort_by(map_values(s.orders), lambda o: o.customer)
+
+def ready(orders: list[Order], stock: Map[Str, Item]) -> list[Order]:
+    return filter_list(orders, lambda o: map_contains(stock, o.sku))
+
+def waiting(orders: list[Order], stock: Map[Str, Item]) -> list[Order]:
+    return filter_list(orders, lambda o: not map_contains(stock, o.sku))
+
+def line(order: Order) -> Str:
+    return order.customer + " wants " + str(order.qty) + " " + order.sku
+
+def view(s: State, session: Session) -> Html:
+    orders = placed(s)
+    have = ready(orders, s.stock)
+    want = waiting(orders, s.stock)
+    return ui:
+        main:
+            h1: "orders"
+            h2: ("ready: " + str(list_len(have)))
+            ul:
+                for order in have:
+                    li(key=order.id):
+                        line(order)
+            h2: ("waiting: " + str(list_len(want)))
+            ul:
+                for order in want:
+                    li(key=order.id):
+                        line(order)
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, book, validate)
+book: Signal[State] = durable(fold(apply_event, State(orders={}, stock={}), events))
+page: Signal[Html] = per_session(book, view)
+
+test "an order for something we do not have is waiting":
+    given [Placed(id="o1", customer="ana", sku="fig", qty=2)]
+    expect page contains "ana wants 2 fig"
+    expect page contains "waiting: 1"
+    expect page contains "ready: 0"
+
+test "stocking the item moves the order across, and nothing about the order moved":
+    given [Placed(id="o1", customer="ana", sku="fig", qty=2)]
+    when Stock(sku="fig", name="figs")
+    expect page contains "ana wants 2 fig"
+    expect page contains "waiting: 0"
+    expect page contains "ready: 1"
+
+test "one delivery moves every order that wanted it and none that did not":
+    given [Placed(id="o1", customer="ana", sku="fig", qty=2),
+           Placed(id="o2", customer="bo", sku="fig", qty=1),
+           Placed(id="o3", customer="cy", sku="pear", qty=4)]
+    when Stock(sku="fig", name="figs")
+    expect page contains "ready: 2"
+    expect page contains "waiting: 1"
+    expect page contains "cy wants 4 pear"
+
+test "delisting an item puts its orders back, with what they are for":
+    given [Placed(id="o1", customer="ana", sku="fig", qty=2),
+           Placed(id="o2", customer="bo", sku="fig", qty=1),
+           Stocked(sku="fig", name="figs")]
+    when Delist(sku="fig")
+    expect page contains "waiting: 2"
+    expect page contains "ready: 0"
+    expect page contains "ana wants 2 fig"
+    expect page contains "bo wants 1 fig"
+
+test "an order amended while it was waiting comes back as it is now":
+    given [Placed(id="o1", customer="ana", sku="fig", qty=2),
+           Stocked(sku="fig", name="figs"),
+           Amended(id="o1", qty=9)]
+    when Delist(sku="fig")
+    expect page contains "ana wants 9 fig"
+    expect page contains "waiting: 1"
+
+test "an order cancelled while it was ready does not come back when the item is delisted":
+    given [Placed(id="o1", customer="ana", sku="fig", qty=2),
+           Stocked(sku="fig", name="figs"),
+           Cancelled(id="o1")]
+    when Delist(sku="fig")
+    expect page contains "waiting: 0"
+    expect page contains "ready: 0"
+
+test "amending an order that was never placed never reaches the log":
+    given []
+    when Amend(id="ghost", qty=1)
+    expect Err(error=NoSuchOrder)
+
+test "the page is the browser's job and the book of orders is the data tier's":
+    expect place(page) == client
+    expect place(book) == data
+    expect place(ready) == any
+    expect place(waiting) == any
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "orders"

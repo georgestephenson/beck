@@ -52,7 +52,7 @@ use beck_diag::Span;
 
 use crate::backend::{Backend, Callable, ExecError};
 use crate::core::Value;
-use crate::plan::{Agg, Fun, Matching, Op, OpId, Plan};
+use crate::plan::{Agg, Fun, Matching, Op, OpId, Plan, Presence};
 use crate::pmap::PMap;
 use crate::split::Placed;
 
@@ -592,6 +592,7 @@ impl Engine {
                 Op::IsEmpty => self.aggregate(up, id, cold, true)?,
                 Op::Join { key, matched } => self.join(up, id, key, *matched, cold)?,
                 Op::GroupBy { key, of, agg } => self.group_by(up, id, key, of, *agg, cold)?,
+                Op::Restrict { key, keep } => self.restrict(up, id, key, *keep, cold)?,
             }
         }
         Ok(())
@@ -1225,6 +1226,190 @@ impl Engine {
         // include it.
         self.work.materialised += rows.len() as u64;
         Ok(Value::List(Arc::new(rows)))
+    }
+
+    /// The rows one collection keeps because another one answers their key, or because it does
+    /// not — [`Op::Restrict`], and
+    /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7's
+    /// difference and its complement.
+    ///
+    /// [`Engine::join`]'s delta rule with one thing taken out and one thing put in. Taken out: the
+    /// probe returns a *bool*, so nothing is copied out of the index and no row is built. Put in:
+    /// a row this operator dropped is not in its arrangement, so when the index entry that dropped
+    /// it leaves, the value has to come from somewhere — and that somewhere is the **left input**,
+    /// which is holding it either as an arrangement or as the shadow [`Engine::feed`] keeps of a
+    /// plain list. So this operator's own state is a join key per left row and the reverse index,
+    /// and it never copies the collection it filters.
+    ///
+    /// Both passes are `O(δ log n)`. The right one is the half that cannot be got from a left-only
+    /// rule and cannot be seen by any test over one collection: an entry arriving in the index
+    /// takes exactly the rows waiting on its key out of a difference, and puts exactly those rows
+    /// into an intersection.
+    fn restrict(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        key: &Fun,
+        keep: Presence,
+        cold: bool,
+    ) -> Result<(), ExecError> {
+        let plan = self.prepared.plan.clone();
+        let left = plan.nodes[id].inputs[0];
+        let index = plan.nodes[id].inputs[1];
+        // [`Engine::join`]'s conditions, for [`Engine::join`]'s reasons.
+        let indexed = matches!(self.out_of(up, index)?, Out::Arr(_));
+        let rebuild = cold
+            || self.rebuilt_of(up, left)
+            || self.rebuilt_of(up, index)
+            || (!indexed && self.changed_of(up, index))
+            || key.captures.iter().any(|&c| self.changed_of(up, c));
+        let left_changes = self.feed(up, id, 0, left, rebuild)?;
+        let right_changes = if rebuild || !indexed || !self.changed_of(up, index) {
+            Vec::new()
+        } else {
+            self.changes_of(up, index)
+        };
+        if left_changes.is_empty() && right_changes.is_empty() && !rebuild {
+            self.cells[id].changed = false;
+            self.cells[id].changes.clear();
+            self.cells[id].rebuilt = false;
+            return Ok(());
+        }
+
+        let call = self.fun_of(id)?;
+        let captured = self.captures(up, key)?;
+        let mut arr = self.take_arrangement(id, rebuild);
+        if rebuild {
+            self.cells[id].positions.clear();
+            self.cells[id].back.clear();
+        }
+        let mut positions = std::mem::take(&mut self.cells[id].positions);
+        let mut back = std::mem::take(&mut self.cells[id].back);
+        let mut changes = Vec::new();
+        let mut touched: BTreeSet<Key> = BTreeSet::new();
+
+        for c in left_changes {
+            if let Some(was) = positions.remove(&c.key) {
+                withdraw(&mut back, &was[0], &c.key);
+            }
+            let kept = match &c.new {
+                Some(lv) => {
+                    let mut args = captured.clone();
+                    args.push(lv.clone());
+                    let jk = call(args)?;
+                    self.work.applications += 1;
+                    positions.insert(c.key.clone(), key_of(&jk));
+                    back.entry(jk.clone()).or_default().insert(c.key.clone());
+                    touched.insert(c.key.clone());
+                    keep.keeps(self.holds(up, index, &jk)?)
+                }
+                None => false,
+            };
+            if kept {
+                let lv = c.new.expect("kept means present");
+                let old = arr.entries.insert(c.key.clone(), lv.clone());
+                changes.push(Change {
+                    key: c.key,
+                    old,
+                    new: Some(lv),
+                });
+            } else if let Some(old) = arr.entries.remove(&c.key) {
+                changes.push(Change {
+                    key: c.key,
+                    old: Some(old),
+                    new: None,
+                });
+            }
+        }
+
+        // The index's key is the probe key, so several entries never share one here — but the
+        // change stream may still carry a key twice in a tick, and answering it once per key
+        // rather than once per change is what keeps the two operators' right-hand passes the same
+        // shape.
+        let moved: BTreeSet<Value> = right_changes
+            .iter()
+            .filter_map(|c| c.key.first().cloned())
+            .collect();
+        for jk in moved {
+            if !back.contains_key(&jk) {
+                continue;
+            }
+            let kept = keep.keeps(self.holds(up, index, &jk)?);
+            let waiting: Vec<Key> = back
+                .get(&jk)
+                .expect("checked just above")
+                .iter()
+                .cloned()
+                .collect();
+            for lk in waiting {
+                // A row the left pass already handled was probed *after* the index advanced, so it
+                // has the answer this pass would give it — [`Engine::join`]'s rule, unchanged.
+                if touched.contains(&lk) || arr.entries.contains_key(&lk) == kept {
+                    continue;
+                }
+                if kept {
+                    // The value the filter dropped, read back from whoever is holding it.
+                    let Some(lv) = self.left_value(up, id, left, &lk)? else {
+                        continue;
+                    };
+                    arr.entries.insert(lk.clone(), lv.clone());
+                    changes.push(Change {
+                        key: lk,
+                        old: None,
+                        new: Some(lv),
+                    });
+                } else if let Some(old) = arr.entries.remove(&lk) {
+                    changes.push(Change {
+                        key: lk,
+                        old: Some(old),
+                        new: None,
+                    });
+                }
+            }
+        }
+
+        self.cells[id].positions = positions;
+        self.cells[id].back = back;
+        self.publish(id, arr, changes, rebuild);
+        Ok(())
+    }
+
+    /// Whether an index holds a key at all — [`Engine::restrict`]'s probe.
+    ///
+    /// [`Engine::answer`]'s sibling, and what it does *not* do is the operator's cost argument:
+    /// nothing is read out of the index and nothing is copied, so a difference over a collection
+    /// of a million rows moves no value that is not already moving.
+    fn holds(&self, up: Option<Upstream<'_>>, index: OpId, jk: &Value) -> Result<bool, ExecError> {
+        Ok(match self.out_of(up, index)? {
+            Out::Arr(a) => a.entries.contains_key(&key_of(jk)),
+            // The decomposition only ever builds a `map_values` here, so this is the
+            // correct-for-a-plan-nobody-writes path rather than one the corpus takes.
+            Out::Val(Value::Map(m)) => m.get(jk).is_some(),
+            Out::Val(_) => false,
+        })
+    }
+
+    /// One left row's current value, from whoever is already holding it.
+    ///
+    /// [`Engine::restrict`] keeps no copy of its input, so this is where a row it dropped comes
+    /// back from. An arrangement holds it under the same key the change carried; a plain list has
+    /// no arrangement, and the shadow [`Engine::feed`] keeps in order to make deltas out of it is
+    /// keyed the same way.
+    fn left_value(
+        &self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        left: OpId,
+        lk: &Key,
+    ) -> Result<Option<Value>, ExecError> {
+        if let Out::Arr(a) = self.out_of(up, left)? {
+            return Ok(a.entries.get(lk).cloned());
+        }
+        Ok(self.cells[id]
+            .shadow
+            .first()
+            .and_then(|seen| seen.get(lk))
+            .cloned())
     }
 
     /// One value per group, maintained — [`Op::GroupBy`], and

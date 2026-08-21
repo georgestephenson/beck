@@ -227,7 +227,7 @@ fn a_loop_that_is_not_read_as_a_join_says_why_after_fusion() {
 
     let line = text
         .lines()
-        .find(|l| l.contains("not read as a join"))
+        .find(|l| l.contains("not read as a relational operator"))
         .unwrap_or_else(|| panic!("the loop pays for a lookup and does not say why:\n{text}"));
     assert!(
         line.contains("not an equi-join on the left row"),
@@ -236,7 +236,8 @@ fn a_loop_that_is_not_read_as_a_join_says_why_after_fusion() {
     // Beside the cost it explains, rather than somewhere else in the report: a reason a reader has
     // to go looking for is a reason they will not find.
     let (cause, cost_line) = (
-        text.lines().position(|l| l.contains("not read as a join")),
+        text.lines()
+            .position(|l| l.contains("not read as a relational operator")),
         text.lines().position(|l| l.contains("on every event")),
     );
     assert_eq!(
@@ -318,7 +319,7 @@ fn a_loop_that_filters_by_an_equality_is_a_join_answering_what_its_body_asked() 
     ));
     let line = text
         .lines()
-        .find(|l| l.contains("not read as a join"))
+        .find(|l| l.contains("not read as a relational operator"))
         .unwrap_or_else(|| panic!("the loop pays for a filter and does not say why:\n{text}"));
     assert!(
         line.contains("no key to arrange the collection by"),
@@ -501,6 +502,166 @@ fn two_lookups_by_the_same_key_share_one_index() {
         (2, 1),
         "two questions about one collection keyed the same way are two joins over **one** index: \
          {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+}
+
+/// **A filter that is a membership test is the difference; one that merely contains a membership
+/// test says so.**
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7. The
+/// recognition is deliberately narrower than the join's: a join is read at a *site inside* a body
+/// because a loop does other things besides look up, and a filter's predicate **is** the operator,
+/// so a predicate that asks a membership question and something else is not this shape.
+///
+/// Three cases, because a rule that recognised everything would pass the first alone and one that
+/// recognised nothing would pass the last two. The middle one is the case §99.9 item 5 is explicit
+/// about: a refusal that leaves a program at `O(n)` per event is the defect with a sentence
+/// attached, so the sentence has to name **which** condition failed rather than the one the shape
+/// happens to share with every other filter in the tree.
+#[test]
+fn a_predicate_that_is_a_membership_test_is_the_operator_and_one_that_contains_it_is_not() {
+    use beck_core::plan::{Op, Plan};
+
+    let restricted = |name: &str, body: &str| -> bool {
+        Plan::compile(&ok(name, &capturing(body)))
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Restrict { .. }))
+    };
+
+    assert!(
+        restricted(
+            "membership.beck",
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return filter_list(map_keys(s.items), lambda k: map_contains(s.items, k))\n",
+        ),
+        "a filter whose predicate asks a captured collection whether it holds a key is the \
+         intersection by key"
+    );
+
+    // The same question with one more clause. The reason has to name *that*, because every other
+    // condition this shape could fail is one it shares with an ordinary filter.
+    let and_more = ok(
+        "and-more.beck",
+        &capturing(
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return filter_list(map_keys(s.items), \
+                                    lambda k: not str_is_empty(k) and map_contains(s.items, k))\n",
+        ),
+    );
+    assert!(
+        !Plan::compile(&and_more)
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Restrict { .. })),
+        "a predicate that asks a membership question and something else was read as the \
+         membership question alone, which is a different filter"
+    );
+    let text = cost(&and_more);
+    let line = text
+        .lines()
+        .find(|l| l.contains("not read as a relational operator"))
+        .unwrap_or_else(|| panic!("the filter pays for a capture and does not say why:\n{text}"));
+    assert!(
+        line.contains("asks something else as well"),
+        "the reason names the wrong condition: {line:?}"
+    );
+
+    // And the probe key: a membership test whose key is not a function of the element is not an
+    // index probe, so the collection would have to be scanned to answer it.
+    let elsewhere = ok(
+        "key-elsewhere.beck",
+        &capturing(
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return filter_list(map_keys(s.items), \
+                                    lambda k: map_contains(s.items, session.actor))\n",
+        ),
+    );
+    assert!(
+        !Plan::compile(&elsewhere)
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Restrict { .. })),
+        "a probe key that reads the session rather than the element was read as an index probe"
+    );
+}
+
+/// **A difference and the intersection beside it are one index and no rows.**
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7, and the two
+/// halves of the claim that let a `filter_list` be rewritten at all when a `map_list` is what
+/// becomes a join.
+///
+/// The first is §99.5 decision 4 again: `corpus/38-backorders.beck` asks the stock two opposite
+/// questions and they are answered from **one** `map_values`, by the hash-consing that was already
+/// there.
+///
+/// The second is the operator's reason for existing. A [`beck_core::plan::Op::Join`] emits a *row*,
+/// so a `filter_list` rewritten into one would need a projection underneath it to give its
+/// consumers back the element they read — and that projection is an operator per element, per
+/// event, undoing what the rewrite just did. [`beck_core::plan::Op::Restrict`] emits the left
+/// element, so the plan gains **no** loop it did not already have: the assertion is that the
+/// recognised plan has exactly the per-element operators the refused one has, which is what
+/// "no representational change at all" means when it is counted rather than said.
+#[test]
+fn a_difference_and_the_intersection_beside_it_are_one_index_and_no_rows() {
+    use beck_core::plan::{Op, Plan, Presence, Relate};
+
+    let placed = corpus("38-backorders.beck");
+    let plan = Plan::compile(&placed);
+
+    let restricts: Vec<(usize, Presence)> = plan
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, n)| match n.op {
+            Op::Restrict { keep, .. } => Some((i, keep)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        restricts.iter().map(|&(_, k)| k).collect::<Vec<_>>(),
+        vec![Presence::In, Presence::NotIn],
+        "the program asks the stock whether it holds a key and whether it does not: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+    let indexes: Vec<usize> = restricts
+        .iter()
+        .map(|&(i, _)| plan.nodes[i].inputs[1])
+        .collect();
+    assert_eq!(
+        indexes[0],
+        indexes[1],
+        "the two halves of the partition built two indexes over one collection: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+    assert!(
+        matches!(plan.nodes[indexes[0]].op, Op::MapValues),
+        "the index is not the `map_values` arrangement the collection already had"
+    );
+    for &(i, _) in &restricts {
+        let captures = plan.nodes[i].op.funs()[0].captures.len();
+        assert_eq!(
+            captures, 0,
+            "the probe key captured {captures} operators, so it is not a function of the element \
+             alone and the operator is not `O(δ)`"
+        );
+    }
+
+    // The half that says the operator is not a join wearing a different name.
+    let loops = |relate: Relate| -> usize {
+        Plan::compile_with(&placed, relate)
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.op, Op::MapList { .. } | Op::FlatMap { .. }))
+            .count()
+    };
+    assert_eq!(
+        loops(Relate::Recognise),
+        loops(Relate::Refuse),
+        "recognising the difference added a per-element operator the program did not write, which \
+         is the projection a join would need to give a filter's consumers back their element: {:?}",
         plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
     );
 }
