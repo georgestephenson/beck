@@ -215,6 +215,15 @@ pub fn dispatch(
                 Proposed::Refused { why } => {
                     serde_json::json!({ "accepted": false, "why": why })
                 }
+                // D30: folded here, and the browser is told so rather than left to infer it. The
+                // flag is what stops `beck-mode-b.js` queueing and posting something the server
+                // has no decoder for and no business seeing.
+                Proposed::Folded { dom: ops } => {
+                    let mut out = dom(ops, seq);
+                    out["accepted"] = serde_json::Value::Bool(true);
+                    out["local"] = serde_json::Value::Bool(true);
+                    out
+                }
             })
         }
         // What a browser stores so that a reload is not a fresh start (D7 rung 2).

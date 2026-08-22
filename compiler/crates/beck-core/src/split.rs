@@ -124,7 +124,7 @@ impl Placed {
             validate: lam(2, unit()),
             fold: lam(2, Core::new(CoreKind::Var(0), Ty::unit(), span)),
             init: unit(),
-            view: lam(5, unit()),
+            view: lam(6, unit()),
             state_ty: Ty::unit(),
             event_ty: Ty::unit(),
             command_ty: Ty::unit(),
@@ -139,6 +139,7 @@ impl Placed {
             view_reads_presence: false,
             awareness: None,
             view_reads_freshness: false,
+            gestures: None,
         };
         let render = crate::render::Decision::of(&roles, &program.defs, false, None, span);
         Placed {
@@ -221,6 +222,44 @@ pub struct Roles {
     /// Whether the page reads `freshness()`, and therefore has an input only a Mode B client can
     /// answer with anything but `Confirmed`.
     pub view_reads_freshness: bool,
+    /// `gestures(step, init)`'s two halves, when the page reads a non-durable fold: D30's
+    /// client-local accumulator.
+    ///
+    /// A role for [`Roles::awareness`]'s reason and a different one: there is no signal to read it
+    /// from, because the stream it folds is one client's and the graph has nothing on that side of
+    /// the seam. The runtime holds the accumulator per connection, applies `step` to each gesture,
+    /// and hands the view what it has. `None` for every program that keeps no interface state,
+    /// which is every program written before D30.
+    pub gestures: Option<GestureRole>,
+}
+
+/// `G` from a `gestures` step function's type, `(S, G) -> S`.
+///
+/// The gesture union is what a handler in the page must construct to reach this fold, so the
+/// checker and the `ui:` lowering both need it by name and neither can read it off the accumulator.
+/// A step whose type is not a two-parameter function cannot reach here — the prelude's scheme is
+/// what admits the application — so the fallback is unreachable rather than a default.
+fn gesture_ty(step: &Core) -> Ty {
+    match &step.ty {
+        Ty::Fun(params, _, _) if params.len() == 2 => params[1].clone(),
+        _ => Ty::unit(),
+    }
+}
+
+/// The two halves of a `gestures(step, init)`, and the type they accumulate.
+#[derive(Clone, Debug)]
+pub struct GestureRole {
+    /// `(S, G) -> S`. The bare gesture and not an `Envelope[G]`: a gesture has no position in the
+    /// total order, so there is no envelope to give it (`prelude`'s note on the primitive).
+    pub step: Core,
+    /// The accumulator before any gesture — and what the *server* renders against, because a
+    /// server has seen none. `render` refuses Mode A to a page that reads this, so the constant is
+    /// unobservable for the same reason `freshness()`'s `Confirmed` is.
+    pub init: Core,
+    /// `S`, the accumulator's type.
+    pub ty: Ty,
+    /// `G`, the gesture union's type — what a handler must construct to reach this fold.
+    pub gesture_ty: Ty,
 }
 
 impl Roles {
@@ -252,9 +291,9 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let states = graph.states();
     if states.is_empty() {
         // A program whose only accumulator is a fold *nobody wrapped* is not a program that forgot
-        // the log — it is a program that reached for D1's non-durable fold, which is decided and
-        // unbuilt. Saying "no durable state" to that author sends them to add `durable`, which is
-        // the opposite of what they asked for.
+        // the log — it is a program that reached for D1's non-durable fold. Saying "no durable
+        // state" to that author sends them to add `durable`, which is the opposite of what they
+        // asked for. D30 built the construct, so this now names it rather than apologising for it.
         if let Some(fold) = graph
             .find(|o| matches!(o, Op::Fold { .. }))
             .into_iter()
@@ -269,22 +308,25 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
                 Diagnostic::error(
                     "B0519",
                     format!(
-                        "`{}` is a non-durable fold, which is not built yet",
+                        "`{}` folds the log's own stream, so it has to be `durable`",
                         graph.label(fold)
                     ),
                     graph.node(fold).span,
                 )
-                .with_primary_label("a fold that is not `durable` has nowhere to keep its accumulator")
+                .with_primary_label(
+                    "a fold over the log's stream, with nowhere to keep what it folds",
+                )
                 .with_note(
-                    "`docs/10` D1 provides for this — \"high-churn ephemera get non-durable folds, \
-                     same semantics, no log persistence\" — and it is decided rather than built. \
-                     What is missing is not the plumbing: an accumulator outside the log is not a \
-                     function of the log, so what the state digest covers and what a replay has to \
-                     reproduce are the questions in front of it (`DEFECTS.md::non-durable-fold`)",
+                    "this stream is the log's, so its accumulator *is* a function of the log \
+                     whatever it is called — every event on it was validated and recorded, and \
+                     replay would reproduce this state whether or not the program asked for it. \
+                     D30's rule is that ephemerality comes from the stream: a fold that should not \
+                     survive a restart folds gestures, which are never recorded, rather than \
+                     declining to persist events that were",
                 )
                 .with_fix(
-                    "until then: `durable(fold(…))` if the state should survive a restart, or hold \
-                     it in the page's own markup if it should not",
+                    "`durable(fold(…))` if this is state the log should reproduce; \
+                     `gestures(step, init)` if it is interface state one client keeps to itself",
                 ),
             );
             return None;
@@ -421,6 +463,46 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         return None;
     }
 
+    // The same rule, for D30's non-durable fold — and here it is not a near miss but the whole
+    // point of the construct. A gesture is never proposed, so no `validate` ever saw one; it is
+    // never recorded, so no replay can reach one. A chokepoint deciding from interface state would
+    // make an event's existence depend on whether somebody had a panel open, which is exactly the
+    // dependency D30 exists to make impossible.
+    if let Some(&g) = graph
+        .gestures()
+        .iter()
+        .find(|&&g| reaches(&graph, decide, g))
+    {
+        diags.push(
+            Diagnostic::error(
+                "B0523",
+                "the chokepoint reads a `gestures` fold, which is not in the log",
+                graph.node(decide).span,
+            )
+            .with_primary_label(format!(
+                "`{}` decides from `{}`",
+                graph.label(decide),
+                graph.label(g)
+            ))
+            .with_label(
+                graph.node(g).span,
+                "interface state one client keeps to itself",
+            )
+            .with_note(
+                "a gesture is not proposed, not validated and not recorded — it never leaves the \
+                 client that made it. An event whose existence depended on one could not be \
+                 replayed, because there is nothing to replay: the log holds no trace that the \
+                 gesture happened",
+            )
+            .with_fix(
+                "if this interface state should decide an event, it is not interface state — propose \
+                 a command when it changes and decide from the fold over the events that produces \
+                 (`docs/10` D30's fifth home)",
+            ),
+        );
+        return None;
+    }
+
     // The same rule, for the other source that is not the log. `freshness()` is a client's account
     // of what it has not heard back about yet, so a `validate` deciding from it would decide from
     // the network — and on replay there is no network and nothing is pending.
@@ -534,6 +616,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let presence_var = vars.fresh();
     let awareness_var = vars.fresh();
     let freshness_var = vars.fresh();
+    let gestures_var = vars.fresh();
 
     let state_roles: Vec<StateRole> = folds
         .iter()
@@ -556,6 +639,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         presence_var,
         awareness_var,
         freshness_var,
+        gestures_var,
         bound: BTreeMap::new(),
         lets: Vec::new(),
         inlined: Vec::new(),
@@ -564,6 +648,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         reads_presence: false,
         awareness: None,
         reads_freshness: false,
+        gestures: None,
         vars: &mut vars,
         diags,
     };
@@ -575,6 +660,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
     let reads_presence = slicer.reads_presence;
     let awareness = slicer.awareness.clone();
     let reads_freshness = slicer.reads_freshness;
+    let gestures = slicer.gestures.clone();
 
     let state_ty = if fused {
         Ty::con(FUSED_STATE)
@@ -590,6 +676,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
                 presence_var,
                 awareness_var,
                 freshness_var,
+                gestures_var,
             ]
             .into(),
             body: Arc::new(view_body),
@@ -607,6 +694,12 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
                     .map(|(_, ty)| ty.clone())
                     .unwrap_or_else(|| Ty::map(Ty::str_(), Ty::unit())),
                 Ty::con("Freshness"),
+                // The client-local accumulator, `()` when the page keeps none — the same rule as
+                // the roster above, and for the same reason: one arity per role.
+                gestures
+                    .as_ref()
+                    .map(|g| g.ty.clone())
+                    .unwrap_or_else(Ty::unit),
             ],
             Ty::html(),
         ),
@@ -719,6 +812,52 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         .map(|_| Ty::con("Command"))
         .unwrap_or_else(Ty::unit);
 
+    // D30: a handler in the page carries a *constructor*, and the client routes on its variant
+    // name — a name in the gesture union folds locally, a name in the command union goes up the
+    // socket. A name in both would be a page whose buttons do one thing or the other depending on
+    // which decoder ran first, so the two unions must not share one. This is the only new rule the
+    // construct needs that placement did not already give it.
+    if let Some(g) = graph.gestures().first() {
+        let gesture_ty = match &graph.node(*g).op {
+            Op::Gestures { step, .. } => gesture_ty(step),
+            _ => unreachable!("found by op"),
+        };
+        let names = |ty: &Ty| -> Vec<Arc<str>> {
+            match ty.con_name().and_then(|n| program.types.get(n)) {
+                Some(crate::ty::TyDecl::Union { variants, .. }) => {
+                    variants.iter().map(|v| v.name.clone()).collect()
+                }
+                _ => Vec::new(),
+            }
+        };
+        let commands = names(&command_ty);
+        if let Some(clash) = names(&gesture_ty)
+            .into_iter()
+            .find(|n| commands.contains(n))
+        {
+            diags.push(
+                Diagnostic::error(
+                    "B0524",
+                    format!("`{clash}` is both a command and a gesture"),
+                    graph.node(*g).span,
+                )
+                .with_primary_label(format!(
+                    "`{}` and `{}` share this variant",
+                    gesture_ty.con_name().unwrap_or("the gesture union"),
+                    command_ty.con_name().unwrap_or("the command union"),
+                ))
+                .with_note(
+                    "a handler in the page carries the constructor it builds, and the client routes \
+                     on its name: a gesture is folded where it was made and a command is proposed to \
+                     the server. A name that is both would make `on_click` mean whichever the client \
+                     tried first",
+                )
+                .with_fix("rename one of them — they are different things happening"),
+            );
+            return None;
+        }
+    }
+
     // §4.3: "a stable, content-derived operation id … *not* a URL a human maintains, and stable
     // across refactors that don't change the signature".
     //
@@ -752,6 +891,7 @@ pub fn split(mut program: Program, diags: &mut Diagnostics) -> Option<Placed> {
         view_reads_presence: reads_presence,
         awareness: awareness.map(|(f, _)| f),
         view_reads_freshness: reads_freshness,
+        gestures,
     };
 
     // Where the page renders, and whether it may. `@render(client)` turns the crossing from a
@@ -1184,6 +1324,7 @@ struct Slicer<'a, 'd> {
     presence_var: VarId,
     awareness_var: VarId,
     freshness_var: VarId,
+    gestures_var: VarId,
     vars: &'d mut Vars,
     /// Vertices already bound in this slice.
     bound: BTreeMap<SigId, VarId>,
@@ -1196,6 +1337,7 @@ struct Slicer<'a, 'd> {
     /// The awareness function this view reached, and the type of the roster it produces.
     awareness: Option<(Core, Ty)>,
     reads_freshness: bool,
+    gestures: Option<GestureRole>,
     diags: &'d mut Diagnostics,
 }
 
@@ -1243,6 +1385,21 @@ impl Slicer<'_, '_> {
             self.reads_freshness = true;
             return Some(var(self.freshness_var, signal_elem(&node.ty), node.span));
         }
+        // And so is the non-durable fold, which is the fourth input a view has that the log does
+        // not contain. The accumulator is the *client's*: the runtime holds one per connection,
+        // applies `step` to each gesture and hands the result in, exactly as it hands in the
+        // roster. Carrying `step` and `init` here rather than lowering them into the view is what
+        // makes that possible — a view is a function of the accumulator, not of the stream.
+        if let Op::Gestures { step, init } = &node.op {
+            let ty = signal_elem(&node.ty);
+            self.gestures = Some(GestureRole {
+                step: step.clone(),
+                init: init.clone(),
+                ty: ty.clone(),
+                gesture_ty: gesture_ty(step),
+            });
+            return Some(var(self.gestures_var, ty, node.span));
+        }
         if let Some(&v) = self.bound.get(&id) {
             return Some(var(v, signal_elem(&node.ty), node.span));
         }
@@ -1281,7 +1438,11 @@ impl Slicer<'_, '_> {
                          folded from it — a fold outside one would be rebuilt from nothing on \
                          every deploy",
                     )
-                    .with_fix("wrap it: `durable(fold(…))`"),
+                    .with_fix(
+                        "wrap it — `durable(fold(…))` — or, if this is interface state that should \
+                         not survive a restart, fold gestures instead: `gestures(step, init)` \
+                         (`docs/10` D30)",
+                    ),
                 );
                 return None;
             }
@@ -1304,7 +1465,12 @@ impl Slicer<'_, '_> {
                 );
                 return None;
             }
-            Op::Durable | Op::Alias | Op::Presence | Op::Awareness { .. } | Op::Freshness => {
+            Op::Durable
+            | Op::Alias
+            | Op::Presence
+            | Op::Awareness { .. }
+            | Op::Freshness
+            | Op::Gestures { .. } => {
                 unreachable!("handled above")
             }
         };

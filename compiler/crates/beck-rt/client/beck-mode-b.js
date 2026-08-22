@@ -216,6 +216,10 @@
         return;
       }
       apply(out);
+      // D30: a gesture was folded into this client's own interface state and there is nothing to
+      // send. Not queued either — a queue is what survives a disconnection so the server hears
+      // eventually, and there is no "eventually" for a thing the server has no decoder for.
+      if (out.local === true) return;
       queued.push({ id, command });
       beck.stats.pending = queued.length;
       send({ t: "c", id, command });

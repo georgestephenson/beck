@@ -110,7 +110,7 @@ def render(todos: list[Todo], left: Int) -> Html:
                   on_enter=Add(id=Id(value="$id"), text="$value"))
             ul(class=["my-4", "space-y-2"]):
                 for t in todos:
-                    li(key=t.id, class=done_class(t)):
+                    li(key=t.id, class=["flex", "gap-2", "items-baseline", done_class(t)]):
                         span(class=["flex-1"], on_click=Toggle(id=t.id)): t.text
                         button(on_click=Delete(id=t.id)): "x"
             footer(class=["text-gray-500"]): (str(left) + " remaining")
@@ -119,12 +119,12 @@ def render(todos: list[Todo], left: Int) -> Html:
 ## each of them and nothing else (`docs/104` §104.4). `done` used to be this program's own name for
 ## a rule in `beck-rt`'s hard-coded sheet; `line-through` is the same look with nothing hard-coded.
 ##
-## Two whole alternatives rather than a list with one variable in it, which is what `docs/104`
-## §104.4's own example writes: `class=[…, done_class(t)]` lowers to a `str_join`, and `str_join`
-## has no delta rule, so it would make this page a recompute (`DEFECTS.md::class-list-recomputes`).
-## Both arms are literals either way, so the compiler enumerates both.
+## The shared classes are written once and the one that varies is a name beside them, which is
+## `docs/104` §104.4's own example: `class=[…, done_class(t)]`. Both arms are literals, so the
+## compiler enumerates both and emits a rule for each — following the list, the call and the
+## branch, which is the chain §104.4 item 4 is about.
 def done_class(t: Todo) -> Str:
-    return "flex gap-2 items-baseline line-through" if t.done else "flex gap-2 items-baseline"
+    return "line-through" if t.done else "no-underline"
 
 # ---------- The wiring: where time enters, and where it stops ----------
 

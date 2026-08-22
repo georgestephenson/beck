@@ -5,7 +5,7 @@ held to the tree-walker by a differential of **12,852 calls run in a real WebAss
 a million-deep tail recursion proving `return_call` is a jump.
 
 **What it does not establish, said first because it is the number that matters**: it compiles
-**0 of the corpus's 225 definitions**. An application is records, lists and a page; the heap is not
+**0 of the corpus's 237<!--c:wasm-corpus--> definitions**. An application is records, lists and a page; the heap is not
 laid out on this target, so [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) is **not
 reversed** — Mode B still ships the interpreter, and this buys a running program nothing yet. What
 it is, is the half of a Mode B code generator that has no heap in it, and the half where everything
@@ -98,14 +98,14 @@ Two details of that harness are decisions:
 
 | | Compiled | Refused |
 |---|---|---|
-| [`corpus/`](../compiler/corpus/) — 37 applications | **0** | 225 |
+| [`corpus/`](../compiler/corpus/) — 39<!--c:corpus-programs--> applications | **0** | 237<!--c:wasm-corpus--> |
 | [`awfy/`](../compiler/awfy/) — Are We Fast Yet | 58 | 344 |
 
 The corpus row is the finding, and it is [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)'s
 argument arriving as a measurement rather than a forecast: "a component's `view` is nothing but
 heap… the work that would let it — a value representation, an allocator, string and collection
 primitives, closures through an indirect call table, and a collector or a refcounting discipline —
-is the work that is missing on *both* targets." It still is. **220 of the corpus's 225 refusals are
+is the work that is missing on *both* targets." It still is. **232<!--c:wasm-one-shape--> of the corpus's 237<!--c:wasm-corpus--> refusals are
 one shape**: a parameter that lives on the heap. The other five are three definitions that *return*
 one, a `now`, and a definition generic over a type parameter.
 

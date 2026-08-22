@@ -56,12 +56,20 @@ pub enum FieldTy {
 
 impl Schema {
     pub fn of(placed: &Placed) -> Schema {
-        let name = placed
-            .roles
-            .command_ty
-            .con_name()
-            .unwrap_or("Command")
-            .to_string();
+        Schema::of_union(
+            placed,
+            placed.roles.command_ty.con_name().unwrap_or("Command"),
+        )
+    }
+
+    /// The same, for any union a client may construct values of.
+    ///
+    /// D30's gestures need one: a gesture is built by a handler in the page exactly as a command
+    /// is, so it needs the same resolved decoder — and it needs a *separate* one, because the two
+    /// unions are different types and a client that could decode a gesture as a command would have
+    /// found the write surface §3.5 closes.
+    pub fn of_union(placed: &Placed, name: &str) -> Schema {
+        let name = name.to_string();
         let variants = match placed.program.types.get(name.as_str()) {
             Some(TyDecl::Union { variants, .. }) => variants
                 .iter()

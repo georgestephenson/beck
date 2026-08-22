@@ -147,6 +147,11 @@ fn the_classes_of_a_page_are_enumerated_through_calls_and_branches() {
                 "max-w-80",
                 "mx-auto",
                 "my-4",
+                // Reached through a `str_join` of a list, then a call, then a branch — which is
+                // §104.4's own example and the shape the sketch now writes. Every step of that
+                // chain is one this enumeration has to follow, and a list with a name in it was
+                // the step no program in the tree exercised until the sketch took it back.
+                "no-underline",
                 "p-2",
                 "p-4",
                 "rounded",

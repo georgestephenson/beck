@@ -420,8 +420,8 @@ fn the_event_vocabulary_is_what_the_client_listens_for() {
 #[test]
 fn an_attribute_of_your_own_is_spelled_data() {
     let src = source("todo.beck").replace(
-        "li(key=t.id, class=done_class(t)):",
-        "li(key=t.id, class=done_class(t), data_row=t.text, aria_label=t.text):",
+        "li(key=t.id, class=[\"flex\", \"gap-2\", \"items-baseline\", done_class(t)]):",
+        "li(key=t.id, class=[\"flex\", \"gap-2\", \"items-baseline\", done_class(t)], data_row=t.text, aria_label=t.text):",
     );
     assert_ne!(src, source("todo.beck"), "the edit did not apply");
     // Compiles, which is the assertion: `compile` refuses to return if anything was diagnosed.
@@ -431,8 +431,8 @@ fn an_attribute_of_your_own_is_spelled_data() {
     let refused = refusal(
         "closed.beck",
         &source("todo.beck").replace(
-            "li(key=t.id, class=done_class(t)):",
-            "li(key=t.id, klass=done_class(t)):",
+            "li(key=t.id, class=[\"flex\", \"gap-2\", \"items-baseline\", done_class(t)]):",
+            "li(key=t.id, klass=[\"flex\", \"gap-2\", \"items-baseline\", done_class(t)]):",
         ),
     );
     assert!(refused.contains("B0218"), "{refused}");

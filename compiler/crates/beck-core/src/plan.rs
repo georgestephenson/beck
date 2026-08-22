@@ -21,7 +21,7 @@
 //!
 //! * A **delta operator** ([`Op::MapValues`], [`Op::MapList`], [`Op::FilterList`], [`Op::SortBy`],
 //!   [`Op::Concat`], [`Op::Flatten`], [`Op::FlatMap`], [`Op::Count`], [`Op::IsEmpty`],
-//!   [`Op::Join`], [`Op::ArrangeBy`]) holds an
+//!   [`Op::Join`], [`Op::ArrangeBy`], [`Op::GroupBy`], [`Op::Restrict`]) holds an
 //!   ordered *arrangement* — its output as
 //!   a keyed collection — and updates it from the changes at its input. Work is proportional to the
 //!   change, not to the collection.
@@ -51,6 +51,8 @@
 //! | `flatten`, `flat_map` | the input's key, followed by the position inside that element's list |
 //! | `join` | the left input's key — a lookup answers one left row, so nothing of the right's is needed to separate two |
 //! | `arrange_by(xs, k)` | `k(x)` followed by the input's key — `sort_by`'s arrangement, probed by prefix instead of iterated |
+//! | `group_by` | the group's key alone — one entry per group, so the collection's order never reaches it |
+//! | `semi_join`, `anti_join` | the input's key, unchanged: the index decides *which* rows survive, never where they sit |
 //!
 //! # What this is not
 //!
@@ -246,6 +248,96 @@ pub enum Op {
         /// Which end of the group is wanted.
         agg: Agg,
     },
+    /// The left rows an index answers, or the ones it does not — the algebra's **difference**, and
+    /// the intersection that is its complement
+    /// ([`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7).
+    ///
+    /// The program wrote `filter_list(xs, lambda x: map_contains(m, k(x)))`, or its negation, and
+    /// what that costs today is [`Op::FilterList`]'s rebuild rule: a predicate that reads `m` is a
+    /// different predicate whenever `m` moves, so a payment arriving reconsiders every invoice.
+    /// [`crate::relate::restriction`] is the recognition, and there is no syntax for the operator
+    /// for [`Op::Join`]'s reason.
+    ///
+    /// **It is the one binary operator whose output is one of its inputs**, and that is the whole
+    /// of §99.5 decision 2's "no representational change at all". A [`Op::Join`] emits a *row* —
+    /// the left value and what it matched — so the collection below it holds something the program
+    /// did not write, which is why a `filter_list` cannot become one: its consumers read the
+    /// element. This emits the left element under the left key, so what a consumer reads is what
+    /// the `filter_list` gave it, entry for entry.
+    ///
+    /// Maintained from both sides, as §99.5's bilinear rule requires, and the **right** half is
+    /// the one no single-collection test can see: an entry arriving in the index takes rows *out*
+    /// of a difference and puts them into an intersection, through the same reverse index
+    /// [`Op::Join`] keeps. A left row that moved is one probe.
+    ///
+    /// **It holds no copy of its left input**, which is what lets a row this operator dropped come
+    /// back when the index entry that dropped it leaves. The value is read from the left input
+    /// itself — its arrangement, or the shadow this operator already keeps of a plain list — so
+    /// the state here is a join key per left row and the reverse index, and never a row.
+    Restrict {
+        /// The key to probe the index by, as a function of the left element alone. It captures
+        /// nothing, for [`Op::Join`]'s reason.
+        key: Fun,
+        /// Which answer keeps the row.
+        keep: Presence,
+    },
+    /// The values in a collection, each once — the algebra's **δ**, and the last row of §99.4
+    /// ([`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7).
+    ///
+    /// `list_unique(xs)`, which is `lib/collections.beck`'s `unique`: the first occurrence of each
+    /// value, in the order the input held them. **The order is the decision and not a detail.**
+    /// The library has a second duplicate-free list — `elements(set_of(xs))`, which is sorted — and
+    /// both are maintainable; taking the answer a program already had rather than inventing a third
+    /// is the test a second spelling of an old operation has to pass, which is `list_sum`'s rule
+    /// applied to an order instead of to a total.
+    ///
+    /// So the output's key is an **input key**: the smallest one holding each value. That makes the
+    /// output a sub-order of the input's, exactly as [`Op::FilterList`]'s is, and it is why nothing
+    /// downstream had to learn anything — a consumer reads the values in first-occurrence order
+    /// because that is what iterating the arrangement gives.
+    ///
+    /// **What moves is the interesting half.** A value arriving *before* its own standing first
+    /// occurrence moves the published entry — the only operator here whose output entry can change
+    /// key without the value changing — and one leaving promotes the next occurrence rather than
+    /// dropping the value. Both are `O(log n)`, because the operator keeps the input keys holding
+    /// each value in an ordered set and reads one end of it.
+    ///
+    /// It carries no per-element function: a projection is a [`Op::MapList`] above it, which is how
+    /// the program wrote it.
+    Distinct,
+}
+
+/// Which side of an index's answer a [`Op::Restrict`] keeps.
+///
+/// Two operators in one, because they are one delta rule read in two directions: the same probe,
+/// the same reverse index, the same cost, and a program that shows both halves of a partition
+/// shares one index between them (§99.5 decision 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Presence {
+    /// `map_contains(m, k(x))` — kept when the index holds the key. The **intersection** by key,
+    /// which is a semi-join.
+    In,
+    /// `not map_contains(m, k(x))` — kept when it does not. The **difference** by key, which is an
+    /// anti-join, and §99.4's one missing row that a program in the tree was already paying for.
+    NotIn,
+}
+
+impl Presence {
+    /// Whether an index holding the key (or not holding it) keeps the row.
+    pub fn keeps(self, present: bool) -> bool {
+        match self {
+            Presence::In => present,
+            Presence::NotIn => !present,
+        }
+    }
+
+    /// The name that reaches a sharing key and `beck explain query`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Presence::In => "semi_join",
+            Presence::NotIn => "anti_join",
+        }
+    }
 }
 
 /// Which aggregate a [`Op::GroupBy`] maintains.
@@ -352,6 +444,9 @@ pub const OPERATORS: &[&str] = &[
     "join",
     "arrange_by",
     "group_by",
+    "semi_join",
+    "anti_join",
+    "distinct",
 ];
 
 impl Op {
@@ -375,6 +470,17 @@ impl Op {
             Op::Join { .. } => "join",
             Op::ArrangeBy { .. } => "arrange_by",
             Op::GroupBy { .. } => "group_by",
+            // Two names for one variant, because which of them a plan holds is the difference
+            // between a page showing what is outstanding and one showing what is settled, and a
+            // reader of `beck explain query` should not have to open the key line to find out.
+            Op::Restrict {
+                keep: Presence::In, ..
+            } => "semi_join",
+            Op::Restrict {
+                keep: Presence::NotIn,
+                ..
+            } => "anti_join",
+            Op::Distinct => "distinct",
         }
     }
 
@@ -394,6 +500,8 @@ impl Op {
                 | Op::Join { .. }
                 | Op::ArrangeBy { .. }
                 | Op::GroupBy { .. }
+                | Op::Restrict { .. }
+                | Op::Distinct
         )
     }
 
@@ -435,6 +543,16 @@ impl Op {
             // holds one entry per *group* rather than one per row, so a probe is a point lookup
             // and the collection's own order never reaches the output.
             Op::GroupBy { .. } => "the group's key — one entry per group, and no row",
+            // The input's key, exactly as `filter_list` above — which is the point of the operator
+            // rather than a coincidence: it keeps and drops the left collection's own elements, so
+            // nothing of the index's order reaches the output.
+            Op::Restrict { .. } => {
+                "the input's key, unchanged — the index decides which, not where"
+            }
+            // A key of the input, as `filter_list` above — but *which* one is the operator's own
+            // answer rather than the program's, and it is what makes the output's order the order
+            // the values were first seen in.
+            Op::Distinct => "the input's key of each value's first occurrence",
         }
     }
 
@@ -452,6 +570,8 @@ impl Op {
                 | Op::Join { .. }
                 | Op::ArrangeBy { .. }
                 | Op::GroupBy { .. }
+                | Op::Restrict { .. }
+                | Op::Distinct
         )
     }
 
@@ -471,7 +591,8 @@ impl Op {
             | Op::SortBy { f }
             | Op::FlatMap { f }
             | Op::Join { key: f, .. }
-            | Op::ArrangeBy { key: f } => vec![f],
+            | Op::ArrangeBy { key: f }
+            | Op::Restrict { key: f, .. } => vec![f],
             Op::GroupBy { key, of, .. } => vec![key, of],
             _ => Vec::new(),
         }
@@ -485,7 +606,8 @@ impl Op {
             | Op::SortBy { f }
             | Op::FlatMap { f }
             | Op::Join { key: f, .. }
-            | Op::ArrangeBy { key: f } => vec![f],
+            | Op::ArrangeBy { key: f }
+            | Op::Restrict { key: f, .. } => vec![f],
             Op::GroupBy { key, of, .. } => vec![key, of],
             _ => Vec::new(),
         }
@@ -943,6 +1065,25 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
             "2δ applications, at most δ touched  —  one {} per group, and the group is never built",
             agg.name()
         ),
+        // The bilinear rule again, and the right half is the one worth printing: an index entry
+        // that moved reaches exactly the rows waiting on its key, and each of those either enters
+        // the output or leaves it. Neither side is n.
+        Op::Restrict { keep, .. } => format!(
+            "δ keys applied on the left, and on the right the rows each moved index entry {}  \
+             —  neither is n",
+            match keep {
+                Presence::In => "admits or withdraws",
+                Presence::NotIn => "withdraws or admits",
+            }
+        ),
+        // No applications at all — the operator has no per-element function — and the touched
+        // count is what a value's *first occurrence* moving costs: one remove and one insert, on
+        // the values that moved rather than on the distinct ones.
+        Op::Distinct => {
+            "at most 2δ touched, no applications  —  a value whose first occurrence moved is a \
+             remove and an insert"
+                .to_string()
+        }
     }
 }
 
@@ -1130,7 +1271,7 @@ pub fn cost_report(plan: &Plan) -> String {
                 if let Some(why) = &plan.nodes[i].relate {
                     let _ = writeln!(
                         out,
-                        "       {:<14} not read as a join (docs/99 §99.6): {why}",
+                        "       {:<14} not read as a relational operator (docs/99 §99.6): {why}",
                         ""
                     );
                 }
@@ -1187,8 +1328,8 @@ pub fn cost_report(plan: &Plan) -> String {
             let _ = writeln!(
                 out,
                 "    {}  a per-element function captured the state, so the whole collection is\n\
-                 \x20        reconsidered on every event — docs/99 §99.3, and the algebra has no\n\
-                 \x20        operator for what this program is doing.",
+                 \x20        reconsidered on every event — docs/99 §99.3. `beck explain query`\n\
+                 \x20        says whether the algebra has an operator this shape was not read as.",
                 captured.join(" ")
             );
         }
@@ -1348,6 +1489,19 @@ impl Builder<'_> {
                         locals: 0,
                     },
                 );
+                id
+            }
+            // A constant, for `SigOp::Freshness`'s reason stated about the other client-held fact.
+            // A plan is what the *server* renders through and a server has received no gestures, so
+            // the accumulator here is `init` and never moves — which is not an approximation but
+            // the right answer: before any gesture, the interface state *is* its initial value.
+            //
+            // A page that reads one is refused Mode A (`crate::render`, `B0522`), so what reaches
+            // here is the SSR of a Mode B page, whose first paint is by construction the one with
+            // no gesture applied. The client's kernel holds the accumulator from then on.
+            SigOp::Gestures { init, .. } => {
+                let id = self.push(Op::Const, Vec::new(), None);
+                self.constants.insert(id, init.clone());
                 id
             }
             SigOp::PerSession { f } => {
@@ -1688,18 +1842,32 @@ impl Builder<'_> {
             }
             (Prim::MapList, 2) | (Prim::FilterList, 2) | (Prim::SortBy, 2) => {
                 let xs = self.expr(&args[0], scope);
-                // Only `map_list`, and the restriction is about what an arrangement holds rather
-                // than about what can be recognised. A join's element is a *row* — the left value
-                // and what it matched — and `map_list` is the one of the three that does not keep
-                // its element: it stores `f(x)`, which is the same value whether `x` arrived alone
-                // or in a row. `filter_list` and `sort_by` store the element itself, so rewriting
-                // either would put rows into the collection its consumers read.
+                // Only `map_list` becomes a join, and the restriction is about what an arrangement
+                // holds rather than about what can be recognised. A join's element is a *row* — the
+                // left value and what it matched — and `map_list` is the one of the three that does
+                // not keep its element: it stores `f(x)`, which is the same value whether `x`
+                // arrived alone or in a row. `filter_list` and `sort_by` store the element itself,
+                // so rewriting either would put rows into the collection its consumers read.
                 if op == Prim::MapList && self.relate == Relate::Recognise {
                     match self.joined(xs, &args[1], scope) {
                         Ok(id) => return id,
                         Err(why) => {
                             let f = self.fun(&args[1], scope, &args[0].ty);
                             let id = self.push(Op::MapList { f }, vec![xs], None);
+                            self.nodes[id].relate = why;
+                            return id;
+                        }
+                    }
+                }
+                // A `filter_list` keeps its element, so the sentence above is exactly why it gets
+                // the *other* binary operator: `Op::Restrict` emits the left element under the left
+                // key, which is what this node already published (§99.9 item 7).
+                if op == Prim::FilterList && self.relate == Relate::Recognise {
+                    match self.restricted(xs, &args[1], scope) {
+                        Ok(id) => return id,
+                        Err(why) => {
+                            let f = self.fun(&args[1], scope, &args[0].ty);
+                            let id = self.push(Op::FilterList { f }, vec![xs], None);
                             self.nodes[id].relate = why;
                             return id;
                         }
@@ -1733,6 +1901,15 @@ impl Builder<'_> {
             (Prim::ListLen, 1) => {
                 let xs = self.expr(&args[0], scope);
                 self.shared(format!("count/{xs}"), Op::Count, vec![xs], None)
+            }
+            // A **lowering** rather than a recognition, which is why it takes no [`Relate`] switch
+            // where the join and the difference do: `list_unique` names the operator, so there is
+            // no shape being read and no choice being made on the program's behalf. What the
+            // primitive bought is exactly that — a fold spelling the same thing is opaque, and
+            // `docs/99` §99.9 item 7 is the argument for giving it a name.
+            (Prim::ListUnique, 1) => {
+                let xs = self.expr(&args[0], scope);
+                self.shared(format!("distinct/{xs}"), Op::Distinct, vec![xs], None)
             }
             (Prim::ListIsEmpty, 1) => {
                 let xs = self.expr(&args[0], scope);
@@ -1904,6 +2081,55 @@ impl Builder<'_> {
                 },
             },
             vec![join],
+            None,
+        ))
+    }
+
+    /// `filter_list(xs, p)` where `p` asks another collection whether it holds a key, as the
+    /// difference or the intersection that answers it.
+    ///
+    /// [`Op::Restrict`], and §99.9 item 7. Two nodes rather than [`Builder::joined`]'s three per
+    /// lookup, because there is no loop left over: the operator keeps and drops the elements the
+    /// filter was keeping and dropping, so nothing downstream has to be re-projected.
+    ///
+    /// The index is the same [`Builder::shared`] `map_values` a `map_get` join would build, so a
+    /// program that both looks a key up and asks whether it exists indexes the collection once —
+    /// and so do the two halves of a partition, which is the shape `corpus/38-outstanding.beck`
+    /// carries.
+    fn restricted(&mut self, xs: OpId, f: &Core, scope: &Scope) -> Result<OpId, Option<String>> {
+        let known: BTreeSet<VarId> = scope.keys().copied().collect();
+        let found = match crate::relate::restriction(f, &self.program.defs, &known) {
+            Ok(found) => found,
+            // The ordinary case: a filter that relates nothing, which is most of them.
+            Err(crate::relate::Refusal::NoMembership) => return Err(None),
+            Err(why) => return Err(Some(why.because())),
+        };
+        // [`Builder::joined`]'s rule, and it reads shorter here because there is nothing left to
+        // capture: the operator's only function is the key and the key reads the element alone. So
+        // what has to be true is that the predicate captured *something*, and a `map_contains`
+        // against a constant table is a filter that was already `O(δ)`.
+        let mut before = BTreeSet::new();
+        crate::core::free_vars(f, &mut BTreeSet::new(), &mut before);
+        if !before.iter().any(|v| scope.contains_key(v)) {
+            return Err(Some(crate::relate::Refusal::NothingSaved.because()));
+        }
+        let over = self.expr(&found.over, scope);
+        let index = self.shared(
+            format!("map_values/{over}"),
+            Op::MapValues,
+            vec![over],
+            None,
+        );
+        let key = Fun {
+            code: lam(vec![found.param], found.key),
+            captures: Vec::new(),
+        };
+        Ok(self.push(
+            Op::Restrict {
+                key,
+                keep: found.keep,
+            },
+            vec![xs, index],
             None,
         ))
     }

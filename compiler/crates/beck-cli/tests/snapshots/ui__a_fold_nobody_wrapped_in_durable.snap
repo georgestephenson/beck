@@ -2,11 +2,11 @@
 source: crates/beck-cli/tests/ui.rs
 expression: "render(&edited(\"todos: Signal[State] = durable(fold(\",\n\"todos: Signal[State] = (fold(\"))"
 ---
-error[B0519]: `todos` is a non-durable fold, which is not built yet
+error[B0519]: `todos` folds the log's own stream, so it has to be `durable`
   --> t.beck:138:1
     |
 138 | todos: Signal[State] = (fold(apply_event, State(todos={}), events))
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a fold that is not `durable` has nowhere to keep its accumulator
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a fold over the log's stream, with nowhere to keep what it folds
     |
-  = note: `docs/10` D1 provides for this — "high-churn ephemera get non-durable folds, same semantics, no log persistence" — and it is decided rather than built. What is missing is not the plumbing: an accumulator outside the log is not a function of the log, so what the state digest covers and what a replay has to reproduce are the questions in front of it (`DEFECTS.md::non-durable-fold`)
-  = help: until then: `durable(fold(…))` if the state should survive a restart, or hold it in the page's own markup if it should not
+  = note: this stream is the log's, so its accumulator *is* a function of the log whatever it is called — every event on it was validated and recorded, and replay would reproduce this state whether or not the program asked for it. D30's rule is that ephemerality comes from the stream: a fold that should not survive a restart folds gestures, which are never recorded, rather than declining to persist events that were
+  = help: `durable(fold(…))` if this is state the log should reproduce; `gestures(step, init)` if it is interface state one client keeps to itself
