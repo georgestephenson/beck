@@ -836,8 +836,9 @@ fn renaming_every_name_in_the_corpus_either_works_or_says_why() {
     }
 
     // Printed rather than left in a comment, because `docs/65` quotes this figure twice and it was
-    // derivable only by editing this test — `DEFECTS.md`'s `corpus-wide-counts-drift` in miniature,
-    // and the same reason `native.rs` and `wasm_backend.rs` print theirs.
+    // derivable only by editing this test — the same reason `native.rs` and `wasm_backend.rs` print
+    // theirs. What holds the documents to it is `docs.rs`, which derives the same pair without the
+    // verification below; this walk is the one that checks the *edits* as well as the verdicts.
     let disagreed = refused
         .iter()
         .filter(|r| r.contains("cannot account for"))

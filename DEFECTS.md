@@ -19,10 +19,10 @@ its gate has not been fixed; it has been made invisible.
 **Ids are slugs, not numbers, and are never reused.** Entries are deleted, so a number would imply a
 sequence that does not survive.
 
-This register was opened alongside [`docs/104`](docs/104-styling-and-the-component-library.md) and is
-**seeded rather than complete**: it holds what that audit found plus one older defect already
-recorded in a report. Anything you find that meets the admission rule above belongs here, whether or
-not you are the one to fix it.
+This register was opened alongside [`docs/104`](docs/104-styling-and-the-component-library.md), seeded
+with what that audit found plus one older defect already recorded in a report. It has never been
+*complete* and is not meant to be read as a survey: it is what somebody wrote down. Anything you find
+that meets the admission rule above belongs here, whether or not you are the one to fix it.
 
 ---
 
@@ -117,58 +117,3 @@ runs with the driver still in force and passes for the wrong reason — [`docs/8
 written: two branches each prepending a bullet conflict with the file absent and merge clean with it
 present, so the gate goes red today and green on a fix.
 
----
-
-## `corpus-wide-counts-drift` — adding a program silently falsifies six documents
-
-**What is wrong.** Several documents quote a number derived from *the whole corpus*: how many
-definitions the native backends compile and refuse
-([`docs/93`](docs/93-the-native-backends-report.md), [`docs/08`](docs/08-roadmap.md) and
-[`docs/README`](docs/README.md) — "975 definitions compiled against 143 refused"), how many the
-WebAssembly emitter is measured against ([`docs/103`](docs/103-the-wasm-emitter-report.md),
-`docs/93`, `docs/08`, `docs/README` — "0 of the corpus's 225 definitions"), how the corpus places
-([`docs/20`](docs/20-phase-2-report.md) — "382 placed definitions and signals", with a tier table),
-how many of its folds and pages compile natively (`docs/93`), and how many of its names rename
-([`docs/65`](docs/65-the-editor-report.md), twice).
-**Adding one program to `compiler/corpus/` changes every one of them, and nothing says so.**
-
-**It has already happened, four times.** The three figures were re-derived while
-`corpus/35-workload.beck` was being added and came back **963/137**, **208** and **362** *before* the
-new program — so 941, 195 and 353 had been wrong since the corpus program before that, in six places,
-through a merge. Program 36 found 963 in one document against 968 in three. Program 37 found the
-WebAssembly denominator reading **195**, **213** and **220** in four places — three numbers for one
-quantity — and [`docs/65`](docs/65-the-editor-report.md)'s rename figure fifty names light, because
-the test that derives it kept the number in a *comment*: the assertion beside it has a floor of 250,
-so nothing went red and nothing printed. That test prints its tally now.
-
-**Program 38 is the first re-derivation that found nothing stale**, and that is the entry's own
-argument rather than a reason to close it: the figures were re-read with the new program held out of
-the corpus and came back **975/143**, **225**, **382** and **366 of 376** — exactly what the
-documents said. What made this one clean is that the last two re-derivations left every figure
-printed by a test rather than kept in a comment, so the cost was reading five outputs instead of
-finding out which of three numbers was current. **Program 39 landed in the same session and moved
-every one of them again**, which is the frequency the gate is really about: two programs in a day
-is two silent falsifications of six documents. The cost is still a person remembering to look. This
-tree reads **985/144**, **237**, **402** and **386 of 396**.
-
-**Why it is a defect rather than untidiness.** The numbers are the evidence for claims a reader acts
-on: 975-of-1118 is what "the heap is whole" is worth, and the tier table is Phase 2's exit
-measurement. A reader has no way to tell a figure that is current from one that is two corpus
-programs old, and the failure is silent in the direction that flatters — a stale count is always the
-smaller, older one. This is [`docs/82`](docs/82-the-edge-report.md) §82.10's shape in a document
-rather than in a gate.
-
-**Why it survives.** Every one of these numbers is printed by a **release-only measurement suite**
-(`measure_phase2`, `measure_native`, `wasm_backend`), and those are run by a person who remembers to.
-`docs.rs` gates that a link resolves, that a shell command runs and that every diagnostic the
-vulnerability matrix names exists — it does not gate a number.
-
-**The gate a fix owes**, and the hard part is not the assertion. It is that **a count has to be
-findable in prose**: a test cannot grep for `975` and know which document meant which quantity. So
-the fix is a marker convention — a quantity named where it is quoted, in a form a test can parse —
-plus a `docs.rs` test that re-derives each named quantity and asserts the documents agree. The
-re-derivation is cheap and needs no release build: compiled-versus-refused, corpus definitions and
-the placement tier table are all compile-time facts about the corpus, which is why this is worth
-gating rather than accepting. The gate goes red today only if it is written *before* the numbers
-above are corrected; written after, it needs the marker convention to be exercised by at least two
-documents quoting the same quantity, which the native count already does three times over.

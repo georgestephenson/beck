@@ -23,7 +23,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`DEFECTS.md`](DEFECTS.md) | **What is wrong right now.** Something that behaves wrongly — silent, misleading, or contrary to what a document says. An entry is deleted by the change that fixes it, so the file is always the current list; something merely *absent* is a line in [`docs/08`](docs/08-roadmap.md) §8.5 instead |
 | [`compiler/`](compiler/) | The compiler, the runtime, and the standard library. Where new work goes |
 | [`compiler/lib/`](compiler/lib/README.md) | The standard library's Beck half |
-| [`compiler/corpus/`](compiler/corpus/) | 39 programs carrying **no placement annotations** — Phase 2's exit measurement |
+| [`compiler/corpus/`](compiler/corpus/) | 39<!--c:corpus-programs--> programs carrying **no placement annotations** — Phase 2's exit measurement |
 | [`compiler/sicp/`](compiler/sicp/) | The expressiveness benchmark ([`docs/25`](docs/25-benchmarks-and-expressiveness.md) §25.5) |
 | [`compiler/awfy/`](compiler/awfy/README.md), [`compiler/clbg/`](compiler/clbg/README.md) | The performance benchmarks — somebody else's programs, verified against somebody else's constants |
 | [`compiler/style/`](compiler/style/README.md) | The utility table's oracle — Tailwind's own verdict on a candidate list, committed rather than re-run ([`docs/104`](docs/104-styling-and-the-component-library.md) §104.4) |
@@ -109,7 +109,15 @@ So:
   `MODULES`. The namespace is flat and spans the directory, so a name defined in two library files
   cannot be imported by one program. `beck-cli/tests/stdlib.rs` gates the directory rather than a
   list.
-- **`compiler/corpus/`**: a program added there has to place itself — no annotations.
+- **`compiler/corpus/`**: a program added there has to place itself — no annotations. **It also
+  moves every corpus-wide count the documents quote** — what the native backends compile and
+  refuse, what the WebAssembly emitter is measured against, where the corpus places, how many
+  of its names rename. Each of those is marked where it is written, with an HTML comment
+  naming the quantity (`985<!--c:native-compiled-->`), and
+  `docs.rs::every_corpus_wide_count_quoted_in_prose_is_the_one_the_tree_has` derives them all
+  and fails until every marked number agrees. Run it with `--nocapture` and it prints the
+  table; a quantity it derives and nobody quotes fails too, so a figure cannot leave the
+  documents and stop being checked.
 - **`compiler/sicp/`**: the book's own printed answers are the oracle. `sicp/refusals/` holds one
   file per wall still standing and is currently **empty**; its README says what puts a file back.
 - **`compiler/xlang/`**: a port is held to the *answers*, not to looking alike —
