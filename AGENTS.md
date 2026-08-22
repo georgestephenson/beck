@@ -113,7 +113,7 @@ So:
   moves every corpus-wide count the documents quote** — what the native backends compile and
   refuse, what the WebAssembly emitter is measured against, where the corpus places, how many
   of its names rename. Each of those is marked where it is written, with an HTML comment
-  naming the quantity (`990<!--c:native-compiled-->`), and
+  naming the quantity (`991<!--c:native-compiled-->`), and
   `docs.rs::every_corpus_wide_count_quoted_in_prose_is_the_one_the_tree_has` derives them all
   and fails until every marked number agrees. Run it with `--nocapture` and it prints the
   table; a quantity it derives and nobody quotes fails too, so a figure cannot leave the

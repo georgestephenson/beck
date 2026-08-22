@@ -517,8 +517,12 @@ impl Client {
     /// because there is nobody to hear back from; nothing is sent, because there is nowhere for it
     /// to go. The log is not merely left alone — it is not on this path at all.
     ///
-    /// It returns the DOM patch the same way, so a gesture and a command cost the same render and
-    /// the difference is entirely in what leaves the tab: for a gesture, nothing does.
+    /// It returns the DOM patch the same way, so a gesture and a command render identically; what
+    /// a gesture skips is the state derivation and `validate`, which is about a fifth of an
+    /// interaction and stays about a fifth as the board grows — the render dominates and both
+    /// paths pay it (`measure_mode_b.rs::what_a_gesture_costs_against_a_command`, 1.21× at 100
+    /// cards and 1.18× at 1000). The saving is not the point of the construct; what leaves the tab
+    /// is, and for a gesture nothing does.
     /// Whether a payload from the page names a variant of the gesture union.
     ///
     /// The tag alone decides. `B0524` refuses a program whose two unions share a variant name, so

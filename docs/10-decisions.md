@@ -1066,6 +1066,22 @@ Four things about its shape are the decision rather than an implementation:
 - **A gesture is neither a `Command` nor an `Event`**, the two words that already mean something
   about the log. It is not proposed, not validated, not recorded, and does not survive the tab.
 
+### What it costs, which is not why it exists
+
+Measured rather than assumed, and the number came out against the prediction:
+`measure_mode_b.rs::what_a_gesture_costs_against_a_command` puts a gesture at **1.21× cheaper than
+a command at 100 cards and 1.18× at 1000**. The guess going in was that the gap would *grow* with
+the board, since a gesture skips both `validate` and the state derivation and both are functions of
+how much state there is. It does not grow: the render and the diff dominate, both paths pay them in
+full, and the work a gesture skips is linear in the same board — so the saving is a constant
+fraction, around a fifth, at any size.
+
+**So this is not a performance decision, and it should not be sold as one.** A fifth off an
+interaction is real and it is not the reason to build this. The reason is that a panel opening is
+not a fact about the business, and the log is where facts about the business go. The costs D30
+actually moves are the ones nobody times: a log that does not fill with interface noise, a replay
+that does not have to reproduce it, and a digest that never covered it.
+
 ### What it may not do
 
 Three refusals, and they are the load-bearing half:

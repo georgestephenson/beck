@@ -66,10 +66,7 @@ def apply_event(b: Board, env: Envelope[Event]) -> Board:
         case Added(id, title, tag):
             return b.with(cards=concat_lists([b.cards, [Card(id=id, title=title, tag=tag, done=False)]]))
         case Finished(id):
-            return b.with(cards=map_list(b.cards, finish_one(id)))
-
-def finish_one(id: Int) -> (Card) -> Card:
-    return lambda c: c.with(done=(c.done or (c.id == id)))
+            return b.with(cards=map_list(b.cards, lambda c: c.with(done=(c.done or (c.id == id)))))
 
 def validate(b: Board, p: Proposal) -> Result[list[Event], Rejection]:
     match p.command:

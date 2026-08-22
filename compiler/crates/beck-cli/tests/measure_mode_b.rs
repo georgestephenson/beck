@@ -376,3 +376,130 @@ fn fold_one(rt: &beck_rt::Runtime, state: &Value, command: serde_json::Value, se
     }
     out
 }
+
+/// What a gesture costs against a command — D30's claim, measured rather than asserted.
+///
+/// [`docs/10`](../../../../docs/10-decisions.md) D30 says a gesture is folded where it was made and
+/// a command is proposed to the server, and the interesting question is what the *local* difference
+/// is: both re-render the page, so the saving is whatever a command does that a gesture does not —
+/// derive the state from the log plus its guesses, and run `validate`.
+///
+/// Measured at two sizes, because one cannot tell a constant saving from a proportional one — and
+/// the answer was **constant**, which is not what was predicted here before it was run. The guess
+/// was that the gap would grow with the board, since `validate` and the state derivation are both
+/// functions of how much state there is and the gesture path touches neither. It does not grow:
+/// **1.21× at 100 cards and 1.18× at 1000**, and both paths scale linearly. The render and the
+/// diff dominate, both paths pay them in full, and the work a gesture skips is linear in the same
+/// thing — so what a gesture saves is a *fraction* of the interaction, around a fifth, at any size.
+///
+/// That is worth stating plainly because it bounds what this construct is for. **D30 is not a
+/// performance feature.** A fifth off an interaction is real and it is not why the construct
+/// exists; the reason is that a panel opening is not a fact about the business, and the log is
+/// where facts about the business go. A reader who came here looking for the speed argument should
+/// leave with the correctness one.
+#[test]
+fn what_a_gesture_costs_against_a_command() {
+    use beck_wasm::{Client, Proposed, Viewer};
+    use std::time::Instant;
+
+    let (warmup, runs) = if cfg!(debug_assertions) {
+        (1, 2)
+    } else {
+        (5, 30)
+    };
+
+    println!("\n-- a gesture against a command, in the kernel the browser runs --");
+    println!(
+        "  {:>7}  {:>14}  {:>14}  {:>9}",
+        "cards", "command (µs)", "gesture (µs)", "ratio"
+    );
+
+    let mut ratios = Vec::new();
+    for n in [100usize, 1000] {
+        let placed = example("interface.beck");
+        let rt =
+            beck_rt::Runtime::new(placed.clone(), beck_eval::backend(&placed)).expect("prepares");
+        let mut state = rt.initial_state().expect("init");
+        for i in 0..n {
+            state = fold_one(
+                &rt,
+                &state,
+                serde_json::json!({"c":"Add","title":format!("card {i}"),"tag":"bug"}),
+                i as u64 + 1,
+            );
+        }
+        let bytes = Bundle::of(&placed).to_bytes();
+
+        // A fresh client per repetition, for `what_an_interaction_costs_in_the_browser`'s reason:
+        // both calls mutate what is shown, so timing the same client twice times something else.
+        let prepared = || {
+            let mut client = Client::load(&bytes, Viewer::named("ana")).expect("the bundle loads");
+            client.reset(n as u64, state.clone()).expect("a state");
+            client.repaint().expect("a first paint");
+            client
+        };
+
+        // Both change the page: the command finishes a card, and the gesture opens the panel on
+        // one. A gesture that rendered nothing would be measuring the short-circuit rather than
+        // the path.
+        let finish = serde_json::json!({"c":"Finish","id": n / 2});
+        let inspect = serde_json::json!({"c":"Inspect","id": n / 2});
+
+        let mut command = Duration::ZERO;
+        let mut gesture = Duration::ZERO;
+        for run in 0..(warmup + runs) {
+            let mut c = prepared();
+            let start = Instant::now();
+            let out = c.propose("i0", &finish, 1_700_000_000_000);
+            let a = start.elapsed();
+            assert!(
+                matches!(out, Proposed::Accepted { .. }),
+                "the board accepts finishing a card"
+            );
+
+            let mut g = prepared();
+            let start = Instant::now();
+            let out = g.propose("i1", &inspect, 1_700_000_000_000);
+            let b = start.elapsed();
+            // The routing is the measurement's premise: if this came back `Accepted` the gesture
+            // went up the command path and the number below would be comparing one thing.
+            assert!(
+                matches!(out, Proposed::Folded { .. }),
+                "a gesture is folded, not proposed"
+            );
+
+            if run >= warmup {
+                command += a;
+                gesture += b;
+            }
+        }
+        let us = |d: Duration| d.as_secs_f64() * 1e6 / runs as f64;
+        let ratio = command.as_secs_f64() / gesture.as_secs_f64();
+        println!(
+            "  {n:>7}  {:>14.1}  {:>14.1}  {:>8.2}×",
+            us(command),
+            us(gesture),
+            ratio
+        );
+        ratios.push(ratio);
+    }
+
+    // The shape, not the rate — `docs/64`'s pattern. A gesture must not cost *more* than a command
+    // at either size, which is the only direction that would falsify D30's design: the whole point
+    // of routing locally is that it skips work, so a gesture that cost more would mean the routing
+    // itself had become the expensive part.
+    for (n, r) in [100usize, 1000].iter().zip(&ratios) {
+        assert!(
+            *r >= 1.0,
+            "at {n} cards a gesture cost more than a command ({r:.2}×) — the local path is \
+             supposed to skip `validate` and the state derivation, so this means the routing \
+             costs more than the work it avoids"
+        );
+    }
+    println!(
+        "  {:.2}× at 100 cards and {:.2}× at 1000 — a constant fraction rather than a growing \
+         one, because both paths pay the render and the diff and the work a gesture skips is \
+         linear in the same board the render is",
+        ratios[0], ratios[1]
+    );
+}

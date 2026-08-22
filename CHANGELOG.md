@@ -40,7 +40,11 @@ carry the order, so leave them where they land.
   `beck-cli/tests/gestures.rs`, which asserts the half the register said would be forgotten four
   ways — the log is empty, nothing is queued to send, a restart comes back to `init`, and the
   server's own decoder refuses a gesture — because any one alone could pass while the construct
-  leaked through another. `compiler/examples/interface.beck` is the program.
+  leaked through another. `compiler/examples/interface.beck` is the program. What a gesture costs
+  was measured rather than assumed and came out against the prediction: **1.21× cheaper than a
+  command at 100 cards and 1.18× at 1000**, a constant fraction rather than a growing one, because
+  the render dominates and both paths pay it. So this is not a performance decision — the costs it
+  moves are a log that does not fill with interface noise and a replay that does not reproduce it.
 
 - **2026-08-22 — The corpus-wide counts are gated, so a fortieth program cannot silently falsify
   six documents.**
@@ -51,7 +55,7 @@ carry the order, so leave them where they land.
   stale somewhere different, and twice in one day when programs 38 and 39 landed together.
   **The hard part was never the assertion; it was that a count has to be findable in prose.** A
   test cannot grep for `985` and know which document meant which quantity. So a marked number
-  carries an HTML comment naming it — `990<!--c:native-compiled-->` — invisible where the markdown
+  carries an HTML comment naming it — `991<!--c:native-compiled-->` — invisible where the markdown
   renders and greppable where it is edited, and **the number is read out of the sentence rather
   than out of the marker**: a marker carrying its own value would agree with itself while the prose
   beside it said something else, which is the failure being gated.
