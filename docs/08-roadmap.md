@@ -478,7 +478,11 @@ rows.
   answer rather than a third one, so `corpus/39-topics.beck` shows the topics its notes are filed
   under in **62 backend steps at 200 notes and at 1,600, against 2,280 and 17,680** for the same
   program with the dedup written as a fold. What is left, in §99.9's order, is no longer an operator:
-  fusion for the new ones, and the read-model SQL compiling into the plan. This was a Phase 4 bullet from the
+  fusion for the new ones, and the read-model SQL compiling into the plan — **and the first of those
+  has no program**, swept across all 45 programs in `corpus/` and `examples/`: nothing in the tree
+  has a `filter_list` above a join, because the recogniser consumes the filter into the operator.
+  So the e-graph §99.9 item 8 is named after has no rewrite to arbitrate yet, and item 9 is the one
+  that is ready. This was a Phase 4 bullet from the
   day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list,
   which is the same defect §8.5 opens by describing one level down — a phase is not a position. It
   lives in **Lane B** (`engine.rs`, `plan.rs`, `relate.rs`) and contends with nothing in Lane A.

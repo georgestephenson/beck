@@ -40,6 +40,11 @@ carry the order, so leave them where they land.
   quantity names the file and line; and deleting a marker fails as "derived here and quoted
   nowhere". The first is the one that matters, and the message says to re-read them all rather than
   the one that failed, because they move together.
+  Also records, in [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 8 and
+  [`docs/08`](docs/08-roadmap.md) §8.5.4, that **fusion for the new operators has no program**:
+  swept across all 45 programs in `corpus/` and `examples/`, nothing in the tree has a `filter_list`
+  above a join, because the recogniser consumes the filter into the operator. The e-graph that item
+  is named after has no rewrite to arbitrate yet.
   Two prose figures became digits to be checkable — `docs/93`'s "All thirty-nine" and "twenty-six
   of thirty-nine" — and `docs/20`'s tier table now cites the gate rather than the release-only
   suite as the command that derives it.

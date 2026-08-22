@@ -895,10 +895,23 @@ Three things it is held to:
   both.
 
 **8. Fusion for the new operators**, and this is where [`23`](23-incremental-views-report.md) §23.19's
-deferred question reopens on schedule: pushing a `filter_list` below a `join` is the first rewrite
-that **competes** with another for the same node, which is exactly what §23.13 says the fixed-point
+deferred question reopens: pushing a `filter_list` below a `join` is the first rewrite that
+**competes** with another for the same node, which is exactly what §23.13 says the fixed-point
 approach cannot arbitrate and what equality saturation exists to do. Expect to need the e-graph here
 and nowhere earlier.
+
+**It has no program, and that is a scheduling fact rather than a detail.** Swept across all 45
+programs in `corpus/` and `examples/` with the operators in place: the only fusible operator sitting
+anywhere above a relational one is `list_len`, three times, and a count over an arrangement is
+already `O(1)` — there is nothing to fuse. **No program in the tree has a `filter_list` above a
+join**, because the recogniser *consumes* the filter into the operator rather than leaving one above
+it, which is the surface working as §99.6 intends. So the rewrite this item is named after has
+nothing to be about, and building the e-graph for it now is item 3's lesson arrived at from the
+other side: an operator with a delta rule and no program is a hole in the differential, and a
+rewriting machinery with no rewrite to arbitrate is worse — it is a decision procedure whose
+decisions nobody can check. What would give it a subject is a program that filters a joined row on
+something the *left* side decides, which is an ordinary page (`the issues whose assignee is on the
+roster, sorted`) and simply is not written here yet.
 
 **9. The read-model SQL grows joins and `group by` by compiling into the plan**, not by growing its
 own interpreter — which closes §23.19 and §12.5 together and keeps one code path.
