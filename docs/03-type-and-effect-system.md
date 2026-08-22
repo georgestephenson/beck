@@ -249,11 +249,20 @@ model Envelope[T]:
     body: T
 ```
 
-*There is one other source, and it is a `Signal` rather than a `Stream`.* `presence()` is who is
-connected now ([`10`](10-decisions.md) D6, built in [`48`](48-identity-report.md)) — the only input
+*There are two other sources, and both are a `Signal` rather than a `Stream`.* `presence()` is who
+is connected now ([`10`](10-decisions.md) D6, built in [`48`](48-identity-report.md)) — an input
 to a view that **moves without an event**. It performs `cap.presence`, which is what places it on
 the server; the chokepoint may not read it, because an event whose existence depended on who
-happened to be connected would not survive a replay.
+happened to be connected would not survive a replay. `awareness(f)` is the same source carrying a
+payload, under the same rules.
+
+`gestures(step, init)` is the other, and it moves without an event for a different reason: it folds
+what one *client* did to its own interface — a panel opened, a column sorted — which was never
+proposed, validated or recorded ([`10`](10-decisions.md) D30). It performs `dom`, which is what
+places it on the client, and it inherits presence's rule about the chokepoint in its strongest form
+(`B0523`): presence is a fact the server holds and does not record, and a gesture is a fact the
+server never had. A fold over *this* stream is ephemeral because the occurrences are; a fold over
+the log's stream is not, however it is spelled, which is why `B0519` still refuses a bare `fold`.
 
 Two rules the review pass made explicit ([`14`](14-review-findings.md) F5, F3): the envelope
 records a durable *identity*, never the `Session` capability itself — tokens and live capabilities

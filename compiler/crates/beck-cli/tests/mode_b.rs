@@ -243,6 +243,7 @@ fn a_mode_b_client_decides_against_the_claims_the_server_verified() {
         .expect("the bundle loads");
     inside.hydrate().expect("hydrates");
     match inside.propose("k1", &take, 0) {
+        Proposed::Folded { .. } => panic!("a command was folded as a gesture"),
         Proposed::Accepted { .. } => {}
         Proposed::Refused { why } => {
             panic!("the tenant's own claim did not reach the client's validate: {why}")
@@ -255,6 +256,7 @@ fn a_mode_b_client_decides_against_the_claims_the_server_verified() {
     match outside.propose("k1", &take, 0) {
         Proposed::Refused { why } => assert!(why.contains("NotYours"), "{why}"),
         Proposed::Accepted { .. } => panic!("a missing claim was as good as the right one"),
+        Proposed::Folded { .. } => panic!("a command was folded as a gesture"),
     }
 
     // And the map is the provider's rather than a fixed set: a claim the program does not read
@@ -368,6 +370,7 @@ fn a_guess_is_on_the_page_before_the_server_answers() {
     match outcome {
         Proposed::Accepted { dom } => assert!(!dom.is_empty(), "the guess changed nothing"),
         Proposed::Refused { why } => panic!("the client refused its own command: {why}"),
+        Proposed::Folded { .. } => panic!("a command was folded as a gesture"),
     }
     assert_eq!(client.in_flight(), 1);
     assert!(shown(&mut client).contains("guessed"));
@@ -388,6 +391,7 @@ fn a_command_the_program_refuses_never_reaches_the_page_or_the_wire() {
     ) {
         Proposed::Refused { why } => assert!(why.contains("BlankText"), "{why}"),
         Proposed::Accepted { .. } => panic!("a blank card was accepted"),
+        Proposed::Folded { .. } => panic!("a command was folded as a gesture"),
     }
     assert_eq!(client.in_flight(), 0, "a refused command is not in flight");
 }

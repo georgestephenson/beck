@@ -95,6 +95,14 @@ pub enum Op {
     Decide { validate: Core },
     /// `fold(step, init, stream)`. The accumulator, and the point at which a cycle bottoms out.
     Fold { step: Core, init: Core },
+    /// `gestures(step, init)` — D30's non-durable fold, and a source like [`Op::Presence`].
+    ///
+    /// A source rather than an operator over one, because the stream it folds has no other
+    /// consumer it could have: a gesture is this client's and the graph has nothing else on that
+    /// side of the seam. So the step and the initial value are carried here for [`Op::Awareness`]'s
+    /// reason — there is no signal to read — and the vertex has no inputs, which is what makes the
+    /// accumulator unreachable from the log by construction rather than by a rule.
+    Gestures { step: Core, init: Core },
     /// `durable(signal)` — the accumulator that survives a restart, and therefore the one the log
     /// is *of*.
     Durable,
@@ -120,6 +128,7 @@ impl Op {
             Op::Freshness => "freshness",
             Op::Decide { .. } => "decide",
             Op::Fold { .. } => "fold",
+            Op::Gestures { .. } => "gestures",
             Op::Durable => "durable",
             Op::Map { .. } => "signal_map",
             Op::Map2 { .. } => "map2",
@@ -233,6 +242,13 @@ impl Graph {
     /// The awareness rosters — presence with a payload, and not in the log either.
     pub fn awarenesses(&self) -> Vec<SigId> {
         self.find(|o| matches!(o, Op::Awareness { .. }))
+    }
+
+    /// The non-durable folds — D30's client-local interface state, and the fourth thing here that
+    /// is not in the log. The strongest case of it: a gesture is not merely absent from the log,
+    /// it never travelled far enough to be a candidate for one.
+    pub fn gestures(&self) -> Vec<SigId> {
+        self.find(|o| matches!(o, Op::Gestures { .. }))
     }
 
     /// The freshness sources — the other thing that is not in the log, and for the same reason:
@@ -479,6 +495,13 @@ impl Builder<'_, '_> {
                 (Prim::Presence, 0) => Some((Op::Presence, Vec::new())),
                 (Prim::Awareness, 1) => Some((Op::Awareness { f: args[0].clone() }, Vec::new())),
                 (Prim::Freshness, 0) => Some((Op::Freshness, Vec::new())),
+                (Prim::Gestures, 2) => Some((
+                    Op::Gestures {
+                        step: args[0].clone(),
+                        init: args[1].clone(),
+                    },
+                    Vec::new(),
+                )),
                 (Prim::Decide, 3) => {
                     let proposals = self.input(&args[0], owner, tier)?;
                     let state = self.input(&args[1], owner, tier)?;
@@ -530,9 +553,9 @@ impl Builder<'_, '_> {
                         .with_primary_label(format!("applied to {n} arguments here"))
                         .with_note(
                             "§3.7's signal vocabulary is `merge_clients`, `presence`, \
-                             `freshness`, `filter_map`, `fold`, `durable`, `signal_map`, `map2`, \
-                             `per_session` and `decide`; a signal's expression is built from those \
-                             and nothing else",
+                             `awareness`, `freshness`, `gestures`, `filter_map`, `fold`, \
+                             `durable`, `signal_map`, `map2`, `per_session` and `decide`; a \
+                             signal's expression is built from those and nothing else",
                         ),
                     );
                     None

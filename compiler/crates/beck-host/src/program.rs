@@ -40,6 +40,19 @@ pub struct Runtime {
     /// graph's: it holds every connection's `Session` and turns each into that client's
     /// contribution. `None` for a page that reads no roster.
     awareness_fn: Option<Callable>,
+    /// `gestures(step, init)`'s `step`, prepared, when the page keeps client-local interface
+    /// The accumulator a client starts an interface with, and **all of D30 the server holds**.
+    ///
+    /// There is deliberately no gesture *step* here beside it. The step travels in the
+    /// [`Bundle`](beck_core::Bundle) to the client and is run there and nowhere else, because a
+    /// gesture never reaches the server — so a runtime that could fold one would be a method
+    /// nothing may call, and the next reader would reasonably conclude the server has a part in
+    /// this. It does not: it renders the first paint from this value and cannot advance it.
+    ///
+    /// `Unit` for a page that keeps no interface state, which is what the view's sixth parameter
+    /// is then handed: a role the runtime calls has one arity, so the parameter exists whether or
+    /// not the program reads it.
+    gestures_init: Value,
     /// The same view as a dataflow plan (§5.3), with every operator prepared. Compiled once and
     /// shared by every subscription: an [`Engine`] per subscriber holds the arrangements, and this
     /// holds the code.
@@ -69,6 +82,12 @@ impl Runtime {
             Some(f) => Some(role(f, "the awareness function")?),
             None => None,
         };
+        let gestures_init = match &placed.roles.gestures {
+            Some(g) => backend
+                .constant(&g.init)
+                .map_err(|e| anyhow!("evaluating the initial interface state: {e}"))?,
+            None => Value::Unit,
+        };
         let plan = Arc::new(
             Prepared::compile(&placed, backend.as_ref())
                 .map_err(|e| anyhow!("compiling the view plan: {e}"))?,
@@ -85,6 +104,7 @@ impl Runtime {
             fold_fn,
             view_fn,
             awareness_fn,
+            gestures_init,
             plan,
             init,
             command,
@@ -222,6 +242,12 @@ impl Runtime {
             // render on the server at all (`B0518`) — so this is the value the SSR of a Mode B
             // page is rendered with and nothing else ever sees it.
             beck_core::edge::confirmed(),
+            // The client-local accumulator, and `init` for the reason `freshness` above is
+            // `Confirmed`: a server has received no gestures, so what it renders is the interface
+            // before any of them. D30's construct is refused a page that renders on the server
+            // so the only page this reaches is the SSR of a Mode B one — where it is
+            // not an approximation but the correct first paint (`B0522`).
+            self.gestures_init.clone(),
         ])
         .map_err(|e| anyhow!("{e}"))
         .context("rendering the view")?;
@@ -232,6 +258,13 @@ impl Runtime {
                 other.display()
             )),
         }
+    }
+
+    /// The accumulator a client starts an interface with — D30's `gestures(step, init)`'s `init`.
+    ///
+    /// `Unit` when the program keeps no interface state.
+    pub fn gestures_init(&self) -> &Value {
+        &self.gestures_init
     }
 
     /// The view as a dataflow plan — what `beck explain incremental` reports on.

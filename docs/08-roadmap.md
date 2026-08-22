@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **985<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **990<!--c:native-compiled--> definitions compiled against 146<!--c:native-refused--> refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -601,11 +601,12 @@ rows.
 - **Awareness over a client-local value** (M): `awareness(f)` is built for `f : Session -> T`
   ([`10`](10-decisions.md) D6, `corpus/33-awareness.beck`), which is *who is looking at what*. A
   cursor or a selection needs a value the client holds and can publish, and there is none —
-  `beck-patch.js` listens for five events and `mousemove` is not among them. That prerequisite is
-  the same one the client-local fold for interface state has
-  ([`104`](104-styling-and-the-component-library.md) §104.8), so the two are **one piece of work**:
-  a client-local stream, a client-placed non-durable fold over it, and `awareness` accepting a
-  signal as well as a function.
+  `beck-patch.js` listens for five events and `mousemove` is not among them. **The half of this that
+  was thought to be shared with interface state turned out not to be**: D30 built the client-placed
+  non-durable fold *without* a client-local stream, because a gesture has exactly one consumer and
+  needs no signal to name. What remains here is the genuinely separate half — `beck-patch.js`
+  learning to produce a continuous value at all, and `awareness` accepting a signal as well as a
+  function — and a `gestures` accumulator is now the obvious thing for such a value to feed.
 - **Comment-preserving printing** (S, due rather than nice). **Done.** Ordinary `#` comments were
   dropped by the lexer, so `beck fmt` deleted them — a formatter that eats comments is one nobody
   runs twice, which is why `textDocument/formatting` was withheld rather than missing. They are now
@@ -702,12 +703,14 @@ rows.
      what `B0222` checks. Lane B, with the table generated into Lane A's tables.
   5. **The theme as a Beck value**, and a styled `beck new` (S): tokens as a record generating both
      the theme block and the accepted names, so renaming a brand colour is a rename. Lane B.
-  6. **Where interface state lives** (F, and a **decision before an implementation**): a modal's
-     open flag, a combobox's highlighted option and a table's sort column have nowhere to live but
-     the durable log, and §104.8's three candidate answers — a client-placed non-durable fold, the
-     URL, or the document itself — are not equivalent. This wants a D-number of its own before code,
-     and it is what the last two items wait on. `DEFECTS.md::non-durable-fold` is the separable
-     defect underneath it: D1's construct is decided and silently unbuilt. Lane A.
+  6. **Where interface state lives** (F, and a **decision before an implementation**). **Done.**
+     It got the D-number it wanted — [`10`](10-decisions.md) D30 — which adopts §104.8's five homes
+     in order and builds the fourth as `gestures(step, init)`, a fold over occurrences that were
+     never proposed, validated or recorded. The correction to D1 is that ephemerality comes from the
+     *stream*, not from the absence of a `durable` wrapper, so the digest D3 rests on is untouched.
+     `B0522`, `B0523` and `B0524` are the refusals and `beck-cli/tests/gestures.rs` is the gate.
+     What is **not** done is homes 1 and 2 as enforcement: nothing tells a program its modal should
+     have been a `<dialog>`, which is item 8's work. Lane A.
   7. **Focus as a function of state** (S): an attribute the view writes and the client reconciles,
      never a `focus()` effect — the page stays a pure function of state, which is the property the
      design is for. Every APG pattern worth having moves focus, so this and item 6 are what the
@@ -752,7 +755,7 @@ directories.
 
 | Lane | Owns | What is left in it | Collides with |
 |---|---|---|---|
-| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3, 6 and 7 (§8.5.4) — `Class` as a type, where interface state lives, and focus as an attribute | **Itself, completely** — see below |
+| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3 and 7 (§8.5.4) — `Class` as a type and focus as an attribute | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned; the styling cluster's item 5 (§8.5.4) — the theme as a Beck value; items 1 and 4 are done | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4). Comment-preserving printing and the `ui:` vocabulary were this lane's and are done | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |

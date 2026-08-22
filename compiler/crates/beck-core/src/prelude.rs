@@ -943,6 +943,40 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
             Prim::Freshness,
             Scheme::mono(fun(vec![], Ty::signal(Ty::con("Freshness")))),
         ),
+        // `gestures : ((S, G) -> S, S) -> Signal[S] ! { dom }` — D30's non-durable fold.
+        //
+        // It carries its step function for `awareness`'s reason: there is no stream to read. A
+        // gesture stream has exactly one consumer by construction — nothing else in the program
+        // could name it, because nothing else is on the client's side of the seam — so naming it
+        // would buy a declaration and no expressiveness.
+        //
+        // **The step takes the bare gesture, and that is the whole argument for a second
+        // primitive.** `fold`'s step takes an `Envelope[E]`, whose `seq` is §3.7's "position in the
+        // total order — assigned here, nowhere else". A gesture has no position in the total order:
+        // it is not in the order. Passing one an envelope would have to invent a `seq`, an `at` and
+        // an `actor` for something that was never recorded, which is a lie told in exactly the
+        // place D30 exists to be honest about. The signatures differ because the things differ —
+        // `(S, Envelope[E]) -> S` says this state is a function of the log, and `(S, G) -> S` says
+        // it is a function of nothing the log knows.
+        //
+        // `dom` is the placement and the semantics at once. The client is the only tier that
+        // discharges it ([`crate::ty::Tier::discharges`]), so this is client-placed without a rule
+        // being written for it, and `durable` — which only `data` and `server` discharge — is
+        // unreachable from where it lands. That is D30's "ephemerality comes from the stream"
+        // enforced as a type rather than promised as a convention.
+        (
+            "gestures",
+            Prim::Gestures,
+            poly_eff(
+                &[A, B],
+                &[E],
+                fun_eff(
+                    vec![fun_eff(vec![v(A), v(B)], v(A), Row::var(E)), v(A)],
+                    Ty::signal(v(A)),
+                    Row::of([Effect::Dom]),
+                ),
+            ),
+        ),
         (
             "filter_map",
             Prim::StreamFilterMap,

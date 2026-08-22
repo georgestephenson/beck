@@ -286,6 +286,10 @@ pub struct Decision {
     /// a server renders the state it has recorded, so its answer is `Confirmed` and nothing else,
     /// and a page that branches on it is a page with a dead branch.
     pub reads_freshness: bool,
+    /// True when the view reads a `gestures(step, init)` — D30's non-durable fold. The second
+    /// condition that refuses **Mode A**, and for `reads_freshness`'s reason on the other fact: a
+    /// server has received no gestures, so its answer is `init` and nothing else.
+    pub reads_gestures: bool,
     /// Where the component is declared, for a diagnostic.
     pub span: Span,
 }
@@ -330,6 +334,7 @@ impl Decision {
             reads_presence: roles.view_reads_presence,
             reads_awareness: roles.awareness.is_some(),
             reads_freshness: roles.view_reads_freshness,
+            reads_gestures: roles.gestures.is_some(),
             // A declared mode is refused where it was written; a defaulted one, at the component.
             span: declared.map_or(span, |(_, s)| s),
         }
@@ -404,6 +409,15 @@ impl Decision {
         // §3.7's freshness dimension, when the program asked for it. Printed beside optimism
         // because it is the same fact seen from the page: optimism is what makes a guess, and this
         // is the page being able to say so.
+        if self.reads_gestures {
+            line(
+                &mut out,
+                "interface state",
+                "kept — this page folds its own gestures into a client-local accumulator that \
+                 never reaches the log (`docs/10` D30)"
+                    .to_string(),
+            );
+        }
         if self.reads_freshness {
             line(
                 &mut out,
@@ -501,6 +515,36 @@ impl Decision {
                         "render this component in the browser — `@render(client)`, which is what \
                          makes a guess possible in the first place — or take `freshness` out of \
                          its page",
+                    ),
+                );
+            }
+            // The same refusal about the other thing only a client holds. D30's five homes put
+            // this one fourth on purpose: a page that reaches for interface state and cannot
+            // render in the browser is usually a page whose state belongs in the platform or the
+            // URL, and those are free.
+            if self.reads_gestures {
+                diags.push(
+                    Diagnostic::error(
+                        "B0522",
+                        format!(
+                            "`{}` reads a `gestures` fold, so it cannot render on the server",
+                            self.component
+                        ),
+                        self.span,
+                    )
+                    .with_primary_label("a server has received no gestures")
+                    .with_note(
+                        "a gesture is one client's movement of its own interface: it is not \
+                         proposed, not validated and not recorded, so it never reaches a server. A \
+                         page rendered there would render the interface state's initial value at \
+                         every position of every log, and every branch that depended on a gesture \
+                         would be unreachable.",
+                    )
+                    .with_fix(
+                        "render this component in the browser — `@render(client)` — or give the \
+                         state one of the homes that survives a server render: markup the platform \
+                         already knows (`<dialog>`, `popover`, `<details name>`), or the route on \
+                         the `Session` (`docs/10` D30)",
                     ),
                 );
             }

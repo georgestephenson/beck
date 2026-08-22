@@ -1111,15 +1111,16 @@ pub const INDEX: &[CodeEntry] = &[
     e(
         "B0519",
         Stage::Signals,
-        "a non-durable fold is not built yet",
-        "`docs/10` D1 provides for a fold that is not wrapped in `durable` — \"high-churn ephemera \
-         get non-durable folds, same semantics, no log persistence\" — and it is decided rather \
-         than built. Until this diagnostic existed, such a program was reported as a *library* \
-         with no durable state, which sent its author to add the `durable` they had deliberately \
-         left off. What stands in the way is not plumbing: an accumulator outside the log is not a \
-         function of the log, so it cannot be replayed into and cannot be in the state digest that \
-         `tests/replay.rs` holds a replay to — and D3 rests on that digest. The question is what \
-         the digest covers, and it is open.",
+        "a fold over the log that is not `durable`",
+        "The stream this folds is the log's, so its accumulator *is* a function of the log \
+         whatever the program calls it: every event on it was validated and recorded, and replay \
+         would reproduce this state whether or not anybody asked. Declining to write it down does \
+         not make it ephemeral, it makes it a state the log can reconstruct and the process \
+         cannot. `docs/10` D30 is the rule this enforces — **ephemerality comes from the stream, \
+         never from the absence of a `durable` wrapper** — and it corrects D1, which named the \
+         right problem and the wrong mechanism. State that should not survive a restart folds \
+         gestures (`gestures(step, init)`), which are never recorded; state folded from events is \
+         `durable(fold(…))`.",
     ),
     e(
         "B0520",
@@ -1138,6 +1139,42 @@ pub const INDEX: &[CodeEntry] = &[
         "`B0516` for the roster that carries a payload. `@render(client)` sends the browser the \
          accumulator, and what every *other* connection is contributing is in neither the \
          accumulator nor the log — the runtime holds it, one row per socket.",
+    ),
+    e(
+        "B0522",
+        Stage::Signals,
+        "reads a `gestures` fold, so it cannot render on the server",
+        "`B0518` about the other fact only a client holds. A gesture is one client's movement of \
+         its own interface — not proposed, not validated, not recorded — so it never reaches a \
+         server, and a page rendered there would show the interface state's initial value at every \
+         position of every log with every gesture-dependent branch unreachable. `docs/10` D30 \
+         orders the homes for interface state and puts this one fourth: a page that reaches for a \
+         client-local fold and cannot render in the browser usually wants markup the platform \
+         already knows (`<dialog>`, `popover`, `<details name>`) or the route on the `Session`, \
+         both of which survive a server render and cost nothing.",
+    ),
+    e(
+        "B0523",
+        Stage::Signals,
+        "the chokepoint reads a `gestures` fold, which is not in the log",
+        "`B0515` and `B0520` for D30's client-local interface state, and the clearest case of the \
+         three. A gesture is never proposed, so no `validate` ever saw one, and never recorded, so \
+         no replay can reach one — the log holds no trace that it happened. An event whose \
+         existence depended on whether somebody had a panel open would be unreproducible by \
+         construction. If interface state should decide an event then it is not interface state: \
+         propose a command when it changes, and decide from the fold over the events that \
+         produces, which is D30's fifth home.",
+    ),
+    e(
+        "B0524",
+        Stage::Signals,
+        "a variant is both a command and a gesture",
+        "A handler in the page carries the constructor it builds — `on_click=Open` is the value \
+         `Open`, serialised — and the client routes on its variant name: a name in the gesture \
+         union is folded where it was made, and a name in the command union is proposed to the \
+         server. A name in both would make `on_click` mean whichever decoder ran first, which is \
+         a page whose buttons do one of two very different things for a reason nobody can read. \
+         The two unions are different types and the fix is to say so: rename one.",
     ),
     // --------------------------------------------------------- B06xx: modules and interfaces
     e(

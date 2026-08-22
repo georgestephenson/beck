@@ -89,6 +89,7 @@ pub const RESTRICTED: &[(&str, &str)] = &[
     ("awareness", "cap.presence"),
     ("digest_keyed", "cap.sign"),
     ("durable", "durable"),
+    ("gestures", "dom"),
     ("http_fetch", "net(host)"),
     ("merge_clients", "ingress"),
     ("now", "nondet"),

@@ -2292,6 +2292,7 @@ impl<'h> Interp<'h> {
             | Prim::Presence
             | Prim::Awareness
             | Prim::Freshness
+            | Prim::Gestures
             | Prim::StreamFilterMap
             | Prim::Fold
             | Prim::Durable

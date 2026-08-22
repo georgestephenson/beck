@@ -223,6 +223,21 @@ pub enum Prim {
     /// is `Confirmed` everywhere else. No capability, because nothing is disclosed by it — a client
     /// counting its own unacknowledged commands is reading itself.
     Freshness,
+    /// `gestures(step, init)` — the non-durable fold
+    /// [`docs/10`](../../../../../docs/10-decisions.md) D30 decides the shape of.
+    ///
+    /// The mirror of [`Prim::MergeClients`] on the other side of the wire: that one is every
+    /// client's proposals arriving at the one place time enters, and this is one client's gestures
+    /// arriving nowhere else at all. **Nothing here is proposed, validated or recorded** — a
+    /// gesture is a movement of the interface, which is why it is neither a `Command` nor an
+    /// `Event`, the two words that already mean something about the log.
+    ///
+    /// It carries `dom`, and that is the whole of its placement: no tier but the client discharges
+    /// it ([`crate::ty::Tier::discharges`]), so this is client-placed by machinery that was already
+    /// there, and `durable` is on a tier the client cannot reach. D3's invariant is untouched
+    /// rather than weakened — replay reproduces everything that was ever in the log, and no gesture
+    /// ever was.
+    Gestures,
     StreamFilterMap,
     Fold,
     Durable,
@@ -342,6 +357,7 @@ impl Prim {
             Presence => "presence",
             Awareness => "awareness",
             Freshness => "freshness",
+            Gestures => "gestures",
             StreamFilterMap => "filter_map",
             Fold => "fold",
             Durable => "durable",
@@ -370,6 +386,10 @@ impl Prim {
                 vec![Effect::Cap(std::sync::Arc::from("presence"))]
             }
             Prim::Durable => vec![Effect::Durable],
+            // D30: ephemerality is a property of the stream. `dom` is what says so — the client is
+            // the only tier that discharges it, so the state folded from this stream is on the
+            // client, and `durable` is on a tier the client cannot reach.
+            Prim::Gestures => vec![Effect::Dom],
             Prim::NewUuid | Prim::Now => vec![Effect::Nondet],
             // The scope performs `spawn` itself; what its children perform is charged by the
             // checker, from each child's own row, because a thunk's effects belong to the thunk's

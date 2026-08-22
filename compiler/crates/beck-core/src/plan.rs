@@ -1491,6 +1491,19 @@ impl Builder<'_> {
                 );
                 id
             }
+            // A constant, for `SigOp::Freshness`'s reason stated about the other client-held fact.
+            // A plan is what the *server* renders through and a server has received no gestures, so
+            // the accumulator here is `init` and never moves — which is not an approximation but
+            // the right answer: before any gesture, the interface state *is* its initial value.
+            //
+            // A page that reads one is refused Mode A (`crate::render`, `B0522`), so what reaches
+            // here is the SSR of a Mode B page, whose first paint is by construction the one with
+            // no gesture applied. The client's kernel holds the accumulator from then on.
+            SigOp::Gestures { init, .. } => {
+                let id = self.push(Op::Const, Vec::new(), None);
+                self.constants.insert(id, init.clone());
+                id
+            }
             SigOp::PerSession { f } => {
                 let input = self.vertex(graph, node.inputs[0]);
                 let session = self.session;

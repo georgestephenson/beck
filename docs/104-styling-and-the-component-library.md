@@ -3,7 +3,9 @@
 > **Design, with measurements. Nothing here is built.** Every number below was produced by a command
 > this document quotes, against the tree at the time of writing. The styling half is **decided** —
 > [`10`](10-decisions.md) D29 — and the work is scheduled in [`08`](08-roadmap.md) §8.5.4; the
-> component half is measured and open, and §104.8's Wall 1 is explicitly not settled here. Three of
+> component half is measured and open. §104.8's Wall 1 was left unsettled here and was settled
+> afterwards by [`10`](10-decisions.md) D30, which adopts §104.8's five homes and builds the fourth.
+> Three of
 > the four things this audit found wrong are **defects** and are registered in
 > [`DEFECTS.md`](../DEFECTS.md) with the gate each fix owes; the fourth — focus cannot be placed by a
 > view — is an *absence* rather than a defect, so it is a scheduled item and not a register entry.
@@ -485,7 +487,7 @@ checked — and §104.9 is the defect that makes it not quite true yet.
 
 ## 104.8 The three walls
 
-### Wall 1 — interface state has no home, so opening a dropdown is a log entry
+### Wall 1 — interface state had no home, so opening a dropdown was a log entry — **DOWN** ([`10`](10-decisions.md) D30)
 
 A modal's open flag, an accordion's expanded section, a combobox's highlighted option, a table's
 sort column, a carousel's index. Where does that state live?
@@ -502,19 +504,25 @@ ok: 4 definitions — a library: no durable state, so there is nothing to run
 ```
 
 The program is not an application. A non-durable fold does not make a signal graph, does not get a
-page, does not run. D1's escape hatch is **decided and unbuilt**. And placing the durable one where
-the state belongs is refused, correctly:
+page, does not run — and `B0519` now says so directly rather than reporting the program as a
+library. And placing the durable one where the state belongs is refused, correctly:
 
 ```
 error[B0401]: `ui_state` is placed on `client`, which cannot discharge `durable`
    = note: `durable` is the log: placing it on the client would ship the database to the browser
 ```
 
-So today the only expressible answer is that **opening a modal is a `Command`, validated by
+So until D30 the only expressible answer was that **opening a modal is a `Command`, validated by
 `validate`, recorded as an `Event`, and folded into the durable log forever** — replicated to the
 data tier, replayed on every genesis replay, and included in the state digest. A date picker paging
-to next year is twelve permanent log entries. This is not a performance nit; it is the semantics
-being wrong about what happened. Nobody *decided* it, which is why it is a wall and not a trade-off.
+to next year was twelve permanent log entries. That is not a performance nit; it is the semantics
+being wrong about what happened. Nobody *decided* it, which is what made it a wall and not a
+trade-off.
+
+**It is decided now.** The survey below produced the five homes, and
+[`10`](10-decisions.md) D30 adopts them with the fourth built as `gestures(step, init)`. The rest of
+this section is the reasoning that got there, kept because the *order* of the homes is the part a
+reader needs and the survey is what justifies it.
 
 #### What other systems do, and what they agree on
 
@@ -542,8 +550,9 @@ it be here tomorrow" decides the home; the storage follows. That is what makes R
 #### The five homes, and the rule this document recommends
 
 Not three candidates but five homes with an order of preference, which is the form the survey says
-the answer takes. **This is a recommendation and not a decision**: adopting it wants a D-number, in
-[`10`](10-decisions.md)'s sense, because the last of them changes what a replay has to reproduce.
+the answer takes. **This is [`10`](10-decisions.md) D30**, which adopts the order and builds the
+fourth home; it needed a D-number rather than a recommendation because a reader of a Beck program
+can observe which home a piece of state is in.
 
 1. **The platform, first.** §104.9: `<dialog>`, `popover`, `<details name>` and command invokers hold
    a large fraction of this state if asked in markup, and then it is nobody's state at all — no
@@ -561,24 +570,31 @@ the answer takes. **This is a recommendation and not a decision**: adopting it w
    **`awareness(f)` now exists** for the half of it a session can answer — see below for what that
    half is and what the other half still waits on. It is what D1's "cursors" always wanted.
 4. **A client-placed non-durable fold**, for what is left after those three: ephemera that *nobody
-   else* sees — a combobox's highlighted option, a tooltip's target. It needs a client-local stream,
-   which does not exist; the only stream is `merge_clients()` and it is server-placed by §3.5.
+   else* sees — a combobox's highlighted option, a tooltip's target. **`gestures(step, init)` now
+   exists** for this. It was thought to need a client-local *stream*, and that was the thing
+   blocking it: the only stream is `merge_clients()` and it is server-placed by §3.5. The
+   construct takes no stream at all — a gesture stream has exactly one consumer by construction, so
+   naming it buys a declaration and no expressiveness, and `awareness(f)` had already set that
+   precedent. `compiler/examples/interface.beck` is the program and
+   `beck-cli/tests/gestures.rs` is the gate.
 5. **The durable log**, only for what a second person *and* a later day should see. Which is where
    all of it goes today.
 
-The order is the recommendation. Its value is that the first two are **free** — one is markup and
-the other is a field that already exists — and the third is nine-tenths built, so the expensive home
-is needed for far less than it looks.
+The order is the decision. Its value is that the first three are **free or built** — one is markup,
+one is a field that already exists, and the third is `awareness(f)` — so the expensive home is
+needed for far less than it looks.
 
-**The client-local fold is the only home that has to be built, and nothing found needs a
+**The client-local fold was the only home that had to be built, and nothing found needs a
 server-side one.** A
 search for counter-examples returned exactly one server-side ephemeral need — awareness, above — and
 its shape is a keyed map of each client's latest value, not an accumulation over occurrences. The
 other candidates were already answered: rate counters are §82.5's deliberately *sharded* table,
 sessions and presence are connections, and a cache "does not exist as a concept" because the
 incrementally-maintained views are the cache ([`15`](15-scale-and-distribution.md)). So D1's
-sentence names the right problem and the wrong mechanism, and the correction is that **ephemerality
-comes from the stream and the audience, never from the absence of a `durable` wrapper**.
+sentence named the right problem and the wrong mechanism, and D30's correction is that
+**ephemerality comes from the stream and the audience, never from the absence of a `durable`
+wrapper** — which is why `B0519` remains an error for a bare `fold` over the log's stream, and why
+the new construct is a primitive rather than a permission.
 
 #### What awareness is, and the half of it that is built
 

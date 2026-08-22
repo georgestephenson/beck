@@ -113,7 +113,7 @@ So:
   moves every corpus-wide count the documents quote** — what the native backends compile and
   refuse, what the WebAssembly emitter is measured against, where the corpus places, how many
   of its names rename. Each of those is marked where it is written, with an HTML comment
-  naming the quantity (`985<!--c:native-compiled-->`), and
+  naming the quantity (`990<!--c:native-compiled-->`), and
   `docs.rs::every_corpus_wide_count_quoted_in_prose_is_the_one_the_tree_has` derives them all
   and fails until every marked number agrees. Run it with `--nocapture` and it prints the
   table; a quantity it derives and nobody quotes fails too, so a figure cannot leave the
@@ -197,7 +197,7 @@ different claims.**
 the differential, replay-determinism, backend-seam, scaling, frames, security, pending-security,
 corpus, placement-property, patterns, general-slicer, incremental-analysis, incremental-engine,
 fusion,
-shared-arrangement, subscription, view-metrics, read-model, style, SICP, Are We Fast Yet, Benchmarks Game,
+gestures, shared-arrangement, subscription, view-metrics, read-model, style, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
 mode-B, browser, client, playground, identity, OIDC, presence, cranelift, wasm-backend, release and
@@ -282,5 +282,19 @@ the thing you are guarding against would make it so.
     needs `sh`, `tar`, a SHA-256 tool and either `curl` or `wget`; `BECK_REQUIRE_INSTALL=1` forbids
     the skip. A skip means nothing checked that a bad checksum stops an install.
   - Compose parity needs Docker; the thin-client and Mode B budgets need `brotli` (apt-installable).
+- **`target/` reaches 25–30 GB in a working session, and the allowance is fixed.** It is not
+  waste to be tuned away: 17 crates and 74 integration-test files mean `cargo test --workspace
+  --all-targets` builds ~90 executables, each **statically linked** against the compiler plus
+  whatever it pulls — cranelift, LLVM, aws-lc-rs, SQLite — and each carrying full debug info,
+  because `[profile.dev]` is unset and rustc's default is `debug = 2`. That is 100–300 MB apiece.
+  Cargo then keeps the *previous* hash-suffixed copy of every binary it rebuilds, so an
+  edit-and-rerun session accumulates them: 184 executables for 90 names, five copies of `beck` at
+  293 MB, is an ordinary afternoon.
+  **`rm -rf target/debug/incremental` first** — several GB, pure cache, costs only rebuild time and
+  never correctness. Then `cargo clean -p <crate>` for something you are done with. Reach for
+  `cargo clean` only when you mean to pay the full rebuild. On a cloud runner a write failing with
+  "no space left on device" while `df` shows the disk mostly empty is this allowance and not a
+  broken machine — deletes still succeed when writes do not, so clean up rather than starting a new
+  session.
 - **The network is proxied and partial.** crates.io and the toolchain host work; docs hosts may
   not. Read a dependency's API from its vendored source under `~/.cargo/registry/src/`.

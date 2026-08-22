@@ -1,0 +1,161 @@
+# Interface state, in the home D30 gives it — the fourth of five, and the only one that needed
+# building (docs/10 D30, docs/104 §104.8).
+#
+# A filter chip, a sort column and a details panel. None of the three is anything the log should
+# know: they are this person's view of the board on this tab this minute, and folding them into
+# `durable` would put "somebody opened a panel" in the history of the business, forever, replicated
+# to the data tier and replayed on every genesis replay.
+#
+# **`gestures(step, init)` is the non-durable fold.** Note what it does *not* take: a stream. There
+# is nothing to name, because a gesture has exactly one consumer by construction — it is made here,
+# folded here, and never travels. Note also its step's type. A `durable` fold's step takes an
+# `Envelope[Event]` whose `seq` is "position in the total order"; a gesture has no position in the
+# total order, so it arrives bare. The signatures differ because the things differ.
+#
+# The rest follows from `gestures` carrying `dom`, which only the client discharges: `ui_state` is
+# placed on `client`, the page follows it there, and `durable` — which no client tier reaches — is
+# unreachable from the accumulator. `beck explain place interface.beck` prints it.
+#
+# What this program is *not* allowed to do is the more interesting half:
+#
+#   * `validate` cannot read `ui_state` (B0523). An event whose existence depended on whether a
+#     panel was open could not be replayed, because the log holds no trace that it opened.
+#   * the page cannot render on the server (B0522). A server has received no gestures, so it would
+#     render `init` at every position of every log with every branch below dead.
+#   * `Sort` cannot also be a `Command` variant (B0524), because a handler carries the constructor
+#     and the client routes on its name.
+
+model Card:
+    id: Int
+    title: Str
+    tag: Str
+    done: Bool
+
+model Board:
+    cards: list[Card]
+
+union Command:
+    Add(title: Str, tag: Str)
+    Finish(id: Int)
+
+union Event:
+    Added(id: Int, title: Str, tag: Str)
+    Finished(id: Int)
+
+union Rejection:
+    NoSuchCard
+    Empty
+
+# The interface's own vocabulary. Nothing here is proposed, validated or recorded, which is why it
+# is neither a `Command` nor an `Event` — the two words that already mean something about the log.
+union Gesture:
+    ShowOnly(tag: Str)
+    ShowEverything
+    SortByTitle
+    SortByAge
+    Inspect(id: Int)
+    ClosePanel
+
+model Ui:
+    only: Str
+    by_title: Bool
+    inspecting: Int
+
+def apply_event(b: Board, env: Envelope[Event]) -> Board:
+    match env.body:
+        case Added(id, title, tag):
+            return b.with(cards=concat_lists([b.cards, [Card(id=id, title=title, tag=tag, done=False)]]))
+        case Finished(id):
+            return b.with(cards=map_list(b.cards, finish_one(id)))
+
+def finish_one(id: Int) -> (Card) -> Card:
+    return lambda c: c.with(done=(c.done or (c.id == id)))
+
+def validate(b: Board, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Add(title, tag):
+            if str_len(title) == 0:
+                return Err(error=Empty)
+            return Ok(value=[Added(id=list_len(b.cards), title=title, tag=tag)])
+        case Finish(id):
+            if not any_card(b.cards, id):
+                return Err(error=NoSuchCard)
+            return Ok(value=[Finished(id=id)])
+
+def any_card(cards: list[Card], id: Int) -> Bool:
+    return list_len(filter_list(cards, lambda c: c.id == id)) > 0
+
+# The step a gesture is folded by. Two parameters, and the second is the gesture itself: no
+# envelope, because there is no position in a total order to put in one.
+def apply_gesture(u: Ui, g: Gesture) -> Ui:
+    match g:
+        case ShowOnly(tag):
+            return u.with(only=tag)
+        case ShowEverything:
+            return u.with(only="")
+        case SortByTitle:
+            return u.with(by_title=True)
+        case SortByAge:
+            return u.with(by_title=False)
+        case Inspect(id):
+            return u.with(inspecting=id)
+        case ClosePanel:
+            return u.with(inspecting=(0 - 1))
+
+def shown(b: Board, u: Ui) -> list[Card]:
+    visible = filter_list(b.cards, lambda c: (str_len(u.only) == 0) or (c.tag == u.only))
+    if u.by_title:
+        return sort_by(visible, lambda c: c.title)
+    return visible
+
+def view(b: Board, u: Ui) -> Html:
+    return ui:
+        main:
+            h1: "board"
+            nav:
+                button(on_click=ShowEverything): "all"
+                button(on_click=ShowOnly(tag="bug")): "bugs"
+                button(on_click=ShowOnly(tag="chore")): "chores"
+                button(on_click=SortByTitle): "by title"
+                button(on_click=SortByAge): "by age"
+            ul:
+                for c in shown(b, u):
+                    li(key=c.id):
+                        span(on_click=Inspect(id=c.id)): c.title
+                        button(on_click=Finish(id=c.id)): "done"
+            if u.inspecting >= 0:
+                aside:
+                    h2: "card"
+                    p: str(u.inspecting)
+                    button(on_click=ClosePanel): "close"
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, board, validate)
+board: Signal[Board] = durable(fold(apply_event, Board(cards=[]), events))
+ui_state: Signal[Ui] = gestures(apply_gesture, Ui(only="", by_title=False, inspecting=(0 - 1)))
+
+@render(client)
+page: Signal[Html] = map2(view, board, ui_state)
+
+# The page renders against `init` here, because `beck test` holds the log and a gesture never
+# reaches it — the same reason the server renders `init` (`B0522`). So these assert what the log
+# does, which is the half a test of a Beck program is for; `beck-cli/tests/gestures.rs` drives a
+# real client for the half it cannot see.
+test "a card added shows on the page":
+    given []
+    when Add(title="fix the slicer", tag="bug")
+    expect Ok(value=[Added(id=0, title="fix the slicer", tag="bug")])
+
+test "an empty title never reaches the log":
+    given []
+    when Add(title="", tag="bug")
+    expect Err(error=Empty)
+
+test "finishing a card nobody has is refused":
+    given []
+    when Finish(id=7)
+    expect Err(error=NoSuchCard)
+
+test "the board renders from the log":
+    given [Added(id=0, title="fix the slicer", tag="bug")]
+    expect page(session("ana")) contains "fix the slicer"

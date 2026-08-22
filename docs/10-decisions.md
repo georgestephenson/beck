@@ -10,9 +10,9 @@ One decision can need both, and D23 is the worked example: the rule is here, the
 its refused alternatives are [`adr/0018`](adr/0018-the-standard-library-is-carried-in-the-compiler.md),
 and neither restates the other.
 
-Decisions marked **DECIDED** are settled and the other documents assume them. All decisions D1–D29
+Decisions marked **DECIDED** are settled and the other documents assume them. All decisions D1–D30
 are settled. A decision that revises an earlier one says so in both directions rather than quietly
-diverging (D20 revises D2).
+diverging (D20 revises D2, D30 corrects D1).
 
 ---
 
@@ -20,8 +20,17 @@ diverging (D20 revises D2).
 
 Folds are the native model for all state. First-class escape hatches: `external store` (existing
 databases, no fold guarantees, `external.*` effects) and a content-addressed **blob type** (the log
-carries hashes; bytes live in object storage). High-churn ephemera (presence, cursors) get
-non-durable folds — same semantics, no log persistence.
+carries hashes; bytes live in object storage). High-churn ephemera (presence, cursors) do not go in
+the log.
+
+*Corrected by D30*: this decision originally read "high-churn ephemera (presence, cursors) get
+non-durable folds — same semantics, no log persistence", and that named the right problem with the
+wrong mechanism. A fold over the log's own stream is a function of the log whatever it is called, so
+declining to persist it does not make it ephemeral. **Ephemerality comes from the stream and the
+audience, never from the absence of a `durable` wrapper.** Presence and cursors are not folds at all
+— they are `presence()` and `awareness()`, first-class non-durable `Signal`s (D6) — and interface
+state one client keeps to itself is `gestures(step, init)`, a fold over occurrences that were never
+recorded. D30 has the five homes and the order to try them in.
 
 ## D2 — v1 consistency ceiling accepted — **DECIDED**
 
@@ -974,6 +983,115 @@ its workarounds for state it could not place and positioning the platform could 
 worth taking from that ecosystem is its specification work — the WAI-ARIA Authoring Practices
 keyboard tables as each component's oracle ([`104`](104-styling-and-the-component-library.md)
 §104.10).
+
+## D30 — Interface state has five homes, and ephemerality comes from the stream — **DECIDED**
+
+The question D1 left open, forced by [`104`](104-styling-and-the-component-library.md)
+§104.8's Wall 1: **where does a modal's open flag live?** A dropdown's expanded section, a
+combobox's highlighted option, a table's sort column, a carousel's index. Before this decision the
+only expressible answer was the durable log, so opening a panel was a `Command`, validated by
+`validate`, recorded as an `Event` and folded into the history of the business forever — replicated
+to the data tier, replayed on every genesis replay, included in the state digest. A date picker
+paging to next year was twelve permanent log entries. Nobody decided that; it fell out of there
+being nowhere else to put it.
+
+### The correction to D1
+
+D1 provided for the alternative in so many words — "high-churn ephemera get non-durable folds, same
+semantics, no log persistence" — and it was never built, because the sentence is wrong in a way that
+only shows when you try. **An accumulator that merely declines to be `durable` is still folded from
+the log.** Every event on that stream was proposed, validated and recorded; a replay would
+reconstruct that state whether or not the program asked for it. Refusing to write it down does not
+make it ephemeral, it makes it a state the log can reproduce and the process cannot — and it is why
+`B0519` is still an error for a bare `fold`.
+
+So the mechanism is the stream, not the wrapper:
+
+> **Ephemerality comes from the stream and the audience, never from the absence of a `durable`
+> wrapper.**
+
+That is what makes this decision safe rather than a weakening of D3. `replay.rs` asserts
+`digest(replayed) == digest(live)`, D3 rests on that digest, and **neither changes**: the digest
+covers the durable accumulator exactly as before. A gesture was never a candidate for it, because a
+gesture never travelled far enough to be one. The question `DEFECTS.md` recorded as "what does the
+state digest cover" dissolves rather than being answered.
+
+### The five homes, in order
+
+The survey in §104.8 found two things every system with more than one home agrees on: the lifetime
+is a **declaration** and not an inference, and the assignment is by **audience** and not by
+mechanism — "does anybody else need to see this, and should it be here tomorrow". So:
+
+1. **The platform.** `<dialog>`, `popover`, `<details name>`, command invokers. A modal's open flag
+   is this row, and then it is nobody's state at all: no command, no event, no fold, nothing to
+   place (§104.9).
+2. **The URL**, for anything that deserves a bookmark — a sort, a filter, a selected tab. A route is
+   already a field of `Session` ([`94`](94-the-client-report.md) §94.3), so this home exists today.
+3. **Awareness**, for ephemera a *second person* must see: a cursor, a selection, a typing
+   indicator. `awareness(f)`, built — and it is what D1's "cursors" always wanted.
+4. **A client-placed non-durable fold**, for what is left: ephemera *nobody else* sees. This is the
+   one that had to be built, and it is `gestures(step, init)`.
+5. **The durable log**, for what a second person *and* a later day should see.
+
+The order is the decision, and its value is that the first three are free or built: the expensive
+home is needed for far less than it looks. **Reach for 4 only after 1, 2 and 3**, and a diagnostic
+says so — a page that keeps interface state cannot render on the server (`B0522`), which is a real
+cost, and the fix it suggests first is the platform or the route.
+
+### The construct
+
+```python
+union Gesture:
+    Inspect(id: Int)
+    ClosePanel
+
+ui_state: Signal[Ui] = gestures(apply_gesture, Ui(inspecting=-1))
+```
+
+Four things about its shape are the decision rather than an implementation:
+
+- **It carries its step and takes no stream.** A gesture stream has exactly one consumer by
+  construction — nothing else in the program is on that side of the seam — so naming it would buy a
+  declaration and no expressiveness. `awareness(f)` set the precedent: a source carries its function
+  when there is no signal to read it from.
+- **The step takes the bare gesture**, `(S, G) -> S`, where a `durable` fold's step takes an
+  `Envelope[E]`. §3.7 fixes an envelope's `seq` as "position in the total order — assigned here,
+  nowhere else", and a gesture has no position in the total order. Inventing one would be a lie in
+  exactly the place this decision exists to be honest about, so the signatures differ because the
+  things differ.
+- **It carries `dom`, and that is its whole placement.** The client is the only tier that discharges
+  `dom` (§3.3), so the fold is client-placed and the page follows it there by machinery that was
+  already in the compiler, and `durable` — which only `data` and `server` discharge — is unreachable
+  from where it lands. Nothing new enforces this.
+- **A gesture is neither a `Command` nor an `Event`**, the two words that already mean something
+  about the log. It is not proposed, not validated, not recorded, and does not survive the tab.
+
+### What it may not do
+
+Three refusals, and they are the load-bearing half:
+
+- **`B0523` — the chokepoint may not decide from it.** The strongest case of the rule `presence`
+  (`B0515`) and `awareness` (`B0520`) already live under: those are facts the server holds and does
+  not record, and this is a fact the server never had. An event whose existence depended on whether
+  somebody had a panel open could not be replayed, because the log holds no trace that it opened.
+- **`B0522` — a page that reads it may not render on the server.** `B0518` about the other thing
+  only a client holds. A server has received no gestures, so it renders `init` at every position of
+  every log with every gesture-dependent branch dead.
+- **`B0524` — a variant may not be both a command and a gesture.** A handler in the page carries the
+  constructor it builds and the client routes on its name, so a name that is both would make
+  `on_click` mean whichever decoder ran first.
+
+`beck-cli/tests/gestures.rs` is the gate, and it asserts the second half of the claim four ways —
+the log is empty, nothing is queued to send, a restart comes back to `init`, and the server's own
+decoder refuses a gesture — because any one of those alone could pass while the construct leaked
+through another.
+
+### What this does not decide
+
+Homes 1 and 2 are recommendations that nothing enforces: no diagnostic tells a program that its
+modal should have been a `<dialog>`, and `@render(client)` is still opt-in, so a page reaching for
+home 4 finds out from `B0522` rather than from a suggestion made earlier. §104.9's platform
+components are the work that would close the first, and it is not started.
 
 ## Still open (minor, non-blocking)
 
