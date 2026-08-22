@@ -1001,7 +1001,7 @@ which fixes most of the plan before any cost is consulted. `ASSUMED_CARDINALITY`
 
 | Document | Correction |
 |---|---|
-| [`05`](05-tier-lowering.md) §5.3 | The incremental-views paragraph describes a joined read model updating "by delta, not by re-join". There is no join to update, and no operator relates two collections; the paragraph now says so and points here |
+| [`05`](05-tier-lowering.md) §5.3 | The incremental-views paragraph described a joined read model updating "by delta, not by re-join" when there was no join to update and no operator related two collections. It now says that, in the past tense, and lists what has since been built |
 | [`23`](23-incremental-views-report.md) §23.19 | "Joins, subqueries, aggregates — **nothing**, unchanged" is now true of **subqueries alone**: an equi-join over either index, all four aggregates, a semi-join and anti-join by key, and `distinct` are built. §99.9 holds what is left, which is no longer an operator — it is the read-model SQL compiling into the plan (item 9) |
 | [`23`](23-incremental-views-report.md) §23.19 | Same, for the read-model half — and its `count(*)` row is grouping's, not the SQL's |
 | [`08`](08-roadmap.md) §8.4 | The Phase 5 TPC-H row is conditioned on "§5.3's engine" that no phase builds. Phase 4 now carries the bullet |
