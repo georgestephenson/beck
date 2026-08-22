@@ -917,6 +917,100 @@ fn stocking_something_nobody_ordered_re_renders_nothing() {
     );
 }
 
+/// **The values in use are maintained, and one of them replacing another at the same position does
+/// not take it out.**
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7's second
+/// half. `corpus/39-topics.beck` shows the topics its notes are filed under, each once, in the
+/// order of their alphabetically-first note — so [`beck_core::plan::Op::Distinct`] publishes each
+/// value at the smallest input key holding it, and what can go wrong is everything that moves that
+/// key.
+///
+///   * a note arriving **before** the note that is currently first under its topic, so the
+///     published entry moves without the value changing — the only operator in the plan whose
+///     output does that;
+///   * the **first** note of a topic retopiced away, so the next occurrence is promoted rather
+///     than the topic disappearing;
+///   * the **last** note of a topic going, so the value goes with it, and then coming back;
+///   * one note's topic changing such that the **arriving value's new home is the departing
+///     value's old key** — which is what the corpus-wide differential found and this is written
+///     around. Settling the arriving value first and the departing one second removes the entry
+///     that was just inserted, so every departure has to be applied before any arrival. The events
+///     before this one exist to put the two topics in the order that makes it happen: the arriving
+///     value has to sort *before* the departing one for the wrong order to be taken.
+///
+/// The closing assertion is on the end state, because a green run over a log that only ever added
+/// topics would say nothing: the board ends with two notes under one topic, whose published
+/// occurrence is a note that arrived after the topic did.
+#[test]
+fn a_maintained_set_of_values_survives_the_events_that_move_where_each_one_sits() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/39-topics.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let mut subject = Subject::new("corpus/39-topics.beck", compile("39-topics.beck", &src));
+
+    let event = |variant: &str, fields: Vec<(&str, Value)>| {
+        Value::data(
+            Arc::from("Event"),
+            Some(Arc::from(variant)),
+            beck_core::core::Fields::from_iter(fields.into_iter().map(|(k, v)| (Arc::from(k), v))),
+        )
+    };
+    let written = |id: &str, text: &str, topic: &str| {
+        event(
+            "Written",
+            vec![
+                ("id", Value::str_(id)),
+                ("text", Value::str_(text)),
+                ("topic", Value::str_(topic)),
+            ],
+        )
+    };
+    let retopiced = |id: &str, topic: &str| {
+        event(
+            "Retopiced",
+            vec![("id", Value::str_(id)), ("topic", Value::str_(topic))],
+        )
+    };
+    let discarded = |id: &str| event("Discarded", vec![("id", Value::str_(id))]);
+
+    let log = vec![
+        written("n1", "bread", "food"),
+        written("n2", "apples", "shed"),
+        // `ants` sorts before `bread`, so food's published occurrence moves without food changing.
+        written("n3", "ants", "food"),
+        // shed's only note leaves it, so the value goes.
+        retopiced("n2", "food"),
+        written("n4", "aardvark", "shed"),
+        // The case this test exists for. `aardvark` is the key shed is leaving *and* the key food
+        // is arriving at, and `food` sorts before `shed` — so a settle pass that inserted before it
+        // removed would put food in and then take it straight back out.
+        retopiced("n4", "food"),
+        // The promotion, from the other side: food's published occurrence is `aardvark` now, so
+        // discarding `ants` must not move it.
+        discarded("n3"),
+        retopiced("n1", "tools"),
+        discarded("n1"),
+    ];
+
+    let mut compared = subject.agrees("the empty log");
+    for (i, e) in log.into_iter().enumerate() {
+        subject.fold(e);
+        compared += subject.agrees(&format!("event {}", i + 1));
+    }
+    assert!(compared >= 20, "only {compared} pages were compared");
+
+    let page = subject
+        .runtime
+        .view(&subject.state, ACTORS[0])
+        .expect("recompute")
+        .render();
+    assert!(
+        page.contains("topics: 1") && page.contains("food: aardvark"),
+        "the log this test is written around no longer ends with one topic whose published \
+         occurrence arrived after it did:\n{page}"
+    );
+}
+
 /// Fold one `Added` event into the sketch's accumulator.
 fn fold_added(runtime: &Runtime, state: &Value, n: u64, actor: &str) -> Value {
     let id = Value::data(

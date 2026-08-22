@@ -1600,6 +1600,171 @@ fn stocking_one_item_does_not_reconsider_every_order() {
     );
 }
 
+/// **The values in use are maintained, and the fold that spells the same thing is not.**
+///
+/// [`docs/99-the-data-tier-means-of-combination.md`](../../../../docs/99-the-data-tier-means-of-combination.md)
+/// §99.9 item 7's second half. `corpus/39-topics.beck` shows the topics its notes are filed under,
+/// each once, written `list_unique(map_list(…))` — one primitive, so
+/// [`beck_core::plan::Op::Distinct`] maintains it.
+///
+/// **The control is the same program with the dedup written as a fold**, which is what
+/// `lib/collections.beck`'s `unique` was before this operator and what anybody would write without
+/// a primitive to reach for. It computes the same list; it is a recursion, so the plan cannot see
+/// into it, and one note arriving rebuilds it from every note on the board. That is the whole
+/// argument for the primitive — `lib/README.md`'s division admits one for a combining form the
+/// view engine has to recognise — and it is measured here rather than asserted.
+///
+/// The event measured is the **worst case**: a note whose text sorts before every other, under a
+/// topic that already exists, so the published occurrence of that topic *moves* and the chip row is
+/// reassembled. A note that changed no answer would be flat for a reason that has nothing to do
+/// with the operator.
+#[test]
+fn the_values_in_use_are_maintained_and_a_fold_over_them_is_not() {
+    use beck_core::core::Fields;
+    use beck_core::engine::{Engine, Prepared, Work};
+    use beck_core::plan::{Op, Plan};
+    use beck_core::Value;
+    use beck_rt::{Envelope, Instant, Runtime};
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/39-topics.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+
+    // The same program with the dedup spelled as the fold it used to be.
+    let folded = src.replace(
+        "    return list_unique(map_list(notes, lambda n: n.topic))",
+        "    return seen_once(map_list(notes, lambda n: n.topic), {}, [])\n\
+         \n\
+         def seen_once(xs: list[Str], seen: Map[Str, Bool], acc: list[Str]) -> list[Str]:\n    \
+             match xs:\n        \
+                 case []:\n            \
+                     return acc\n        \
+                 case [first, *rest]:\n            \
+                     if map_contains(seen, first):\n                \
+                         return seen_once(rest, seen, acc)\n            \
+                     return seen_once(rest, map_insert(seen, first, true), \
+                                      list_append(acc, first))",
+    );
+    assert_ne!(
+        folded, src,
+        "corpus/39-topics.beck no longer spells its question the way this gate's control replaces"
+    );
+
+    let compile = |name: &str, text: &str| {
+        let (placed, diags, map) = beck_core::compile_str(name, text);
+        assert!(!diags.has_errors(), "{name}:\n{}", diags.render(&map));
+        placed.expect("compiles")
+    };
+    let maintained = compile("39-topics.beck", &src);
+    let recomputed = compile("39-folded.beck", &folded);
+
+    assert!(
+        Plan::compile(&maintained)
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Distinct)),
+        "corpus/39-topics.beck no longer compiles to a `distinct`, so this gate measures something \
+         else"
+    );
+    assert!(
+        !Plan::compile(&recomputed)
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Distinct)),
+        "the control compiled to the operator, so it is not a control"
+    );
+
+    let event = |variant: &str, fields: &[(&str, Value)]| {
+        let mut f = Fields::new();
+        for (k, v) in fields {
+            f.insert(Arc::from(*k), v.clone());
+        }
+        Value::data(Arc::from("Event"), Some(Arc::from(variant)), f)
+    };
+
+    // What one note costs once `n` are already on the board, under four topics.
+    let cost_at = |placed: &beck_core::Placed, n: i64| -> Work {
+        let backend = beck_eval::backend(placed);
+        let prepared =
+            Arc::new(Prepared::compile(placed, backend.as_ref()).expect("the plan prepares"));
+        let runtime = Runtime::new(placed.clone(), backend).expect("the program prepares");
+        let session = runtime.session("ana");
+        let here = beck_core::edge::presence_of("ana");
+        let mut engine = Engine::new(prepared);
+
+        let mut seq = 0u64;
+        let mut state = runtime.initial_state().expect("an initial accumulator");
+        let fold = |state: &Value, body: Value, seq: u64| {
+            let env = Envelope {
+                seq,
+                at: Instant(seq as i64),
+                actor: "ana".to_string(),
+                body: body.clone(),
+            };
+            runtime.fold(state, &env, body).expect("folds")
+        };
+        for i in 0..n {
+            seq += 1;
+            state = fold(
+                &state,
+                event(
+                    "Written",
+                    &[
+                        ("id", Value::str_(format!("n{i:06}"))),
+                        ("text", Value::str_(format!("note-{i:06}"))),
+                        ("topic", Value::str_(format!("t{}", i % 4))),
+                    ],
+                ),
+                seq,
+            );
+        }
+        // The cold render builds every arrangement — `O(n)`, once, and not what is measured.
+        engine.render(&state, &session, &here).expect("renders");
+        seq += 1;
+        state = fold(
+            &state,
+            event(
+                "Written",
+                &[
+                    ("id", Value::str_("n999999")),
+                    ("text", Value::str_("aardvark")),
+                    ("topic", Value::str_("t0")),
+                ],
+            ),
+            seq,
+        );
+        engine.render(&state, &session, &here).expect("renders");
+
+        let work = engine.work();
+        println!(
+            "at {n:>5} notes: {:>6} steps ({} applications, {} touched, {} materialised, {} \
+             recomputed)",
+            work.steps, work.applications, work.touched, work.materialised, work.recomputed
+        );
+        work
+    };
+
+    println!("maintained:");
+    let (small, large) = (cost_at(&maintained, 200), cost_at(&maintained, 1_600));
+    println!("as a fold:");
+    let (folded_small, folded_large) = (cost_at(&recomputed, 200), cost_at(&recomputed, 1_600));
+
+    assert!(
+        large.steps <= small.steps,
+        "eight times the notes cost {} backend steps against {}. A note joins the values in use or \
+         it does not, and neither answer is read off the collection — docs/99 §99.9 item 7",
+        large.steps,
+        small.steps
+    );
+    assert!(
+        folded_large.steps > folded_small.steps * 3,
+        "with the dedup written as a fold, eight times the notes cost {} steps against {} — which \
+         is not the whole-collection rebuild this gate exists to say the operator removes, so the \
+         flat row above says nothing",
+        folded_large.steps,
+        folded_small.steps
+    );
+}
+
 /// **Reconciling a reordered keyed list costs the same per row however many rows it has.**
 ///
 /// The client applies a patch against the children it already holds, so every index the differ

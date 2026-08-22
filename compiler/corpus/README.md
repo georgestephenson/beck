@@ -81,5 +81,14 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
   rather than generated — an order amended while it was off the page, so what comes back is what it
   is now; and one cancelled while it was on, so a change on the right cannot resurrect it.
 
+- **a page that shows a *set*** (program 39,
+  [`docs/99`](../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7). Every other
+  program here shows rows, or a question asked of rows; this one shows the topics its notes are
+  filed under, each once, as a chip row above the notes. It is the only program whose page has an
+  entry that can **move without its value changing** — a note arriving before the one that is
+  currently first under its topic republishes that topic somewhere else — and it is what caught the
+  operator's one real defect, on a generated log: a value leaving a position another value is
+  arriving at. Its awkward events are written out for that reason.
+
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.

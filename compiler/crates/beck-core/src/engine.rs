@@ -593,6 +593,7 @@ impl Engine {
                 Op::Join { key, matched } => self.join(up, id, key, *matched, cold)?,
                 Op::GroupBy { key, of, agg } => self.group_by(up, id, key, of, *agg, cold)?,
                 Op::Restrict { key, keep } => self.restrict(up, id, key, *keep, cold)?,
+                Op::Distinct => self.distinct(up, id, cold)?,
             }
         }
         Ok(())
@@ -1366,6 +1367,120 @@ impl Engine {
                     });
                 }
             }
+        }
+
+        self.cells[id].positions = positions;
+        self.cells[id].back = back;
+        self.publish(id, arr, changes, rebuild);
+        Ok(())
+    }
+
+    /// The values in a collection, each once — [`Op::Distinct`], and
+    /// [`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7's
+    /// second half.
+    ///
+    /// The operator publishes one entry per distinct value, at the **smallest input key** holding
+    /// it, so iterating the output gives the values in the order they were first seen — which is
+    /// what `list_unique` returns of a list, and therefore what the recompute this is held to
+    /// returns.
+    ///
+    /// Three passes, and the first is why there are three: settling a value means comparing where
+    /// it *was* published with where it belongs now, and applying the changes first destroys the
+    /// first half of that comparison. So the affected values' current positions are read before
+    /// anything moves, the changes are applied, and then each affected value is settled once
+    /// however many of its occurrences moved.
+    ///
+    /// Two maps, both of them fields this engine already had. [`Cell::positions`] holds what each
+    /// input key currently contributes, which is [`Engine::group_by`]'s reason for having it: a
+    /// value that has gone cannot be recomputed from the change. [`Cell::back`] holds the input
+    /// keys under each value — [`Engine::join`]'s reverse index with the roles read the other way
+    /// round — and the smallest of them is the answer, so a first occurrence leaving **promotes**
+    /// the next rather than dropping the value.
+    fn distinct(
+        &mut self,
+        up: Option<Upstream<'_>>,
+        id: OpId,
+        cold: bool,
+    ) -> Result<(), ExecError> {
+        let input = self.prepared.plan.nodes[id].inputs[0];
+        let rebuild = cold || self.rebuilt_of(up, input);
+        let incoming = self.feed(up, id, 0, input, rebuild)?;
+        if incoming.is_empty() && !rebuild {
+            self.cells[id].changed = false;
+            self.cells[id].changes.clear();
+            self.cells[id].rebuilt = false;
+            return Ok(());
+        }
+
+        let mut arr = self.take_arrangement(id, rebuild);
+        if rebuild {
+            self.cells[id].positions.clear();
+            self.cells[id].back.clear();
+        }
+        let mut positions = std::mem::take(&mut self.cells[id].positions);
+        let mut back = std::mem::take(&mut self.cells[id].back);
+
+        // Where each affected value sits *now*, before anything moves.
+        let mut was: BTreeMap<Value, Option<Key>> = BTreeMap::new();
+        let note = |was: &mut BTreeMap<Value, Option<Key>>, v: &Value| {
+            if !was.contains_key(v) {
+                let at = back.get(v).and_then(|keys| keys.iter().next().cloned());
+                was.insert(v.clone(), at);
+            }
+        };
+        for c in &incoming {
+            if let Some(before) = positions.get(&c.key) {
+                note(&mut was, &before[0].clone());
+            }
+            if let Some(v) = &c.new {
+                note(&mut was, v);
+            }
+        }
+
+        for c in incoming {
+            if let Some(before) = positions.remove(&c.key) {
+                withdraw(&mut back, &before[0], &c.key);
+            }
+            let Some(v) = c.new else { continue };
+            back.entry(v.clone()).or_default().insert(c.key.clone());
+            positions.insert(c.key, key_of(&v));
+        }
+
+        let settling: Vec<(Value, Option<Key>, Option<Key>)> = was
+            .into_iter()
+            .filter_map(|(v, before)| {
+                let now = back.get(&v).and_then(|keys| keys.iter().next().cloned());
+                match before == now {
+                    true => None,
+                    false => Some((v, before, now)),
+                }
+            })
+            .collect();
+
+        // **Every departure before any arrival**, and this is the one ordering constraint the
+        // operator has. The key a value is leaving can be the key another value is arriving at —
+        // one input row changing what it contributes is exactly that — and settling the arriving
+        // value first would have the departing one's removal take the new entry back out. The
+        // corpus-wide differential is what found it.
+        let mut changes = Vec::new();
+        for (_, before, _) in &settling {
+            let Some(k) = before else { continue };
+            if let Some(old) = arr.entries.remove(k) {
+                changes.push(Change {
+                    key: k.clone(),
+                    old: Some(old),
+                    new: None,
+                });
+            }
+        }
+        for (v, _, now) in &settling {
+            let Some(k) = now else { continue };
+            arr.entries.insert(k.clone(), v.clone());
+            changes.push(Change {
+                key: k.clone(),
+                old: None,
+                new: Some(v.clone()),
+            });
         }
 
         self.cells[id].positions = positions;

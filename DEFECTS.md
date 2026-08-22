@@ -186,9 +186,10 @@ argument rather than a reason to close it: the figures were re-read with the new
 the corpus and came back **975/143**, **225**, **382** and **366 of 376** — exactly what the
 documents said. What made this one clean is that the last two re-derivations left every figure
 printed by a test rather than kept in a comment, so the cost was reading five outputs instead of
-finding out which of three numbers was current. The cost is still a person remembering to look, and
-that is what the gate below is for. This tree reads **982/143**, **232**, **393** and **377 of
-387**.
+finding out which of three numbers was current. **Program 39 landed in the same session and moved
+every one of them again**, which is the frequency the gate is really about: two programs in a day
+is two silent falsifications of six documents. The cost is still a person remembering to look. This
+tree reads **985/144**, **237**, **402** and **386 of 396**.
 
 **Why it is a defect rather than untidiness.** The numbers are the evidence for claims a reader acts
 on: 975-of-1118 is what "the heap is whole" is worth, and the tier table is Phase 2's exit

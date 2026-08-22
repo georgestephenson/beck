@@ -666,6 +666,62 @@ fn a_difference_and_the_intersection_beside_it_are_one_index_and_no_rows() {
     );
 }
 
+/// **A `distinct` is a lowering, and the count above one does not visit it.**
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7's second
+/// half, and the two things about it that are decisions rather than code.
+///
+/// The first is that there is nothing to recognise: `list_unique` **names** the operator, so this
+/// takes no [`beck_core::plan::Relate`] switch where the join and the difference do — nothing is
+/// being read out of a shape and no choice is being made on the program's behalf. What bought that
+/// is the primitive, and the assertion is the negative one: with the recognition refused the
+/// operator is still there, because it never came from a recognition.
+///
+/// The second is that the operator's output is an **arrangement** and not a value, so `list_len`
+/// over it is [`beck_core::plan::Op::Count`] — the arrangement's size, §3.8's "±1 per event, never
+/// by recount" — rather than a recompute that would have to build the list to measure it. A
+/// `distinct` that published a `Value::List` would still render the right page and would cost the
+/// distinct values on every event that touched the collection.
+#[test]
+fn a_distinct_is_an_arrangement_and_the_count_above_it_is_not_a_recompute() {
+    use beck_core::plan::{Op, Plan, Relate};
+
+    let placed = corpus("39-topics.beck");
+    let plan = Plan::compile(&placed);
+    let at: Vec<usize> = (0..plan.nodes.len())
+        .filter(|&i| matches!(plan.nodes[i].op, Op::Distinct))
+        .collect();
+    assert_eq!(
+        at.len(),
+        1,
+        "the program asks for the values in use once: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+    assert!(
+        plan.nodes[at[0]].op.is_arrangement(),
+        "a `distinct` that published a value rather than an arrangement would cost its distinct \
+         values on every event that touched the collection"
+    );
+    assert!(
+        plan.nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Count) && n.inputs == vec![at[0]]),
+        "the count of the values in use is not the arrangement's size: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+
+    // The negative half: this operator does not come from the recogniser, so refusing the
+    // recogniser does not remove it.
+    assert!(
+        Plan::compile_with(&placed, Relate::Refuse)
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Distinct)),
+        "`Relate::Refuse` removed the operator, so it is a recognition after all and owes the \
+         off switch docs/08 §8.3 item 8 asks of one"
+    );
+}
+
 /// **Several lookups in one body are several joins**, chained — not a refusal.
 ///
 /// `corpus/33-awareness.beck` renders a person's whereabouts *and* their note, so its loop looks up

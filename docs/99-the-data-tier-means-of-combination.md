@@ -201,7 +201,7 @@ Everything the engine implements ([`plan.rs`](../compiler/crates/beck-core/src/p
 | **join (⋈)** | `Join`, recognised | **built** — an outer equi-join against an index whose key is unique, which is what an arrangement is (§99.5 decision 2). No syntax: §99.6 |
 | **grouping and aggregation (Γ)** | `ArrangeBy`, `Join`'s tally, `GroupBy` | **built** — the group as rows, its `count`, and `min`, `max` and `sum` per group, each answered without the group being assembled. Recognised from the loop that already asked (§99.6). What is missing is a *general* aggregate: a fifth one needs an operator, not a parameter |
 | **difference (−)** | `Restrict`, recognised | **built** — the rows of one collection whose key another does not answer, and the intersection that is its complement. The one binary operator whose output is one of its inputs, which is what decision 2 meant by "no representational change at all". No syntax: §99.6 |
-| **distinct (δ)** | — | missing (§99.9 item 7) — and what is missing is a **spelling**, not an operator: §99.9 item 7 |
+| **distinct (δ)** | `Distinct`, lowered | **built** — the values a collection holds, each once, at the input key of its first occurrence. The last row of this table, and the only operator here with no recognition at all: `list_unique` **names** it (§99.9 item 7) |
 
 Read as SICP's three-part test, which is the standard [`01`](01-vision-and-premise.md) §1.1 sets and
 [`25`](25-benchmarks-and-expressiveness.md) measures the language against:
@@ -216,9 +216,11 @@ Read as SICP's three-part test, which is the standard [`01`](01-vision-and-premi
 - **Means of combination** — this was the gap, and stating it this way is what made it obviously a
   gap rather than a missing feature: an algebra whose combining forms all take one operand cannot
   express a relationship between two things, so every relationship in every program was expressed
-  by leaving the algebra. Three binary operators have closed it — the join, the group, and the
-  difference — and each was recognised from a program that had already written the relationship
-  down without one.
+  by leaving the algebra. Four operators have closed it — the join, the group, the difference and
+  `distinct` — and three of the four were recognised from a program that had already written the
+  relationship down without one. The fourth is the exception that says what the other three cost: it
+  needed a **name** rather than a recognition, and until it had one the same question was a fold
+  nothing could see into.
 
 ## 99.5 Four decisions to take before any operator is written
 
@@ -283,10 +285,14 @@ undoing what the rewrite just did. `incremental.rs::a_difference_and_the_interse
 counts that rather than asserting it, by holding the recognised plan to the refused plan's number of
 per-element operators.
 
-**And the count per distinct value is already built, which moves what item 7 is waiting for.**
-`Op::GroupBy` keeps a multiset per group for `min` and `max` — a count against each distinct value,
-which is exactly the "new kind of arrangement" this decision said `distinct` would need. So the
-representation is not what is missing. What is missing is a **spelling**, and item 7 says which.
+**And `distinct` is built, on a representation this decision was right to say it would need and
+wrong about where it would come from.** The recommendation was to treat `distinct`-on-values as a
+later question because it needs "a count per distinct value, which is a new kind of arrangement".
+It does need one, and it was **not** new by the time it was wanted: `Op::GroupBy` had been keeping a
+multiset per group since `min` and `max` landed. What `Op::Distinct` keeps is that idea with the
+count replaced by the *keys* — the input keys holding each value, ordered, so the smallest of them
+is where the value is published. So the thing this decision deferred turned out to cost a name
+rather than a representation, which §99.9 item 7 says at length.
 
 ### 3. One clock, and where that stops being true
 
@@ -835,28 +841,58 @@ value would be a *stale* value for exactly one event — the one where the row w
 off the page — which is why that event is written into the log above rather than left to a
 generator.
 
-**`distinct` is where the rest of item 7 is, and what it is waiting for has moved.** This section
-said it needed "the multiplicity question, on its own terms", and §99.10 called it hard. The
-representation half of that question is **already answered and already built**: `Op::GroupBy` keeps
-a multiset per group for `min` and `max` — a count against each distinct value — which is precisely
-the new kind of arrangement decision 2 said `distinct` would need. What is left is the surface, and
-it is a decision rather than an operator:
+**`distinct` is done, and what it needed was a name.** This section said it was waiting on "the
+multiplicity question, on its own terms", and §99.10 called it hard. Neither was where the work
+was. The representation was already built — `Op::GroupBy`'s multiset is a count per distinct value —
+and what actually stood in the way was that **no expression in the language named the question**:
+`lib/collections.beck`'s `unique` is a fold and `elements(set_of(xs))` is a fold over a fold, and a
+fold is one opaque operator [`crate::plan`] rebuilds in full on every event.
 
-- **There is no primitive.** `lib/collections.beck` has two functions with a claim on the name and
-  they are **different functions**: `unique(xs)` drops later duplicates and keeps the order the list
-  had; `elements(set_of(xs))` is duplicate-free and *sorted*. Both are written as folds, so neither
-  is a shape the recogniser can read — the same wall `list_min` and `list_sum` were behind, and the
-  same one that made item 6 arrive in three pieces.
-- **Both are maintainable, which is what makes this a decision rather than a discovery.** The sorted
-  form keys its output by the value and needs only the counts. The order-preserving form keys its
-  output by the *smallest input key* holding each value, which is one `BTreeSet` of keys per distinct
-  value and `O(log n)` per delta. Neither is ruled out by decision 1, so the choice is which question
-  a program is asking, and a third answer invented for the operator's convenience is the thing
-  `list_sum`'s decision refused to do.
-- **The join above it is the third part.** `distinct` is the first operator whose output is neither
-  one row per input row nor one entry per group of the left, so what a consumer reads back — a
-  `list`, in the order the key gives — is a fourth `Matching` rather than one of the three that
-  exist.
+**So the decision is which of the two the primitive takes, and it is a decision because both are
+maintainable.** `unique(xs)` drops later duplicates and keeps the order the list had;
+`elements(set_of(xs))` is duplicate-free and *sorted*. Neither is ruled out by decision 1: the
+sorted form would key its output by the value and need only counts, and the order-preserving form
+keys its output by the **smallest input key** holding each value, which is one ordered set of keys
+per distinct value and `O(log n)` per delta. So nothing about the engine forced the answer.
+
+**What forced it is the test a second spelling of an old operation has to pass, which is
+`list_sum`'s rule applied to an order instead of to a total.** `list_unique` is `unique`'s answer
+and that library function's body is now a call to it, so **no third answer entered the language**;
+a primitive with the sorted answer would have been a fourth name for a question the library already
+answered two ways, and the difference between the two would land on whoever wrote the program.
+`interp.rs::a_unique_list_keeps_the_order_it_was_given_and_not_the_values_own` is that sentence as
+assertions, at the function it is about.
+
+`Op::Distinct` publishes one entry per value at the smallest input key holding it, so the output is
+a **sub-order of the input's** — the same relationship `filter_list`'s output has to its input, which
+is why nothing downstream had to learn anything and why there is no fourth `Matching`: the operator's
+output is a collection somebody loops over, not an index anybody probes. `corpus/39-topics.beck` is
+the program: the topics its notes are filed under, shown as a chip row above the notes.
+
+Three things it is held to:
+
+- **The cost, against the fold that spells the same thing.** There is no off switch here and that is
+  itself the finding — `list_unique` *names* the operator, so nothing is being decided on the
+  program's behalf and [`08`](08-roadmap.md) §8.3 item 8 has nothing to ask for. The control is
+  therefore the same program with the dedup written as the fold it used to be:
+  `scaling.rs::the_values_in_use_are_maintained_and_a_fold_over_them_is_not` measures a note
+  arriving on a board of 200 and of 1,600 — **62 backend steps at both sizes, against 2,280 and
+  17,680** for the fold. The event measured is the worst case, a note that *moves* a topic's
+  published occurrence, because one that changed no answer would be flat for a reason that has
+  nothing to do with the operator.
+- **The bookkeeping, and one defect it found.** A value can be published at a key another value is
+  arriving at — one row changing what it contributes is exactly that — so **every departure has to
+  be applied before any arrival**, or settling the arriving value first has the departing one's
+  removal take the new entry straight back out. The corpus-wide differential found it on a
+  generated log; `incremental_engine.rs::a_maintained_set_of_values_survives_the_events_that_move_where_each_one_sits`
+  is the written log that holds it, and the events before the interesting one exist to put the two
+  values in the order that makes the wrong settle order wrong.
+- **The plan shape**, because two of the operator's properties are decisions that no rendered page
+  would show: its output is an arrangement, so `list_len` over it is `Op::Count` — §3.8's "±1 per
+  event, never by recount" — rather than a recompute that would build the list to measure it; and
+  refusing the recogniser does not remove it, which is what says it is a lowering.
+  `incremental.rs::a_distinct_is_an_arrangement_and_the_count_above_it_is_not_a_recompute` holds
+  both.
 
 **8. Fusion for the new operators**, and this is where [`23`](23-incremental-views-report.md) §23.19's
 deferred question reopens on schedule: pushing a `filter_list` below a `join` is the first rewrite
@@ -870,10 +906,11 @@ own interpreter — which closes §23.19 and §12.5 together and keeps one code 
 Items 1–2 were days, items 4–5 were the phase, and item 3 followed them rather than preceding them.
 Item 6 arrived in three pieces for the reason it names — the count with item 3, the extremes once the
 language had a spelling for them, and the total once that spelling had been *decided* rather than
-merely added. Item 7 has split the same way and for the same reason, one step further on: the
+merely added. Item 7 split the same way and for the same reason, one step further on: the
 difference needed **no** spelling, because `map_contains` was already a primitive, and it was
-therefore the shortest operator in this document to land; `distinct` has two spellings and needs the
-decision about which. Items 8–9 each stand alone and can be scheduled independently.
+therefore the shortest operator in this document to land; `distinct` had two and the work was
+choosing, which is a decision of the kind item 6's `sum` took and not an implementation. Items 8–9
+each stand alone and can be scheduled independently.
 
 **The convergence rungs interleave rather than follow.** §99.8's ladder is not a second project to
 start afterwards, and treating it as one is how a guessed constant becomes permanent:
@@ -886,7 +923,8 @@ start afterwards, and treating it as one is how a guessed constant becomes perma
 | item 6, aggregates (`count`, `min`, `max`) | **rungs 0 and 1 did not come due a third time**, and the row above had already said why they would not: the aggregate's right side is one entry per group, its left is the loop, and there is nothing to swap. What it adds is that the pattern survives an operator with *no index at all* on one side — so "an inferred surface postpones the solver" is about the surface and not about what the operators happen to be |
 | item 6, the total (`sum`) | **rungs 0 and 1 did not come due a fourth time.** The row above forecast that they would arrive "with `group by` and with an explicit surface"; `group by` is now complete and the surface is still inferred, so there is still nothing to swap. What this one adds is that the pattern survives an aggregate whose right side is not even a *reading* of the group — a running total is a number the operator keeps — so the postponement is the loop's order and not anything about the group |
 | item 7, the difference | **rungs 0 and 1 did not come due a fifth time**, and this one has the least to choose of any operator here: there is no right side to swap, because the right side is a *question* rather than a collection — one probe returning a bool. A `filter_list` also has an order to preserve, so even the left is fixed. The row above forecast that a choice would arrive "with `group by` and with an explicit surface"; `group by` is complete, the difference is complete, and the surface is still inferred |
-| items 7 (`distinct`) and 8 | **rung 4** — search, once replay is the oracle rather than the model |
+| item 7, `distinct` | **rungs 0 and 1 did not come due a sixth time**, and this one could not have: `list_unique` names the operator, so there is not even a shape being read — one expression, one plan, no alternative to price |
+| item 8 | **rung 4** — search, once replay is the oracle rather than the model |
 | Phase 4's `beck tune` | **rung 3** — the rate, fed back from a deployment, because it exists nowhere else |
 
 Rung 1 belongs *inside* the first item that makes a choice, rather than after it, and that is the
@@ -894,7 +932,7 @@ sequencing decision worth arguing over: shipping a join that reads `ASSUMED_CARD
 the constant load-bearing for a decision it was never honest for (§99.8), and a constant that has
 shipped is a constant that gets tuned instead of removed. Every operator that has landed keeps that
 rule by making no choice at all — which is the cheapest way to honour it and was not the way this
-table expected it to be honoured, five times now. **The pattern the second time made visible and the
+table expected it to be honoured, six times now. **The pattern the second time made visible and the
 three after it confirmed: an inferred surface postpones the solver.** A plan choice exists only where two plans could produce the same
 answer, and a rewrite of an expression the programmer wrote has that expression's order to preserve,
 which fixes most of the plan before any cost is consulted. `ASSUMED_CARDINALITY` is still in
@@ -902,10 +940,12 @@ which fixes most of the plan before any cost is consulted. `ASSUMED_CARDINALITY`
 
 ## 99.10 What this document does not claim
 
-- **What is built is the join, its two indexes, all four aggregates, and the difference.**
-  `distinct` is unbuilt. Nor is there a `group by` or an `except` a program can *write*: every
-  operator here is emitted for an expression somebody already wrote, and `Op::GroupBy` and
-  `Op::Restrict` are the names of operators rather than of constructs. The measurements in
+- **What is built is the join, its two indexes, all four aggregates, the difference and
+  `distinct`** — which is every row of §99.4. There is still no `group by` and no `except` a program
+  can *write*: every operator here but one is emitted for an expression somebody already wrote, and
+  `Op::GroupBy` and `Op::Restrict` are the names of operators rather than of constructs. The
+  exception is `distinct`, and it is an exception in the other direction — `list_unique` is a
+  *function*, not a construct, and the operator is its lowering. The measurements in
   §99.3 are of the compiler *before* the operator, and every command is quoted in full so they can
   be re-run — with `--no-join`, which is how that transcript is reproduced today.
 - **It does not reopen D26.** Nothing here puts a relation in the store or writes anything on the
@@ -946,19 +986,23 @@ which fixes most of the plan before any cost is consulted. `ASSUMED_CARDINALITY`
   work and the value copies a group probe does are the clock's business, not its. Two runs of one
   backend are comparable in it; two backends are not, and it is a count rather than a duration for
   [`13`](13-testing.md) §13.7's reason.
-- **`distinct` over values is not designed**, and what it is waiting for is narrower than this
-  section used to say. The representation half of decision 2's multiplicity question is built —
-  `Op::GroupBy`'s multiset is a count per distinct value — so what remains is a **spelling**: the
-  library has two duplicate-dropping functions with different answers, both of them maintainable,
-  and picking one is a decision of the kind `list_sum` took rather than an operator anybody has
-  written. §99.9 item 7 has the three parts.
+- **`distinct` is over values and not over a *key*.** `list_unique` compares whole values by
+  `Value`'s own order, which is what `==` compares, so a collection of records is deduplicated by
+  every field. "The distinct customers", where two orders from one customer are one customer, is
+  `list_unique(map_list(xs, f))` — a projection the program writes over an operator that is already
+  there — and there is no `distinct on (key)` that keeps a whole row per key. That is a surface
+  somebody would have to design, not a delta rule anybody is missing.
+- **Nor is it a `distinct` per *group*.** `unique` inside a loop body, over a filtered collection,
+  would be a fifth aggregate on `Op::GroupBy` — the multiset it already holds has the answer — and
+  it is unbuilt for the reason the row above gives about a fifth aggregate generally: it is an
+  operator somebody writes, not a function anybody passes.
 
 ## 99.11 What this corrects, elsewhere
 
 | Document | Correction |
 |---|---|
 | [`05`](05-tier-lowering.md) §5.3 | The incremental-views paragraph describes a joined read model updating "by delta, not by re-join". There is no join to update, and no operator relates two collections; the paragraph now says so and points here |
-| [`23`](23-incremental-views-report.md) §23.19 | "Joins, subqueries, aggregates — **nothing**, unchanged" is no longer true of joins, of aggregates, or of the difference: an equi-join over either index, all four aggregates, and a semi-join and anti-join by key are built and every one of them is inferred. Subqueries and `distinct` are unchanged and §99.9 holds their order |
+| [`23`](23-incremental-views-report.md) §23.19 | "Joins, subqueries, aggregates — **nothing**, unchanged" is now true of **subqueries alone**: an equi-join over either index, all four aggregates, a semi-join and anti-join by key, and `distinct` are built. §99.9 holds what is left, which is no longer an operator — it is the read-model SQL compiling into the plan (item 9) |
 | [`23`](23-incremental-views-report.md) §23.19 | Same, for the read-model half — and its `count(*)` row is grouping's, not the SQL's |
 | [`08`](08-roadmap.md) §8.4 | The Phase 5 TPC-H row is conditioned on "§5.3's engine" that no phase builds. Phase 4 now carries the bullet |
 | [`23`](23-incremental-views-report.md) §23.8 | Its "the analysis says a plan could, the engine does not" caveat has a second instance — a captured per-element function — and it was undocumented |

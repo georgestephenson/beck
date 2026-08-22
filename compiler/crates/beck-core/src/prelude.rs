@@ -681,6 +681,25 @@ pub fn prims() -> Vec<(&'static str, Prim, Scheme)> {
             Prim::ListSum,
             Scheme::mono(fun(vec![Ty::list(int.clone())], int.clone())),
         ),
+        // **The same list with later duplicates dropped**, which is `lib/collections.beck`'s
+        // `unique` and not a third answer beside it: that function's body is now a call to this
+        // one, so nothing in the language means anything different from what it meant before. The
+        // order is the *input's* — the first occurrence of each value stays where it was — which is
+        // what separates it from `elements(set_of(xs))`, the library's other duplicate-free list
+        // and a **sorted** one. Both are wanted and neither is the other, so this primitive takes
+        // the answer a program already had rather than inventing one
+        // ([`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7).
+        //
+        // **Why a primitive at all**, when a dedup is composition and `lib/README.md`'s division
+        // says composition is written in Beck: because the view engine has to *recognise* it, which
+        // is the one other case that division admits ([`docs/46`](../../../../../docs/46-standard-library-report.md)
+        // §46.16). A fold is opaque to [`crate::plan`], so a page showing the values in use would
+        // be rebuilt from the whole collection on every event however the fold was written.
+        (
+            "list_unique",
+            Prim::ListUnique,
+            poly(&[A], fun(vec![Ty::list(v(A))], Ty::list(v(A)))),
+        ),
         // §3.2, verbatim: `map : (list[a], (a -> b ! e)) -> list[b] ! e`. Mapping a function that
         // touches the dom over a list touches the dom; mapping a pure one does not.
         (

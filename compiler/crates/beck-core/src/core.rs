@@ -88,6 +88,7 @@ pub enum Prim {
     ListMin,
     ListMax,
     ListSum,
+    ListUnique,
     // ---- collections
     ListGet,
     ListSlice,
@@ -314,6 +315,7 @@ impl Prim {
             ListMin => "list_min",
             ListMax => "list_max",
             ListSum => "list_sum",
+            ListUnique => "list_unique",
             MapList => "map_list",
             FilterList => "filter_list",
             ConcatLists => "concat_lists",

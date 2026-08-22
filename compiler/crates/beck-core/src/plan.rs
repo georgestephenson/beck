@@ -281,6 +281,30 @@ pub enum Op {
         /// Which answer keeps the row.
         keep: Presence,
     },
+    /// The values in a collection, each once — the algebra's **δ**, and the last row of §99.4
+    /// ([`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7).
+    ///
+    /// `list_unique(xs)`, which is `lib/collections.beck`'s `unique`: the first occurrence of each
+    /// value, in the order the input held them. **The order is the decision and not a detail.**
+    /// The library has a second duplicate-free list — `elements(set_of(xs))`, which is sorted — and
+    /// both are maintainable; taking the answer a program already had rather than inventing a third
+    /// is the test a second spelling of an old operation has to pass, which is `list_sum`'s rule
+    /// applied to an order instead of to a total.
+    ///
+    /// So the output's key is an **input key**: the smallest one holding each value. That makes the
+    /// output a sub-order of the input's, exactly as [`Op::FilterList`]'s is, and it is why nothing
+    /// downstream had to learn anything — a consumer reads the values in first-occurrence order
+    /// because that is what iterating the arrangement gives.
+    ///
+    /// **What moves is the interesting half.** A value arriving *before* its own standing first
+    /// occurrence moves the published entry — the only operator here whose output entry can change
+    /// key without the value changing — and one leaving promotes the next occurrence rather than
+    /// dropping the value. Both are `O(log n)`, because the operator keeps the input keys holding
+    /// each value in an ordered set and reads one end of it.
+    ///
+    /// It carries no per-element function: a projection is a [`Op::MapList`] above it, which is how
+    /// the program wrote it.
+    Distinct,
 }
 
 /// Which side of an index's answer a [`Op::Restrict`] keeps.
@@ -422,6 +446,7 @@ pub const OPERATORS: &[&str] = &[
     "group_by",
     "semi_join",
     "anti_join",
+    "distinct",
 ];
 
 impl Op {
@@ -455,6 +480,7 @@ impl Op {
                 keep: Presence::NotIn,
                 ..
             } => "anti_join",
+            Op::Distinct => "distinct",
         }
     }
 
@@ -475,6 +501,7 @@ impl Op {
                 | Op::ArrangeBy { .. }
                 | Op::GroupBy { .. }
                 | Op::Restrict { .. }
+                | Op::Distinct
         )
     }
 
@@ -522,6 +549,10 @@ impl Op {
             Op::Restrict { .. } => {
                 "the input's key, unchanged — the index decides which, not where"
             }
+            // A key of the input, as `filter_list` above — but *which* one is the operator's own
+            // answer rather than the program's, and it is what makes the output's order the order
+            // the values were first seen in.
+            Op::Distinct => "the input's key of each value's first occurrence",
         }
     }
 
@@ -540,6 +571,7 @@ impl Op {
                 | Op::ArrangeBy { .. }
                 | Op::GroupBy { .. }
                 | Op::Restrict { .. }
+                | Op::Distinct
         )
     }
 
@@ -1044,6 +1076,14 @@ fn op_cost(plan: &Plan, i: OpId) -> String {
                 Presence::NotIn => "withdraws or admits",
             }
         ),
+        // No applications at all — the operator has no per-element function — and the touched
+        // count is what a value's *first occurrence* moving costs: one remove and one insert, on
+        // the values that moved rather than on the distinct ones.
+        Op::Distinct => {
+            "at most 2δ touched, no applications  —  a value whose first occurrence moved is a \
+             remove and an insert"
+                .to_string()
+        }
     }
 }
 
@@ -1848,6 +1888,15 @@ impl Builder<'_> {
             (Prim::ListLen, 1) => {
                 let xs = self.expr(&args[0], scope);
                 self.shared(format!("count/{xs}"), Op::Count, vec![xs], None)
+            }
+            // A **lowering** rather than a recognition, which is why it takes no [`Relate`] switch
+            // where the join and the difference do: `list_unique` names the operator, so there is
+            // no shape being read and no choice being made on the program's behalf. What the
+            // primitive bought is exactly that — a fold spelling the same thing is opaque, and
+            // `docs/99` §99.9 item 7 is the argument for giving it a name.
+            (Prim::ListUnique, 1) => {
+                let xs = self.expr(&args[0], scope);
+                self.shared(format!("distinct/{xs}"), Op::Distinct, vec![xs], None)
             }
             (Prim::ListIsEmpty, 1) => {
                 let xs = self.expr(&args[0], scope);
