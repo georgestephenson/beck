@@ -124,6 +124,35 @@ fn rule(op: Prim) -> Option<&'static str> {
     RULES.iter().find(|(p, _)| *p == op).map(|(_, r)| *r)
 }
 
+/// The rule for one *application*, which for one primitive depends on what it is applied to.
+///
+/// [`RULES`] maps a name to a rule, and that is the right shape for every primitive but
+/// `str_join`, whose answer depends on whether its first argument is a **collection** or a fixed
+/// list of parts. It cannot be a row in the table for exactly that reason, and it is here rather
+/// than left out because leaving it out is what made the analysis wrong:
+///
+/// * `str_join(map_list(xs, f), ", ")` reduces a maintained collection to one string. A change to
+///   any element changes the whole answer and there is no delta rule to have;
+/// * `str_join([a, b, c], " ")` is a function of `a`, `b` and `c`. Its arity is fixed at compile
+///   time, so a change at an input is a change at the output and nothing is scanned — which is
+///   what every "pointwise" row in the table above means. It is `to_str` with three arguments.
+///
+/// The second is the shape [`docs/104`](../../../../../docs/104-styling-and-the-component-library.md)
+/// §104.4 asks every program to write: `class=["btn", "primary" if hot else "plain"]` lowers to one
+/// of these, and calling it a recompute made a *report* say that a page had stopped being
+/// maintained when the plan it compiles to is unchanged, entry for entry.
+fn rule_of(op: Prim, args: &[Core]) -> Option<&'static str> {
+    if op == Prim::StrJoin {
+        return match args.first().map(|a| &a.kind) {
+            Some(CoreKind::ListLit(_)) => {
+                Some("pointwise — a join of a fixed list of parts is a function of those parts")
+            }
+            _ => None,
+        };
+    }
+    rule(op)
+}
+
 /// What a view engine could do with one vertex.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -246,20 +275,27 @@ fn judge(f: &Core, program: &Program) -> (Verdict, Vec<(Prim, &'static str)>) {
             return;
         }
         match &c.kind {
-            CoreKind::Prim { op, .. } => match rule(*op) {
-                Some(r) => {
-                    if !found.iter().any(|(p, _)| p == op) {
-                        found.push((*op, r));
+            CoreKind::Prim { op, args } => {
+                match rule_of(*op, args) {
+                    Some(r) => {
+                        if !found.iter().any(|(p, _)| p == op) {
+                            found.push((*op, r));
+                        }
+                    }
+                    None if *op == Prim::StrJoin => blocker = Some(
+                        "`str_join` over a collection has no delta rule: a change to one element \
+                         can change all of its output"
+                            .to_string(),
+                    ),
+                    None => {
+                        blocker = Some(format!(
+                            "`{}` has no delta rule: a change to its input can change all of \
+                             its output",
+                            op.name()
+                        ))
                     }
                 }
-                None => {
-                    blocker = Some(format!(
-                        "`{}` has no delta rule: a change to its input can change all of its \
-                         output",
-                        op.name()
-                    ))
-                }
-            },
+            }
             // A `match` chooses a *shape*, and a delta that changes which arm applies changes
             // everything downstream of it. Differential dataflow handles this by treating the
             // scrutinee as a collection and each arm as a branch of the plan; that is a real

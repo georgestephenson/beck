@@ -866,6 +866,101 @@ fn a_relational_view_could_be_maintained_by_delta() {
     assert!(page.ops.iter().all(|(_, r)| !r.is_empty()));
 }
 
+/// **A class written the way the styling design asks is pointwise; a join over a collection is
+/// not.** One primitive, two verdicts, decided by what it is applied to.
+///
+/// [`docs/104`](../../../../docs/104-styling-and-the-component-library.md) §104.4 asks programs to
+/// write a class as a *list of alternatives*, because a list can be enumerated and a concatenation
+/// cannot. The `ui:` lowering makes that list a `str_join`, and this analysis used to block on the
+/// **name** — so the shape the design document's own example recommends reported `recompute`.
+///
+/// It was wrong, and the plan is what says so: a program written the documented way and the same
+/// program written around it compile to **byte-identical plans**. The `str_join` is inside the
+/// per-element function of a maintained `map_list`, applied to what moved and nothing else, which
+/// is what every "pointwise" row in [`RULES`] means. The report said a page had stopped being
+/// maintained when nothing about it had changed, and the response to that report was to make the
+/// sketch worse to read.
+///
+/// So the rule is about the *argument*: a join of a fixed list of parts is a function of those
+/// parts; a join over a maintained collection reduces it to one string and has no delta rule to
+/// have. Both directions are asserted here because a rule that looked at the name alone would give
+/// these two the same answer, whichever answer it gave.
+#[test]
+fn a_join_of_a_fixed_list_is_pointwise_and_a_join_over_a_collection_is_not() {
+    // The shape has to be in a program, or neither half of this has anything to be about. The
+    // sketch carries §104.4's own example: `class=[…, done_class(t)]`.
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/todo.beck"),
+    )
+    .expect("the sketch is readable");
+    assert!(
+        src.contains(r#"class=["flex", "gap-2", "items-baseline", done_class(t)]"#),
+        "the sketch no longer writes its class as a list with a name in it, so nothing in the tree \
+         is the shape docs/104 §104.4 asks for"
+    );
+    let p = corpus("../examples/todo.beck");
+    assert_eq!(
+        verdicts(&p).get("page"),
+        Some(&Verdict::Incremental),
+        "the shape docs/104 §104.4 recommends reports as a recompute"
+    );
+    // …and the rule is *stated* rather than merely not-blocking, which is what every other
+    // operation in the report gets.
+    let a = assess(&p);
+    let page = a.iter().find(|a| a.label.as_ref() == "page").expect("page");
+    let join = page
+        .ops
+        .iter()
+        .find(|(op, _)| op.name() == "str_join")
+        .unwrap_or_else(|| {
+            panic!(
+                "the sketch's class list did not reach the report: {:?}",
+                page.ops
+            )
+        });
+    assert!(
+        join.1.contains("fixed list"),
+        "the rule does not say what makes it pointwise: {:?}",
+        join.1
+    );
+
+    // The other side, in the same helper so nothing but the argument differs. A join over a
+    // maintained collection is a reduction, and the reason has to name *that* rather than the
+    // primitive — a program told "`str_join` has no delta rule" would go looking for the wrong fix.
+    let over_a_collection = ok(
+        "joined.beck",
+        &with_view(
+            "def joined(s: State) -> Pick:\n    \
+                 return Pick(label=str_join(map_list(map_keys(s.items), lambda k: k), \", \"))",
+            "chosen: Signal[Pick] = signal_map(items, joined)",
+        ),
+    );
+    let v = verdicts(&over_a_collection);
+    let Some(Verdict::Recompute { because }) = v.get("chosen") else {
+        panic!("a join that reduces a collection to one string is not maintainable: {v:?}");
+    };
+    assert!(
+        because.contains("over a collection"),
+        "the reason names the primitive rather than the case: {because:?}"
+    );
+
+    // And the same program with a fixed list where the collection was: everything else is
+    // identical, so the verdict can only have come from the argument.
+    let over_a_list = ok(
+        "fixed.beck",
+        &with_view(
+            "def joined(s: State) -> Pick:\n    \
+                 return Pick(label=str_join([\"items\", str(map_len(s.items))], \" \"))",
+            "chosen: Signal[Pick] = signal_map(items, joined)",
+        ),
+    );
+    assert_eq!(
+        verdicts(&over_a_list).get("chosen"),
+        Some(&Verdict::Incremental),
+        "a join of a fixed list is a function of its parts"
+    );
+}
+
 #[test]
 fn a_match_on_the_input_is_recompute_and_the_report_says_why() {
     // A delta can move the scrutinee between arms, which changes which computation runs. Treating

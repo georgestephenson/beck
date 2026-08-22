@@ -80,46 +80,6 @@ exist is the same missing thing.
 
 ---
 
-## `class-list-recomputes` — the shape the styling design recommends turns a page into a recompute
-
-**What is wrong.** [`docs/104`](docs/104-styling-and-the-component-library.md) §104.4 asks programs
-to write a class as a *list of alternatives* — "`class=["btn", "primary" if hot else "plain"]` is the
-shape §104.4 asks programs to write" — because a list can be enumerated and a concatenation cannot.
-The `ui:` lowering turns that list into `str_join`, and **`str_join` has no delta rule**: a change to
-its input can change all of its output. So a view containing one reaches
-`beck explain incremental` as `Recompute`, and the page stops being maintained by delta.
-
-A list whose elements are **all literals** is folded at lowering time and costs nothing — that is
-what makes `class=["mx-auto", "max-w-80", "p-4"]` free. The defect is the mixed list, which is
-exactly the case the design document's own example is about.
-
-**How it was found**, which is the part worth keeping: `examples/todo.beck` was restyled onto
-utilities and its `li` was written the way §104.4 recommends. `incremental.rs::a_relational_view_could_be_maintained_by_delta`
-— §3.8's own claim, that "`remaining` updates by ±1 per event, never by recount" — went red. **No
-program in this tree had ever used a class list with a non-literal element**, so the surface item 3
-added had never been used in the shape its own design document recommends, and nothing said what it
-cost.
-
-**The workaround, which is what the sketch does.** Two whole alternatives behind an `if` —
-`"flex gap-2 items-baseline line-through" if t.done else "flex gap-2 items-baseline"` — which is one
-`Str`, no join, both arms enumerable, and the page stays incremental. It is worse to read and it
-repeats the shared classes, which is the cost of the workaround rather than an argument for it.
-
-**The gate a fix owes**, and the second half is the one that will be forgotten: a program whose
-`class=` is a list with one non-literal element renders the same page **and** its `page` signal is
-`Verdict::Incremental`. A fix that only satisfies the first has changed nothing. `style.rs` holds
-the enumeration and `incremental.rs::a_relational_view_could_be_maintained_by_delta` holds the
-verdict; what does not exist is a program with the mixed shape for either of them to be about, and
-writing one is the first half of the fix.
-
-**Where the answer probably is.** Not a delta rule for `str_join` — there is none to have. Either
-the attribute's value keeps its list shape all the way to `html_attr` and the *patch* protocol joins
-it (which moves the seam §104.4 deliberately did not touch), or the plan learns that a `str_join`
-whose arguments are a literal list plus one branch is two constant alternatives and folds it the way
-the all-literal case is folded. The second is the smaller change and covers the documented shape.
-
----
-
 ## `union-merge-is-local-only` — every pull request that touches `CHANGELOG.md` reads as conflicting
 
 **What is wrong.** [`.gitattributes`](.gitattributes) sets `merge=union` on

@@ -193,9 +193,17 @@ Concretely, four things fall out and none of them is a language feature:
    `"text-" + kind + "-700"` is exactly as invisible to Beck as it is to Tailwind, and the
    difference is that Beck can *say so*. The shape a program should write instead is the shape
    Beck programs already write — `row_class` above is two constant alternatives behind an `if`,
-   which constant-folds to a set of two. An escape hatch (`@style(dynamic)`, one attribute, on the
-   pattern of `@a11y(exempt, reason=…)`) covers the genuine cases and puts them in the audit trail
-   rather than in a safelist.
+   which constant-folds to a set of two. **And the shared half does not have to be repeated in
+   both of them**: `class=["flex", "gap-2", row_class(r)]` is a *list*, the enumeration follows it
+   through the join and the call and the branch, and the page is maintained by delta exactly as
+   much as the version that writes both alternatives out —
+   [`examples/todo.beck`](../compiler/examples/todo.beck) is written that way and
+   `incremental.rs::a_join_of_a_fixed_list_is_pointwise_and_a_join_over_a_collection_is_not` holds
+   both halves of it. That was not true when this section was written: the incrementality analysis
+   blocked on the *name* `str_join` rather than on what it was applied to, so the list shape
+   reported as a recompute while compiling to a byte-identical plan. An escape hatch
+   (`@style(dynamic)`, one attribute, on the pattern of `@a11y(exempt, reason=…)`) covers the
+   genuine cases and puts them in the audit trail rather than in a safelist.
 
 **And the oracle is Tailwind itself, not a table somebody typed in.** Tailwind's compiler is a total
 function from a candidate name to a rule or to nothing, which is precisely the predicate Beck needs:
