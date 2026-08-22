@@ -351,11 +351,16 @@ fn attr_expr(kw: &Node, tag: &str, diags: &mut Diagnostics) -> Node {
     // construction: what reaches the checker is one `str_join` and there is nothing for an emitter
     // to know about ([`docs/19`] §19.9's seam, honoured by not touching it).
     //
-    // A list whose every element is a **literal** is joined here and now. That is not an
-    // optimisation of the emitted code, it is the difference between a page that is maintained by
-    // delta and one that is recomputed: `str_join` has no delta rule — a change to its input can
-    // change all of its output — so a constant list at the top of a view would turn the whole page
-    // into a recompute for a string that was decided at compile time.
+    // A list whose every element is a **literal** is joined here and now: a string decided at
+    // compile time should not be assembled at run time, on every element of every page.
+    //
+    // It used to be more than that, and the reason it is not is worth keeping. A list with a
+    // *name* in it stays a `str_join`, and [`beck_core::incremental`] used to block on that name
+    // and report the whole view as a recompute — so this fold was the difference between a page
+    // the report called maintained and one it did not. It was never the difference between two
+    // plans: the join sits inside the per-element function of a maintained `map_list`, applied to
+    // what moved and nothing else. That analysis now asks what the join is applied *to*, which is
+    // the question, and the shape §104.4's item 4 recommends costs nothing either way.
     let value = match value.head_name() {
         Some(head) if head == sym::LIST && SPACE_SEPARATED.contains(&attr_name.as_str()) => {
             match value

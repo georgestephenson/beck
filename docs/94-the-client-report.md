@@ -303,6 +303,12 @@ That is legitimate because the server-rendered page is `view(state, session)` at
 client holds the same `view` and — once its first frame arrives at that same `seq` — the same state.
 Same function, same input, same page. **Nothing has to be reconciled because nothing can differ.**
 
+D30's interface state does not disturb this, and it is worth saying why rather than leaving it to be
+rediscovered: a page that keeps interface state renders it from `gestures(step, init)`'s `init` on
+the server, and a client that has just loaded has made no gesture, so it holds `init` too. The
+argument is unchanged — same function, same input — and it holds *because* hydration happens before
+any interaction. A page that could arrive already holding a gesture would break it.
+
 The suite asserts it as *equality of `Html` values* rather than as similarity of markup, which is
 checkable precisely because both sides execute the same `Core`:
 `the_browser_renders_what_the_server_would_have_sent`, and the same over 40 commands accepted and

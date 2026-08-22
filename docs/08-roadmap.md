@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **975 definitions compiled against 143 refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **991<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -95,7 +95,7 @@ ask in order:
 | "How do I say something failed?" | `raise` and `try:`, and the signature says so whether or not I wrote it down ([`27`](27-the-walls-come-down-report.md)) |
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
-| "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for four questions about that group, and you write all of them as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that asks `list_len`, `list_min`, `list_max` or `list_sum` of that filter is answered without the group being built at all — the count from a tally the join keeps, the two ends from a `group_by` holding one multiset per group, and the total from one holding a running sum. All are maintained from both sides and `beck explain query` shows them. `distinct` and difference are still missing, and `beck explain cost` says so on the loop that pays for it |
+| "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for four questions about that group, and you write all of them as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that asks `list_len`, `list_min`, `list_max` or `list_sum` of that filter is answered without the group being built at all — the count from a tally the join keeps, the two ends from a `group_by` holding one multiset per group, and the total from one holding a running sum. All are maintained from both sides and `beck explain query` shows them. **And for a membership test**: a `filter_list` whose predicate asks another collection whether it holds a key is the difference, or the intersection without the `not`, and `list_unique` is the values in use — so every row of §99.4's basis is built. What `beck explain cost` still says so on is a predicate that asks a membership question *and something else*, which is a rewrite rather than a reading (§99.10) |
 | "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
 | "How do I make it look like anything?" | **With Tailwind's names and no Tailwind**, which is the row that moved. `beck build` writes `styles.css` and a running program serves the same bytes: one rule per class your pages can carry, worked out from the program rather than scanned for, with the theme tokens those rules read and nothing else ([`104`](104-styling-and-the-component-library.md) §104.4a). **3,474 of the 3,625 names Tailwind emits a rule for are rendered identically here**, held byte for byte against Tailwind's own compiler; the sketch's sheet is 2.3 KB and `beck-rt/src/css.rs` is deleted. What is still missing is a way to write a rule of *your own* — `css:` has no parser — so a class the compiler did not define gets no rule, and `beck explain style` says which of yours are which. What the compiler *will* say is that `rounded-ful` is one edit from `rounded-full` (`B0222`), and your editor completes and explains a utility from the same table |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
@@ -462,9 +462,27 @@ rows.
   added in, so `list_sum` is the exact total over `Int`, raises only when that total leaves `Int`,
   and has no `Float` form at all (§99.9 item 6). `Agg::Sum` keeps a running total and no multiset,
   so `corpus/37-ledger.beck` shows every account's balance in **47 backend steps at 200 postings and
-  at 1,600, against 2,060 and 16,060** with the operator switched off. What is left, in §99.9's
-  order: `distinct` and difference, fusion for the new operators, and the read-model SQL compiling
-  into the plan. This was a Phase 4 bullet from the
+  at 1,600, against 2,060 and 16,060** with the operator switched off. **And the difference has
+  taken it, which needed nothing added to the language at all**: `map_contains` was already a
+  primitive, so `filter_list(xs, lambda x: not map_contains(m, k(x)))` is the difference by key
+  written out and its mirror is the intersection, and `Op::Restrict` is the one binary operator
+  whose *output is one of its inputs* — which is what lets a `filter_list` have it where the rule
+  that a join's element is a row says a `filter_list` may not have a join. `corpus/38-backorders.beck`
+  shows the orders for something in stock and the orders for something not in **134 backend steps
+  at 200 orders and at 1,600, against 10,064 and 80,064** with the operator switched off, measured
+  on a *delivery* rather than on an order because the left-hand half was never what cost anything
+  (§99.9 item 7). **And `distinct` has taken it, which closes §99.4's table**: what stood in the way
+  was never the arrangement — `Op::GroupBy`'s multiset had been a count per distinct value since the
+  extremes landed — but that nothing in the language *named* the question, since both of the
+  library's duplicate-dropping functions are folds. `list_unique` is the name and it is `unique`'s
+  answer rather than a third one, so `corpus/39-topics.beck` shows the topics its notes are filed
+  under in **62 backend steps at 200 notes and at 1,600, against 2,280 and 17,680** for the same
+  program with the dedup written as a fold. What is left, in §99.9's order, is no longer an operator:
+  fusion for the new ones, and the read-model SQL compiling into the plan — **and the first of those
+  has no program**, swept across all 45 programs in `corpus/` and `examples/`: nothing in the tree
+  has a `filter_list` above a join, because the recogniser consumes the filter into the operator.
+  So the e-graph §99.9 item 8 is named after has no rewrite to arbitrate yet, and item 9 is the one
+  that is ready. This was a Phase 4 bullet from the
   day [`99`](99-the-data-tier-means-of-combination.md) was written and was never in *this* list,
   which is the same defect §8.5 opens by describing one level down — a phase is not a position. It
   lives in **Lane B** (`engine.rs`, `plan.rs`, `relate.rs`) and contends with nothing in Lane A.
@@ -532,7 +550,7 @@ rows.
   exactly the shape §8.5's preamble says never comes due.
 - **Mode B's codegen: the heap on a wasm target** (S, and the item with a user in front of it).
   The emitter is written and the scalar subset compiles, in a real engine, against the
-  tree-walker ([`103`](103-the-wasm-emitter-report.md)) — and it compiles **0 of the corpus's 225
+  tree-walker ([`103`](103-the-wasm-emitter-report.md)) — and it compiles **0 of the corpus's 237<!--c:wasm-corpus-->
   definitions**, because an application is records, lists and a page. What is left is therefore one
   thing and it is the big one: a value representation in linear memory, string and collection
   primitives, closures through an indirect call table, and §5.1's unanswered choice between the GC
@@ -583,11 +601,12 @@ rows.
 - **Awareness over a client-local value** (M): `awareness(f)` is built for `f : Session -> T`
   ([`10`](10-decisions.md) D6, `corpus/33-awareness.beck`), which is *who is looking at what*. A
   cursor or a selection needs a value the client holds and can publish, and there is none —
-  `beck-patch.js` listens for five events and `mousemove` is not among them. That prerequisite is
-  the same one the client-local fold for interface state has
-  ([`104`](104-styling-and-the-component-library.md) §104.8), so the two are **one piece of work**:
-  a client-local stream, a client-placed non-durable fold over it, and `awareness` accepting a
-  signal as well as a function.
+  `beck-patch.js` listens for five events and `mousemove` is not among them. **The half of this that
+  was thought to be shared with interface state turned out not to be**: D30 built the client-placed
+  non-durable fold *without* a client-local stream, because a gesture has exactly one consumer and
+  needs no signal to name. What remains here is the genuinely separate half — `beck-patch.js`
+  learning to produce a continuous value at all, and `awareness` accepting a signal as well as a
+  function — and a `gestures` accumulator is now the obvious thing for such a value to feed.
 - **Comment-preserving printing** (S, due rather than nice). **Done.** Ordinary `#` comments were
   dropped by the lexer, so `beck fmt` deleted them — a formatter that eats comments is one nobody
   runs twice, which is why `textDocument/formatting` was withheld rather than missing. They are now
@@ -684,12 +703,14 @@ rows.
      what `B0222` checks. Lane B, with the table generated into Lane A's tables.
   5. **The theme as a Beck value**, and a styled `beck new` (S): tokens as a record generating both
      the theme block and the accepted names, so renaming a brand colour is a rename. Lane B.
-  6. **Where interface state lives** (F, and a **decision before an implementation**): a modal's
-     open flag, a combobox's highlighted option and a table's sort column have nowhere to live but
-     the durable log, and §104.8's three candidate answers — a client-placed non-durable fold, the
-     URL, or the document itself — are not equivalent. This wants a D-number of its own before code,
-     and it is what the last two items wait on. `DEFECTS.md::non-durable-fold` is the separable
-     defect underneath it: D1's construct is decided and silently unbuilt. Lane A.
+  6. **Where interface state lives** (F, and a **decision before an implementation**). **Done.**
+     It got the D-number it wanted — [`10`](10-decisions.md) D30 — which adopts §104.8's five homes
+     in order and builds the fourth as `gestures(step, init)`, a fold over occurrences that were
+     never proposed, validated or recorded. The correction to D1 is that ephemerality comes from the
+     *stream*, not from the absence of a `durable` wrapper, so the digest D3 rests on is untouched.
+     `B0522`, `B0523` and `B0524` are the refusals and `beck-cli/tests/gestures.rs` is the gate.
+     What is **not** done is homes 1 and 2 as enforcement: nothing tells a program its modal should
+     have been a `<dialog>`, which is item 8's work. Lane A.
   7. **Focus as a function of state** (S): an attribute the view writes and the client reconciles,
      never a `focus()` effect — the page stays a pure function of state, which is the property the
      design is for. Every APG pattern worth having moves focus, so this and item 6 are what the
@@ -734,7 +755,7 @@ directories.
 
 | Lane | Owns | What is left in it | Collides with |
 |---|---|---|---|
-| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3, 6 and 7 (§8.5.4) — `Class` as a type, where interface state lives, and focus as an attribute | **Itself, completely** — see below |
+| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3 and 7 (§8.5.4) — `Class` as a type and focus as an attribute | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned; the styling cluster's item 5 (§8.5.4) — the theme as a Beck value; items 1 and 4 are done | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4). Comment-preserving printing and the `ui:` vocabulary were this lane's and are done | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |

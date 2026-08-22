@@ -174,17 +174,15 @@ def counts[T](xs: list[T]) -> Map[T, Int]:
 ## This is a different function from `elements(set_of(xs))`, which is also duplicate-free and is
 ## *sorted*. Both are wanted and neither is the other: a menu keeps its order, a set of tags has no
 ## order to keep.
+##
+## The body is a call to `list_unique` rather than the fold it used to be, and the reason is not
+## speed — the fold was one pass too. It is that the view engine has to recognise it: a page showing
+## the values in use is maintained when this is one primitive, and rebuilt from the whole collection
+## when it is a recursion nothing can see into (`docs/99` §99.9 item 7). `lib/README.md`'s division
+## admits a primitive for exactly that, and this signature is what keeps the name in the library
+## where a reader looks for it.
 def unique[T](xs: list[T]) -> list[T]:
-    return seen_once(xs, empty_set(), [])
-
-def seen_once[T](xs: list[T], seen: Set[T], acc: list[T]) -> list[T]:
-    match xs:
-        case []:
-            return acc
-        case [first, *rest]:
-            if contains(seen, first):
-                return seen_once(rest, seen, acc)
-            return seen_once(rest, insert(seen, first), list_append(acc, first))
+    return list_unique(xs)
 
 ## The two halves of a list, each in the original order.
 model Split[T]:

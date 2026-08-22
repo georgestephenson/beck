@@ -81,7 +81,7 @@ pub struct Bundle {
     /// server running a different program finds out here rather than by sending it a command it
     /// cannot decode.
     pub wire_id: String,
-    /// `(state, session, presence, freshness) -> Html`.
+    /// `(state, session, presence, awareness, freshness, interface) -> Html`.
     pub view: Core,
     /// `(state, proposal) -> Result[list[Event], Rejection]`.
     pub validate: Core,
@@ -108,6 +108,31 @@ pub struct Bundle {
     /// `Confirmed` — and hand every program in the tree back the second render that report
     /// removed.
     pub reads_freshness: bool,
+    /// `gestures(step, init)`, when the page keeps client-local interface state — D30's
+    /// non-durable fold.
+    ///
+    /// It travels in the bundle because **this is the only side that can run it**: a gesture never
+    /// reaches the server, so a client that could not fold its own would have interface state
+    /// nobody could advance. `None` for a page that keeps none, which is every page compiled
+    /// before D30.
+    pub gestures: Option<Gestures>,
+}
+
+/// What a client needs to fold its own gestures: the step, where to start, and what to decode.
+#[derive(Clone, Debug)]
+pub struct Gestures {
+    /// `(S, G) -> S`.
+    pub step: Core,
+    /// `S` before any gesture — and what the server rendered against (`crate::render`, `B0522`),
+    /// which is what makes hydration free for a page with interface state.
+    pub init: Core,
+    /// The gesture union, resolved to a decoder.
+    ///
+    /// A **second** schema beside [`Bundle::command`] rather than a widening of it, and the
+    /// separation is the point: §3.5's "the client's entire write surface is `send(cmd)` into a
+    /// typed `Command` union" survives D30 only if a gesture cannot be decoded as a command. Two
+    /// decoders over two unions is what says so.
+    pub schema: command::Schema,
 }
 
 /// Why a bundle could not be read.
@@ -168,6 +193,13 @@ impl Bundle {
         for role in [&roles.view, &roles.validate, &roles.fold, &roles.init] {
             reachable(role, placed, &mut seen, &mut defs);
         }
+        // The gesture step is a fifth root, and missing it would ship a bundle whose interface
+        // state could not be advanced: the step calls the program's own functions like any other
+        // role, and nothing else in the bundle reaches them.
+        if let Some(g) = &roles.gestures {
+            reachable(&g.step, placed, &mut seen, &mut defs);
+            reachable(&g.init, placed, &mut seen, &mut defs);
+        }
         Bundle {
             component: roles.page_name.clone(),
             wire_id: placed.wire_id.clone(),
@@ -181,6 +213,14 @@ impl Bundle {
             // about what crosses to it, answered once in `crate::render`.
             optimistic: placed.render.optimistic,
             reads_freshness: placed.render.reads_freshness,
+            gestures: roles.gestures.as_ref().map(|g| Gestures {
+                step: g.step.clone(),
+                init: g.init.clone(),
+                schema: command::Schema::of_union(
+                    placed,
+                    g.gesture_ty.con_name().unwrap_or_default(),
+                ),
+            }),
         }
     }
 
@@ -318,6 +358,7 @@ struct Wire {
     command: command::Schema,
     optimistic: bool,
     reads_freshness: bool,
+    gestures: Option<(WCore, WCore, command::Schema)>,
 }
 
 impl Wire {
@@ -339,6 +380,10 @@ impl Wire {
             command: b.command.clone(),
             optimistic: b.optimistic,
             reads_freshness: b.reads_freshness,
+            gestures: b
+                .gestures
+                .as_ref()
+                .map(|g| (WCore::of(&g.step), WCore::of(&g.init), g.schema.clone())),
         }
     }
 
@@ -358,6 +403,11 @@ impl Wire {
             command: self.command.clone(),
             optimistic: self.optimistic,
             reads_freshness: self.reads_freshness,
+            gestures: self.gestures.as_ref().map(|(step, init, schema)| Gestures {
+                step: step.to_core(),
+                init: init.to_core(),
+                schema: schema.clone(),
+            }),
         }
     }
 }

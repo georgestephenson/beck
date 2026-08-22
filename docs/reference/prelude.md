@@ -33,7 +33,7 @@ What a user's type may implement to join something the language already has. `Nu
 
 ## Names
 
-105 of them.
+107 of them.
 
 | Name | Type |
 |---|---|
@@ -65,6 +65,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `float` | `(Int) -> Float` |
 | `fold` | `((a, Envelope[b]) -> a ! {e}, a, Stream[b]) -> Signal[a]` |
 | `freshness` | `() -> Signal[Freshness]` |
+| `gestures` | `((a, b) -> a ! {e}, a) -> Signal[a] ! {dom}` |
 | `hex_decode` | `(Str) -> Str ! {raises(EncodingError)}` |
 | `hex_encode` | `(Str) -> Str` |
 | `html_attr` | `(Str, a) -> Attr` |
@@ -94,6 +95,7 @@ What a user's type may implement to join something the language already has. `Nu
 | `list_slice` | `(list[a], Int, Int) -> list[a]` |
 | `list_sum` | `(list[Int]) -> Int` |
 | `list_take` | `(list[a], Int) -> list[a]` |
+| `list_unique` | `(list[a]) -> list[a]` |
 | `list_zip_with` | `(list[a], list[b], (a, b) -> c ! {e}) -> list[c] ! {e}` |
 | `map2` | `((a, b) -> c ! {e}, Signal[a], Signal[b]) -> Signal[c] ! {e}` |
 | `map_contains` | `(Map[a, b], a) -> Bool` |

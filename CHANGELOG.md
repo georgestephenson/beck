@@ -17,6 +17,180 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-22 — Interface state gets a home that is not the log: `gestures(step, init)`.**
+  [`docs/10`](docs/10-decisions.md) D30, correcting D1, and
+  [`docs/104`](docs/104-styling-and-the-component-library.md) §104.8's Wall 1 comes down.
+  `DEFECTS.md::non-durable-fold`, closed. A modal's open flag, a table's sort column and a
+  combobox's highlighted option had nowhere to live but the durable log, so opening a panel was a
+  `Command`, an `Event` and a permanent log entry — replicated, replayed, in the state digest. D1
+  provided for "non-durable folds" and it was never built because the sentence named the right
+  problem with the wrong mechanism: an accumulator that merely declines to be `durable` is still
+  folded from the log, so replay would reproduce it whether or not the program asked. **Ephemerality
+  comes from the stream, not from the absence of a wrapper** — `gestures` folds occurrences that
+  were never proposed, validated or recorded. It takes no stream (a gesture has exactly one consumer
+  by construction, so naming one buys no expressiveness — `awareness(f)` set the precedent) and its
+  step takes the bare gesture rather than an `Envelope`, because a gesture has no position in the
+  total order. It carries `dom`, which is its whole placement: the client is the only tier that
+  discharges it, so the fold lands there, the page follows, and `durable` is unreachable from where
+  it sits. D3's digest is untouched — the durable accumulator it covers is unchanged, and a gesture
+  was never a candidate for it. Three refusals: the chokepoint may not decide from interface state
+  (`B0523`), a page that reads it may not render on the server (`B0522`), and a variant may not be
+  both a command and a gesture (`B0524`, which makes the client's routing total). `B0519`'s message
+  stops calling the construct unbuilt and now names both fixes. Gated by
+  `beck-cli/tests/gestures.rs`, which asserts the half the register said would be forgotten four
+  ways — the log is empty, nothing is queued to send, a restart comes back to `init`, and the
+  server's own decoder refuses a gesture — because any one alone could pass while the construct
+  leaked through another. `compiler/examples/interface.beck` is the program. What a gesture costs
+  was measured rather than assumed and came out against the prediction: **1.21× cheaper than a
+  command at 100 cards and 1.18× at 1000**, a constant fraction rather than a growing one, because
+  the render dominates and both paths pay it. So this is not a performance decision — the costs it
+  moves are a log that does not fill with interface noise and a replay that does not reproduce it.
+
+- **2026-08-22 — The corpus-wide counts are gated, so a fortieth program cannot silently falsify
+  six documents.**
+  `DEFECTS.md::corpus-wide-counts-drift`, closed. Several documents quote a number derived from the
+  whole corpus — what the native backends compile and refuse, what the WebAssembly emitter is
+  measured against, where the corpus places, how many of its names rename — and every one of them
+  moves when a program is added. It had drifted four times, each re-derivation finding the last one
+  stale somewhere different, and twice in one day when programs 38 and 39 landed together.
+  **The hard part was never the assertion; it was that a count has to be findable in prose.** A
+  test cannot grep for `985` and know which document meant which quantity. So a marked number
+  carries an HTML comment naming it — `991<!--c:native-compiled-->` — invisible where the markdown
+  renders and greppable where it is edited, and **the number is read out of the sentence rather
+  than out of the marker**: a marker carrying its own value would agree with itself while the prose
+  beside it said something else, which is the failure being gated.
+  `docs.rs::every_corpus_wide_count_quoted_in_prose_is_the_one_the_tree_has` derives all **18**
+  quantities — no `clang`, no engine, no release build, 5 seconds — and asserts two things: every
+  marked number is the one the tree has, and every quantity it derives is quoted *somewhere*, so a
+  figure cannot leave the documents and stop being checked. Run with `--nocapture` it prints the
+  table, which is now the cheapest way to re-derive them.
+  It fails three ways, each checked by doing it: a fortieth corpus program turns **26 marked
+  numbers red at once**; changing one document and forgetting the other five that quote the same
+  quantity names the file and line; and deleting a marker fails as "derived here and quoted
+  nowhere". The first is the one that matters, and the message says to re-read them all rather than
+  the one that failed, because they move together.
+  Also records, in [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 8 and
+  [`docs/08`](docs/08-roadmap.md) §8.5.4, that **fusion for the new operators has no program**:
+  swept across all 45 programs in `corpus/` and `examples/`, nothing in the tree has a `filter_list`
+  above a join, because the recogniser consumes the filter into the operator. The e-graph that item
+  is named after has no rewrite to arbitrate yet.
+  Two prose figures became digits to be checkable — `docs/93`'s "All thirty-nine" and "twenty-six
+  of thirty-nine" — and `docs/20`'s tier table now cites the gate rather than the release-only
+  suite as the command that derives it.
+
+- **2026-08-22 — A report said a page had stopped being maintained, and the plan it compiles to
+  was byte-identical.**
+  `DEFECTS.md::class-list-recomputes`, closed — and the entry's own premise was the defect. It said
+  a class written as [`docs/104`](docs/104-styling-and-the-component-library.md) §104.4 asks —
+  `class=["flex", "gap-2", done_class(t)]` — "turns a page into a recompute". It does not. The
+  `str_join` that list lowers to sits **inside the per-element function of a maintained
+  `map_list`**, applied to what moved and nothing else, and `beck explain query` on the documented
+  shape and on the workaround beside it prints the same plan, operator for operator.
+  What was wrong is the incrementality analysis: it blocked on the primitive's **name**, so the
+  same report said "3 of this view's 11 operators update from the change itself" in its headline
+  and "recompute" in its verdict row, about one program. `rule_of` now asks what the join is
+  applied *to*: a join over a maintained collection reduces it to one string and has no delta rule
+  to have; a join of a fixed list of parts is a function of those parts, which is what every
+  "pointwise" row in the table already means. It is `to_str` with three arguments.
+  `incremental.rs::a_join_of_a_fixed_list_is_pointwise_and_a_join_over_a_collection_is_not` holds
+  both directions in one helper, so a rule that looked at the name alone fails whichever answer it
+  gives — checked by making every `str_join` pointwise, and then every `str_join` a blocker.
+  **The cost of believing the report was a worse program.** `examples/todo.beck` had been rewritten
+  to repeat its shared classes in both arms of an `if`, with a comment explaining why. It writes
+  §104.4's own shape again, and the class enumeration follows it through the join, the call and the
+  branch — which is the step no program in the tree had exercised. §104.4 item 4 now says the
+  shared half need not be repeated, and `ui.rs`'s comment no longer claims the all-literal fold is
+  the difference between a maintained page and a recomputed one.
+
+- **2026-08-22 — The last row of the algebra, and what it was waiting for was a name.**
+  [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 7's second half, and
+  §99.4's table is now complete. §99.5 decision 2 deferred `distinct` because it "needs a count per
+  distinct value, which is a new kind of arrangement" — and by the time it was wanted that
+  arrangement was not new: `Op::GroupBy` had kept a multiset per group since `min` and `max`
+  landed. What actually stood in the way was that **nothing in the language named the question**.
+  Both of `lib/collections.beck`'s duplicate-dropping functions are folds, and a fold is one opaque
+  operator the plan rebuilds in full on every event.
+  **So the work was a decision, not an operator.** `unique(xs)` keeps the order the list had;
+  `elements(set_of(xs))` sorts; both are maintainable, so nothing about the engine forced the
+  choice. `list_unique` takes `unique`'s answer and that function's body is now a call to it, so no
+  third answer entered the language — `list_sum`'s rule applied to an order instead of to a total.
+  `interp.rs::a_unique_list_keeps_the_order_it_was_given_and_not_the_values_own` is that sentence as
+  assertions.
+  `Op::Distinct` publishes each value at the **smallest input key** holding it, which makes its
+  output a sub-order of its input's exactly as `filter_list`'s is — so nothing downstream had to
+  learn anything, and `list_len` over it is the arrangement's size rather than a recompute.
+  `corpus/39-topics.beck` shows the topics its notes are filed under: **62 backend steps at 200
+  notes and at 1,600, against 2,280 and 17,680** for the same program with the dedup written as a
+  fold, measured on the worst case — a note that *moves* a topic's published occurrence.
+  **One defect, found by the corpus-wide differential rather than by a test anybody wrote.** A value
+  can leave a key that another value is arriving at — one row changing what it contributes is
+  exactly that — so every departure has to be applied before any arrival, or the arriving value is
+  inserted and then removed again.
+  `incremental_engine.rs::a_maintained_set_of_values_survives_the_events_that_move_where_each_one_sits`
+  is the written log that holds it, and it was run against the interleaved settle before being
+  trusted.
+  There is no off switch and that is itself the finding: `list_unique` *names* the operator, so
+  nothing is decided on the program's behalf and [`docs/08`](docs/08-roadmap.md) §8.3 item 8 has
+  nothing to ask for — which is also the sixth time §99.8's solver rungs have not come due.
+
+- **2026-08-22 — The corpus-wide counts, re-derived against thirty-nine programs.**
+  `corpus/39-topics.beck` is the 39th and lands the same day as the 38th, which is the frequency
+  [`DEFECTS.md`](DEFECTS.md)'s `corpus-wide-counts-drift` is really about: two programs in a day is
+  two silent falsifications of six documents.
+  Re-derived: the native backends compile **985** definitions against **144** refused — the extra
+  refusal is `list_unique`, which is not one of the scalar primitives and says so by name; **all
+  thirty-nine** corpus programs compile their `apply_event` and **twenty-six of thirty-nine** their
+  `view`; the WebAssembly emitter is measured against **237** corpus definitions, of which **232**
+  are refused for one shape; the corpus places **402** definitions and signals — `any` 213 (53.0%),
+  `server` 85, `data` 65, `client` 39; and **386 of 396** corpus names rename.
+
+- **2026-08-21 — The algebra's last combining form, and it needed nothing added to the
+  language.**
+  `filter_list(xs, lambda x: not map_contains(m, k(x)))` is the difference by key and its mirror is
+  the intersection — [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 7, and
+  the row of §99.4 that had no operator. Every operator before it waited on a *spelling*: `min`,
+  `max` and `sum` each became a primitive before an operator could read them. `map_contains` was
+  already one, so this was the shortest of the five to land.
+  `Op::Restrict` is **the one binary operator whose output is one of its inputs**, which is what
+  §99.5 decision 2 meant by "no representational change at all" and is why a `filter_list` can have
+  it where the rule that a join's element is a *row* says a `filter_list` may not have a join: a
+  join would need a projection underneath to hand the element back, per element, per event.
+  `incremental.rs::a_difference_and_the_intersection_beside_it_are_one_index_and_no_rows` counts
+  that rather than asserting it — the recognised plan is held to the refused plan's number of
+  per-element operators — and holds the other half too: the two opposite questions
+  `corpus/38-backorders.beck` asks the stock are answered from **one** `map_values`.
+  **The cost is all on the right, and measuring the other side would have measured nothing.** An
+  order arriving moves the left side, which the refused `filter_list` already handles per delta
+  because its capture did not move; a *delivery* changes the predicate itself and reconsiders every
+  order ever placed. `scaling.rs::stocking_one_item_does_not_reconsider_every_order` measures one:
+  **134 backend steps at 200 orders and at 1,600, against 10,064 and 80,064** with the operator
+  switched off. The operator holds no copy of what it filters — a dropped row comes back from the
+  left input, which is already holding it — so a *stale* value is the one failure it could have,
+  and the event that produces it is written into
+  `incremental_engine.rs::a_maintained_difference_survives_the_events_that_move_it_from_the_right`
+  rather than left to a generator. Both gates were run against a broken right-hand pass and a
+  broken read-back before being trusted.
+  **What is left of item 7 is `distinct`, and it moved rather than shrank**: the count-per-distinct-value
+  arrangement decision 2 said it would need is already built (it is `Op::GroupBy`'s multiset), so
+  what remains is a spelling — `lib/collections.beck` has two duplicate-dropping functions with
+  different answers, both maintainable, and picking one is a decision of the kind `list_sum` took.
+
+- **2026-08-21 — The corpus-wide counts, re-derived against thirty-eight programs — and this time
+  nothing had drifted.**
+  `corpus/38-backorders.beck` is the 38th, and [`DEFECTS.md`](DEFECTS.md)'s
+  `corpus-wide-counts-drift` says what that costs. Every figure was re-read with the new program
+  held out of the corpus and came back exactly what the documents said — **975/143**, **225**,
+  **382** and **366 of 376** — which is the first clean re-derivation in the entry's history and is
+  the entry's own argument rather than a reason to close it: what made it clean is that the last two
+  re-derivations left every figure printed by a test rather than kept in a comment.
+  Re-derived with the program in: the native backends compile **982** definitions against **143**
+  refused, **all thirty-eight** corpus programs compile their `apply_event` and **twenty-six of
+  thirty-eight** their `view`; the WebAssembly emitter is measured against **232** corpus
+  definitions, of which **227** are refused for one shape — a parameter that lives on the heap; the
+  corpus places **393** definitions and signals, with the tier table moved with it — `any` 208
+  (52.9%), `server` 84, `data` 63, `client` 38; and **377 of 387** corpus names rename, the ten that
+  decline unchanged in their reasons.
+
 - **2026-08-21 — The question "does this list reconcile by key" was most of what an event paid,
   and it was being asked twice.**
   With the trim and the rank query in place, what remained of the per-event diff was `keyed`:

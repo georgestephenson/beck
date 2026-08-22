@@ -108,8 +108,7 @@ ui!(
 ui!(
     an_undeclared_effect,
     &edited(
-        "-> Str:\n    return \"flex gap-2 items-baseline line-through\" if t.done \
-         else \"flex gap-2 items-baseline\"",
+        "-> Str:\n    return \"line-through\" if t.done else \"no-underline\"",
         "-> Str uses log:\n    return \"done\" if t.done else str(now())"
     )
 );
@@ -295,7 +294,10 @@ ui!(
 // from that page gets. A distance search would say `cols`, which is one edit away and useless.
 ui!(
     the_spelling_the_original_sketch_uses,
-    &edited("class=done_class(t)", "cls=done_class(t)")
+    &edited(
+        "class=[\"flex\", \"gap-2\", \"items-baseline\", done_class(t)]",
+        "cls=[\"flex\", \"gap-2\", \"items-baseline\", done_class(t)]"
+    )
 );
 
 // The systematic mistake rather than the random one: `ui:` turns `_` into `-`, and HTML spells

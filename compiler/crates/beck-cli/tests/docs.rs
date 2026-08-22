@@ -1145,3 +1145,301 @@ fn every_test_the_vulnerability_matrix_names_exists() {
         bad.join("\n  ")
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// 4. The corpus-wide counts, and the marker that makes one findable in prose
+// ---------------------------------------------------------------------------------------------
+
+/// One quantity derived from the whole tree, with the id it is marked by where it is quoted.
+///
+/// `value` is a **string** because two of these are percentages and the comparison is against what
+/// somebody typed: "53.0" and "53" are different prose and only one of them is the number.
+struct Count {
+    id: &'static str,
+    value: String,
+}
+
+/// Every `.beck` file under the named directories of `compiler/`, sorted.
+fn beck_files(dirs: &[&str]) -> Vec<PathBuf> {
+    let root = compiler_root();
+    let mut files: Vec<PathBuf> = Vec::new();
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "beck") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// Every corpus-wide quantity a document quotes, derived from the tree.
+///
+/// **Each of these is also printed by a suite that measures something else**, and the pairing is
+/// deliberate rather than redundant: `native.rs` prints the compiled-and-refused pair while
+/// *assembling* what it counted, `wasm_backend.rs` prints its row while running the modules,
+/// `lsp.rs` prints the rename tally while verifying every edit, and `measure_phase2.rs` prints the
+/// tier table. This function re-derives them without any of that work — no `clang`, no engine, no
+/// release build — because a gate a person has to remember to run is what let these numbers drift
+/// four times over. Where a derivation here differs from the suite
+/// that prints the same number, this one is what the documents are held to and the two are meant to
+/// be read together; each is written to mirror the other's walk.
+fn corpus_counts() -> Vec<Count> {
+    // The benchmarks are the largest programs in the tree and a test thread's default stack is not
+    // the ground `beck` stands on — the same wrapper `wasm_backend.rs` puts around its walk.
+    beck_diag::depth::on_the_front_end_stack(derive_counts)
+}
+
+fn derive_counts() -> Vec<Count> {
+    let n = |id: &'static str, v: usize| Count {
+        id,
+        value: v.to_string(),
+    };
+    let mut out = Vec::new();
+
+    // The corpus itself.
+    let corpus = beck_files(&["corpus"]);
+    assert!(corpus.len() > 30, "only {} corpus programs", corpus.len());
+    out.push(n("corpus-programs", corpus.len()));
+
+    // What the native backends compile, over everything they are measured against — `native.rs`'s
+    // `corpus()` walk, without the assembly step that needs a toolchain.
+    let (mut compiled, mut refused) = (0usize, 0usize);
+    for path in beck_files(&["corpus", "awfy", "clbg", "sicp", "examples", "lib"]) {
+        let name = path.display().to_string();
+        let src = std::fs::read_to_string(&path).expect("readable");
+        let (placed, diags, _) = beck_core::compile_or_library_str(&name, &src);
+        // A library that imports another module does not compile alone; `stdlib.rs` is the suite
+        // that checks that, and `native.rs` skips the same files here.
+        let Some(placed) = placed.filter(|_| !diags.has_errors()) else {
+            continue;
+        };
+        let module = beck_llvm::module(&placed.program);
+        compiled += module.functions.len();
+        refused += module.refusals.len();
+    }
+    out.push(n("native-compiled", compiled));
+    out.push(n("native-refused", refused));
+
+    // How many corpus programs compile the two definitions `docs/93` names — the fold's step
+    // function and the page.
+    let (mut folds, mut pages) = (0usize, 0usize);
+    for path in &corpus {
+        let name = path.display().to_string();
+        let src = std::fs::read_to_string(path).expect("readable");
+        let (placed, diags, map) = beck_core::compile_str(&name, &src);
+        assert!(!diags.has_errors(), "{name}:\n{}", diags.render(&map));
+        let module = beck_llvm::module(&placed.expect("the corpus compiles").program);
+        folds += usize::from(module.signature("apply_event").is_some());
+        pages += usize::from(module.signature("view").is_some());
+    }
+    out.push(n("corpus-folds", folds));
+    out.push(n("corpus-pages", pages));
+
+    // What the WebAssembly emitter is measured against, and how much of it is one shape.
+    let (mut wasm_refused, mut one_shape) = (0usize, 0usize);
+    for path in &corpus {
+        let name = path.display().to_string();
+        let src = std::fs::read_to_string(path).expect("readable");
+        let (placed, diags, map) = beck_core::compile_str(&name, &src);
+        assert!(!diags.has_errors(), "{name}:\n{}", diags.render(&map));
+        let module = beck_wasmgen::module(&placed.expect("the corpus compiles").program);
+        wasm_refused += module.refusals.len();
+        one_shape += module
+            .refusals
+            .iter()
+            .filter(|r| r.reason.starts_with("parameter "))
+            .count();
+    }
+    out.push(n("wasm-corpus", wasm_refused));
+    out.push(n("wasm-one-shape", one_shape));
+
+    // Where the corpus places — `measure_phase2.rs`'s table, which is Phase 2's exit measurement.
+    let mut tiers: std::collections::BTreeMap<&str, usize> = Default::default();
+    let mut placed = 0usize;
+    for path in &corpus {
+        let name = path.display().to_string();
+        let src = std::fs::read_to_string(path).expect("readable");
+        let (program, diags, map) = beck_core::check_str(&name, &src);
+        assert!(!diags.has_errors(), "{name}:\n{}", diags.render(&map));
+        for (_, t) in beck_core::place::solve(&program, None).tiers {
+            *tiers.entry(t.name()).or_default() += 1;
+            placed += 1;
+        }
+    }
+    out.push(n("placed-total", placed));
+    for tier in ["any", "client", "data", "server"] {
+        let held = tiers.get(tier).copied().unwrap_or(0);
+        out.push(n(format!("placed-{tier}").leak(), held));
+        out.push(Count {
+            id: format!("placed-{tier}-share").leak(),
+            value: format!("{:.1}", 100.0 * held as f64 / placed as f64),
+        });
+    }
+
+    // How many of the corpus's own names rename — `docs/65`'s figure, quoted twice. The
+    // verification is inside `Editor::rename`, so a refusal here is the same refusal `lsp.rs`
+    // records; what that suite adds is checking the *edits* as well as the verdict.
+    let (mut ok, mut names) = (0usize, 0usize);
+    for path in &corpus {
+        let name = path.display().to_string();
+        let src = std::fs::read_to_string(path).expect("readable");
+        let editor = beck_core::editor::Editor::of(&name, &src);
+        assert!(
+            !editor.diagnostics().has_errors(),
+            "{name} does not compile"
+        );
+        let symbols: Vec<String> = editor.symbols().map(|(s, _)| s.to_string()).collect();
+        for symbol in &symbols {
+            let (start, end) = editor
+                .symbol(symbol)
+                .and_then(|s| s.span)
+                .expect("an own name has a span");
+            let caret = start
+                + src[start as usize..end as usize]
+                    .find(symbol.as_str())
+                    .expect("a declaration writes its own name") as u32;
+            names += 1;
+            ok += usize::from(editor.rename(caret, &format!("renamed_{symbol}")).is_ok());
+        }
+    }
+    out.push(n("rename-ok", ok));
+    out.push(n("rename-total", names));
+    out
+}
+
+/// Every marked number in the tracked markdown, as (file, line, id, the number as written).
+///
+/// **The convention is one HTML comment immediately after the number**, so that it is invisible
+/// wherever the markdown is rendered and greppable where it is edited:
+///
+/// ```text
+/// the corpus stands at **985**<!--c:native-compiled--> definitions compiled
+/// ```
+///
+/// The id is what the marker carries and the *number is read out of the prose*, scanning back over
+/// the markup between them. It is deliberately not written into the marker as well: a marker
+/// carrying its own value would agree with itself while the sentence beside it said something
+/// else, which is the failure this whole gate is about.
+fn marked_numbers(root: &Path) -> Vec<(String, usize, String, String)> {
+    let listed = Command::new("git")
+        .current_dir(root)
+        .args(["ls-files", "*.md"])
+        .output()
+        .expect("git lists the tracked markdown");
+    let files: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    assert!(!files.is_empty(), "no markdown files found");
+
+    let mut out = Vec::new();
+    for file in files {
+        let text = std::fs::read_to_string(root.join(&file)).expect("a tracked file is readable");
+        for (i, line) in text.lines().enumerate() {
+            let mut rest = line;
+            while let Some(start) = rest.find("<!--c:") {
+                let after = &rest[start + "<!--c:".len()..];
+                let Some(close) = after.find("-->") else {
+                    break;
+                };
+                let id = after[..close].to_string();
+                // Back over the markup between the number and its marker — bold, code spans and
+                // the spaces a line break leaves — to the digits themselves.
+                let before = &rest[..start];
+                let head = before.trim_end_matches(['*', '`', '_', ' ', ')', ']']);
+                let digits: String = head
+                    .chars()
+                    .rev()
+                    .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',')
+                    .collect::<Vec<char>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                assert!(
+                    !digits.is_empty(),
+                    "{file}:{}: the marker `{id}` follows no number:\n  {line}",
+                    i + 1
+                );
+                out.push((
+                    file.clone(),
+                    i + 1,
+                    id,
+                    digits.trim_matches(['.', ',']).replace(',', ""),
+                ));
+                rest = &rest[start + "<!--c:".len() + close + "-->".len()..];
+            }
+        }
+    }
+    out
+}
+
+/// **Every corpus-wide count quoted in prose is the one the tree has.**
+///
+/// Several documents quote a number derived from the whole corpus — what the native backends compile and
+/// refuse, what the WebAssembly emitter is measured against, where the corpus places, how many of
+/// its names rename — and **adding one program to `compiler/corpus/` changes every one of them**.
+/// It had happened four times before this gate existed, each re-derivation finding the last one
+/// stale in a different place, and twice in one day when two programs landed together.
+///
+/// Two assertions, and the second is the one that makes the first a gate rather than a ceremony:
+///
+/// 1. every marked number equals what the tree says now;
+/// 2. every quantity this test derives is **quoted somewhere**, so a figure cannot leave the
+///    documents and quietly stop being checked — and every marker names a quantity that exists, so
+///    a mistyped id fails instead of being ignored.
+///
+/// What makes it able to fail on the day it was written is the thing the register's own entry
+/// named: **the same quantity is marked in several documents**, so updating one and forgetting the
+/// others is exactly the failure it catches. The native pair is marked in three, the WebAssembly
+/// denominator in four.
+///
+/// The derivation costs no `clang`, no engine and no release build ([`corpus_counts`]), which is
+/// the reason this is a `docs.rs` test: every one of these numbers was previously printed only by a
+/// suite somebody has to remember to run.
+#[test]
+fn every_corpus_wide_count_quoted_in_prose_is_the_one_the_tree_has() {
+    let root = repo_root();
+    let counts = corpus_counts();
+    let quoted = marked_numbers(&root);
+
+    let mut wrong = Vec::new();
+    for (file, line, id, written) in &quoted {
+        match counts.iter().find(|c| c.id == id) {
+            None => wrong.push(format!(
+                "{file}:{line}: `{id}` is not a quantity this gate derives"
+            )),
+            Some(c) if &c.value != written => wrong.push(format!(
+                "{file}:{line}: `{id}` is quoted as {written} and the tree says {}",
+                c.value
+            )),
+            Some(_) => {}
+        }
+    }
+    for c in &counts {
+        if !quoted.iter().any(|(_, _, id, _)| id == c.id) {
+            wrong.push(format!(
+                "`{}` ({}) is derived here and quoted nowhere, so nothing holds it",
+                c.id, c.value
+            ));
+        }
+    }
+
+    println!("the tree's corpus-wide counts:");
+    for c in &counts {
+        let places = quoted.iter().filter(|(_, _, id, _)| id == c.id).count();
+        println!("  {:<20} {:>6}   quoted in {places}", c.id, c.value);
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} corpus-wide count(s) disagree with the tree. Re-read them all rather than the one that \
+         failed — they move together:\n  {}",
+        wrong.len(),
+        wrong.join("\n  ")
+    );
+}

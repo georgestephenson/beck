@@ -2027,6 +2027,26 @@ impl<'h> Interp<'h> {
                     .map(Value::Int)
                     .map_err(|_| EvalError::new("`list_sum` overflowed", span))
             }
+            // The first occurrence of each value, in the order the list had them — which is what
+            // `lib/collections.beck`'s `unique` returned when it was written in Beck, so this
+            // changes no answer. A `BTreeSet` rather than the `Set[T]` fold the library used
+            // because the comparison is [`Value`]'s own and the host has an ordered set of them:
+            // one pass, `O(n log n)`, and one allocation for the output rather than one list per
+            // element.
+            Prim::ListUnique => {
+                want(1)?;
+                let v = args.pop().expect("arity checked");
+                let xs = as_list(&v, op.name(), span)?;
+                self.burn_work(xs.len(), span)?;
+                let mut seen: std::collections::BTreeSet<Value> = std::collections::BTreeSet::new();
+                let mut out = Vec::new();
+                for x in xs.iter() {
+                    if seen.insert(x.clone()) {
+                        out.push(x.clone());
+                    }
+                }
+                Ok(Value::List(Arc::new(out)))
+            }
             Prim::ListIsEmpty => {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
@@ -2272,6 +2292,7 @@ impl<'h> Interp<'h> {
             | Prim::Presence
             | Prim::Awareness
             | Prim::Freshness
+            | Prim::Gestures
             | Prim::StreamFilterMap
             | Prim::Fold
             | Prim::Durable
@@ -2486,6 +2507,64 @@ mod tests {
         assert!(sum(&[i64::MAX, 1]).is_err());
         assert!(sum(&[1, i64::MAX]).is_err());
         assert!(sum(&[i64::MIN, -1]).is_err());
+    }
+
+    /// **`list_unique` is the list a program already had**, which is the decision
+    /// `docs/99` §99.9 item 7 owed before a maintained `distinct` could exist, gated where the
+    /// function is written.
+    ///
+    /// The language had two duplicate-free lists before this primitive and they are **different
+    /// functions**: `lib/collections.beck`'s `unique` keeps the order the list had, and
+    /// `elements(set_of(xs))` sorts. Both are maintainable, so the choice was not forced by the
+    /// engine — and picking either would have been fine except for one thing: a *third* answer
+    /// under a new name would give a program two functions for one question, which is what
+    /// `list_sum`'s decision refused for a total. So this is `unique`'s answer, and that library
+    /// function's body is now a call to this one.
+    ///
+    /// The middle assertion is the whole of it: the first occurrence stays where it was, which is
+    /// what makes the sorted spelling a different function rather than the same one written
+    /// differently.
+    #[test]
+    fn a_unique_list_keeps_the_order_it_was_given_and_not_the_values_own() {
+        let list = |ss: &[&str]| {
+            Core::new(
+                CoreKind::ListLit(
+                    ss.iter()
+                        .map(|s| {
+                            Core::new(
+                                CoreKind::Const(Const::Str(Arc::from(*s))),
+                                Ty::str_(),
+                                Span::NONE,
+                            )
+                        })
+                        .collect(),
+                ),
+                Ty::list(Ty::str_()),
+                Span::NONE,
+            )
+        };
+        let unique = |ss: &[&str]| run(&prim(Prim::ListUnique, vec![list(ss)]));
+        let strs =
+            |ss: &[&str]| Value::List(Arc::new(ss.iter().map(|s| Value::str_(*s)).collect()));
+
+        assert_eq!(
+            unique(&["pear", "fig", "pear"]).unwrap(),
+            strs(&["pear", "fig"])
+        );
+        assert_eq!(unique(&[]).unwrap(), strs(&[]));
+
+        // The order is the input's and not the values' — `elements(set_of(xs))` is the other
+        // function, and this assertion is what says they are two.
+        assert_eq!(
+            unique(&["pear", "fig", "apple", "fig"]).unwrap(),
+            strs(&["pear", "fig", "apple"])
+        );
+
+        // Every occurrence after the first goes, however far apart they are.
+        assert_eq!(
+            unique(&["a", "b", "a", "c", "b", "a"]).unwrap(),
+            strs(&["a", "b", "c"])
+        );
     }
 
     /// A slice is charged what it **takes**, and never what the caller asked for.

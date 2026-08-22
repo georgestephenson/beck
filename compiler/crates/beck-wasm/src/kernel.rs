@@ -95,6 +95,14 @@ pub enum Proposed {
     /// The client's own `validate` refused it, so there is nothing to send. `why` is the program's
     /// `Rejection`, rendered.
     Refused { why: String },
+    /// It was a **gesture**, not a command: folded into this client's interface state, the page
+    /// re-rendered, and **nothing to send** — D30.
+    ///
+    /// A third outcome rather than an `Accepted` with a flag, because the caller's next step is
+    /// different in kind: an accepted command is queued and posted and may still be refused by the
+    /// server, and a folded gesture is finished. A boolean on `Accepted` would put the two on one
+    /// path and leave it to every caller to remember the difference.
+    Folded { dom: Vec<diff::Op> },
 }
 
 /// Who this tab is, as the edge would build it.
@@ -170,6 +178,18 @@ pub struct Client {
     /// because "it did not re-render" is a property and "it was fast" is a measurement
     /// (`docs/13` §13.7).
     renders: u64,
+    /// `gestures(step, init)`'s step, prepared — `None` when the page keeps no interface state.
+    gestures: Option<Callable>,
+    /// D30's client-local accumulator: what this tab's own gestures have folded to.
+    ///
+    /// **It lives here and nowhere else.** It is not sent, not appended, not snapshotted and not
+    /// replayed, so it does not survive this `Client` — which is the construct's whole definition
+    /// rather than a limitation of it. A reload starts again from `init`, and a second tab has its
+    /// own.
+    ///
+    /// `Value::Unit` for a page that keeps none: the view's sixth parameter exists whichever, and
+    /// one arity per role is what makes that free.
+    interface: Value,
 }
 
 /// A page, the state it is the page *of*, and the freshness it was rendered at.
@@ -190,6 +210,11 @@ struct Shown {
     /// see [`Client::paint`], where skipping the comparison is what keeps `docs/94` §94.12's
     /// shortcut for every program that does not.
     fresh: Value,
+    /// D30's interface state the page was rendered against, compared on the same terms: only when
+    /// the component keeps any. A gesture moves *this* and neither of the other two, so a guard
+    /// that did not hold it would make every gesture render nothing — the panel would open in the
+    /// accumulator and stay shut on the screen.
+    interface: Value,
 }
 
 impl Client {
@@ -216,6 +241,15 @@ impl Client {
         let confirmed = backend
             .constant(&bundle.init)
             .map_err(|e| format!("evaluating the initial state: {e}"))?;
+        let (gestures, interface) = match &bundle.gestures {
+            Some(g) => (
+                Some(role(&g.step, "the gesture step")?),
+                backend
+                    .constant(&g.init)
+                    .map_err(|e| format!("evaluating the initial interface state: {e}"))?,
+            ),
+            None => (None, Value::Unit),
+        };
 
         Ok(Client {
             bundle,
@@ -228,6 +262,8 @@ impl Client {
             pending: Vec::new(),
             shown: None,
             renders: 0,
+            gestures,
+            interface,
         })
     }
 
@@ -288,7 +324,15 @@ impl Client {
         let fresh = self.freshness();
         let html = self.render(&from)?;
         self.renders += 1;
-        self.shown = Some(Shown { html, from, fresh });
+        // The server rendered this document against `init` (`B0522`), and so did the render just
+        // above: a client that has made no gesture yet holds exactly what the server assumed. That
+        // is what keeps hydration free for a page with interface state too.
+        self.shown = Some(Shown {
+            html,
+            from,
+            fresh,
+            interface: self.interface.clone(),
+        });
         Ok(())
     }
 
@@ -427,6 +471,13 @@ impl Client {
     /// [`docs/44-wave-0-report.md`](../../../../../docs/44-wave-0-report.md)'s rule and also the
     /// only way the kernel stays a pure function of its inputs.
     pub fn propose(&mut self, id: &str, command: &serde_json::Value, at: i64) -> Proposed {
+        // D30's routing, and it is here rather than in the browser on purpose: the page's handlers
+        // carry a constructor and the client decides what kind of thing it is, so `beck-patch.js`
+        // goes on naming events and never commands. `B0524` is what makes the decision total —
+        // the two unions may not share a variant, so at most one decoder can claim a tag.
+        if self.is_gesture(command) {
+            return self.gesture(command);
+        }
         let command = match self.bundle.command.decode(command) {
             Ok(v) => v,
             Err(why) => return Proposed::Refused { why },
@@ -455,6 +506,76 @@ impl Client {
             Ok(dom) => Proposed::Accepted { dom },
             Err(why) => Proposed::Refused { why },
         }
+    }
+
+    /// Apply one gesture to this client's interface state — D30's non-durable fold.
+    ///
+    /// **Compare [`Client::propose`] line for line, because the differences are the decision.**
+    /// A command is decoded against the wire schema, put to `validate`, recorded as pending, sent
+    /// up the socket, and settled or refused by the server. A gesture is decoded, folded, and
+    /// painted. Nothing is validated, because nothing is being asked for; nothing is pending,
+    /// because there is nobody to hear back from; nothing is sent, because there is nowhere for it
+    /// to go. The log is not merely left alone — it is not on this path at all.
+    ///
+    /// It returns the DOM patch the same way, so a gesture and a command render identically; what
+    /// a gesture skips is the state derivation and `validate`, which is about a fifth of an
+    /// interaction and stays about a fifth as the board grows — the render dominates and both
+    /// paths pay it (`measure_mode_b.rs::what_a_gesture_costs_against_a_command`, 1.21× at 100
+    /// cards and 1.18× at 1000). The saving is not the point of the construct; what leaves the tab
+    /// is, and for a gesture nothing does.
+    /// Whether a payload from the page names a variant of the gesture union.
+    ///
+    /// The tag alone decides. `B0524` refuses a program whose two unions share a variant name, so
+    /// a tag belongs to at most one of them and this cannot be a guess.
+    fn is_gesture(&self, payload: &serde_json::Value) -> bool {
+        let Some(g) = &self.bundle.gestures else {
+            return false;
+        };
+        payload
+            .get("c")
+            .and_then(|c| c.as_str())
+            .is_some_and(|tag| g.schema.variants.iter().any(|v| v.name == tag))
+    }
+
+    pub fn gesture(&mut self, gesture: &serde_json::Value) -> Proposed {
+        let Some(step) = &self.gestures else {
+            return Proposed::Refused {
+                why: "this page keeps no interface state".to_string(),
+            };
+        };
+        // The gesture union's own decoder, never the command one. Two schemas is what keeps
+        // §3.5's write surface closed: nothing a client sends can be decoded as both.
+        let schema = &self
+            .bundle
+            .gestures
+            .as_ref()
+            .expect("a prepared step implies a schema")
+            .schema;
+        let value = match schema.decode(gesture) {
+            Ok(v) => v,
+            Err(why) => return Proposed::Refused { why },
+        };
+        match step(vec![self.interface.clone(), value]) {
+            Ok(next) => self.interface = next,
+            Err(e) => {
+                return Proposed::Refused {
+                    why: format!("applying a gesture: {e}"),
+                }
+            }
+        }
+        match self.repaint() {
+            Ok(dom) => Proposed::Folded { dom },
+            Err(why) => Proposed::Refused { why },
+        }
+    }
+
+    /// This client's interface state — what its own gestures have folded to.
+    ///
+    /// `Value::Unit` for a page that keeps none. Public so a gate can assert on it directly:
+    /// "the page moved" and "the accumulator moved" are two claims and a test should be able to
+    /// make each.
+    pub fn interface(&self) -> &Value {
+        &self.interface
     }
 
     /// The server accepted a command and gave it a position.
@@ -539,10 +660,17 @@ impl Client {
         // that does not read `freshness()` renders the same bytes either way, and repainting it
         // would hand back the second render `docs/94` §94.12 removed — 150× the cost of a
         // confirmation, for every program in the tree, to show nobody anything.
-        let same = self
-            .shown
-            .as_ref()
-            .is_some_and(|s| s.from == from && (!self.bundle.reads_freshness || s.fresh == fresh));
+        //
+        // The third comparison is D30's, and it is the case the other two cannot see: a gesture
+        // moves the interface state while the derived state and the freshness both stand still. It
+        // is asked only of a page that keeps interface state, for the reason freshness is asked
+        // only of a page that reads it — a program with no `gestures` compares `Unit` to `Unit`
+        // forever, so the shortcut costs it nothing.
+        let same = self.shown.as_ref().is_some_and(|s| {
+            s.from == from
+                && (!self.bundle.reads_freshness || s.fresh == fresh)
+                && (self.gestures.is_none() || s.interface == self.interface)
+        });
         if !force && same {
             return Ok(Vec::new());
         }
@@ -557,7 +685,12 @@ impl Client {
                 html: html.clone(),
             }],
         };
-        self.shown = Some(Shown { html, from, fresh });
+        self.shown = Some(Shown {
+            html,
+            from,
+            fresh,
+            interface: self.interface.clone(),
+        });
         Ok(ops)
     }
 
@@ -603,6 +736,10 @@ impl Client {
             edge::no_awareness(),
             // The one edge value this side answers and the server cannot (`B0518`).
             self.freshness(),
+            // D30's interface state, and the second thing only this side has (`B0522`). The server
+            // renders `init` here because it has received no gestures; this client renders what
+            // its own have folded to.
+            self.interface.clone(),
         ]) {
             Ok(Value::Html(h)) => Ok((*h).clone()),
             Ok(other) => Err(format!(

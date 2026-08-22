@@ -1,0 +1,160 @@
+# The program whose page shows *the values in use* (docs/99 §99.9 item 7, `distinct`).
+#
+# Every other program here shows rows, or a question asked of rows. This one shows a **set** — the
+# topics the board is currently using — which is the algebra's δ and the last row of docs/99 §99.4
+# that had no operator. A chip row above a list is the ordinary shape of it, and what it costs
+# without the operator is a fold over every note on every event, to produce a list that usually did
+# not change at all.
+#
+# The order is the decision this program is written around, and it is visible on the page rather
+# than argued in a comment. `list_unique` keeps the **first occurrence** of each value where it
+# was, so the topics come out in the order of their alphabetically-first note — the input's own
+# order, sub-selected. The library's other duplicate-free list, `elements(set_of(xs))`, is sorted
+# instead; both are wanted and neither is the other, and taking the answer the language already had
+# is what kept a third one out of it.
+#
+# Four shapes, on purpose:
+#
+#   * a note under a **new** topic, so a value arrives;
+#   * a note under a topic that already exists but sorting **earlier** than the note that is
+#     currently first under it — so the published entry *moves* without the value changing, which
+#     is the one thing no other operator in the plan does;
+#   * the **first** note of a topic retopiced away, so the next occurrence is promoted rather than
+#     the topic disappearing;
+#   * the **last** note of a topic discarded, so the value goes.
+#
+# Like every program here it carries no placement annotations and has to place itself.
+
+model State:
+    notes: Map[Str, Note]
+
+model Note:
+    id: Str
+    text: Str
+    topic: Str
+
+union Command:
+    Write(id: Str, text: Str, topic: Str)
+    Retopic(id: Str, topic: Str)
+    Discard(id: Str)
+
+union Event:
+    Written(id: Str, text: Str, topic: Str)
+    Retopiced(id: Str, topic: Str)
+    Discarded(id: Str)
+
+union Rejection:
+    Blank
+    NoSuchNote
+
+def apply_event(s: State, env: Envelope[Event]) -> State:
+    match env.body:
+        case Written(id, text, topic):
+            return s.with(notes=map_insert(s.notes, id, Note(id=id, text=text, topic=topic)))
+        case Retopiced(id, topic):
+            match map_get(s.notes, id):
+                case Some(note):
+                    return s.with(notes=map_insert(s.notes, id, note.with(topic=topic)))
+                case None:
+                    return s
+        case Discarded(id):
+            return s.with(notes=map_remove(s.notes, id))
+
+def validate(s: State, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Write(id, text, topic):
+            if str_is_empty(str_trim(text)) or str_is_empty(str_trim(topic)):
+                return Err(error=Blank)
+            return Ok(value=[Written(id=id, text=text, topic=topic)])
+        case Retopic(id, topic):
+            if not map_contains(s.notes, id):
+                return Err(error=NoSuchNote)
+            if str_is_empty(str_trim(topic)):
+                return Err(error=Blank)
+            return Ok(value=[Retopiced(id=id, topic=topic)])
+        case Discard(id):
+            if not map_contains(s.notes, id):
+                return Err(error=NoSuchNote)
+            return Ok(value=[Discarded(id=id)])
+
+# The question, written the way anybody would write it: the notes in order, their topics, each once.
+# No `distinct` and no `group by` appear in this file.
+def board(s: State) -> list[Note]:
+    return sort_by(map_values(s.notes), lambda n: n.text)
+
+def topics(notes: list[Note]) -> list[Str]:
+    return list_unique(map_list(notes, lambda n: n.topic))
+
+def view(s: State, session: Session) -> Html:
+    notes = board(s)
+    in_use = topics(notes)
+    return ui:
+        main:
+            h1: "notes"
+            p: ("topics: " + str(list_len(in_use)))
+            ul(class="topics"):
+                for topic in in_use:
+                    li(key=topic): topic
+            ul:
+                for note in notes:
+                    li(key=note.id):
+                        (note.topic + ": " + note.text)
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, book, validate)
+book: Signal[State] = durable(fold(apply_event, State(notes={}), events))
+page: Signal[Html] = per_session(book, view)
+
+test "a topic appears once however many notes use it":
+    given [Written(id="n1", text="apples", topic="food"),
+           Written(id="n2", text="bread", topic="food")]
+    expect page contains "topics: 1"
+    expect page contains "food: apples"
+    expect page contains "food: bread"
+
+test "two topics are two chips":
+    given [Written(id="n1", text="apples", topic="food"),
+           Written(id="n2", text="bolts", topic="shed")]
+    expect page contains "topics: 2"
+
+test "a topic comes out where its alphabetically first note is":
+    given [Written(id="n1", text="bread", topic="food"),
+           Written(id="n2", text="apples", topic="shed")]
+    expect page contains "topics: 2"
+    expect page contains "shed: apples"
+    expect page contains "food: bread"
+
+test "retopicing the first note of a topic promotes the next one":
+    given [Written(id="n1", text="apples", topic="food"),
+           Written(id="n2", text="bread", topic="food")]
+    when Retopic(id="n1", topic="shed")
+    expect page contains "topics: 2"
+    expect page contains "shed: apples"
+    expect page contains "food: bread"
+
+test "discarding the last note of a topic takes the topic with it":
+    given [Written(id="n1", text="apples", topic="food"),
+           Written(id="n2", text="bolts", topic="shed")]
+    when Discard(id="n2")
+    expect page contains "topics: 1"
+    expect page contains "food: apples"
+
+test "the same note retopiced back and forth leaves one topic":
+    given [Written(id="n1", text="apples", topic="food")]
+    when Retopic(id="n1", topic="shed"), Retopic(id="n1", topic="food")
+    expect page contains "topics: 1"
+    expect page contains "food: apples"
+
+test "retopicing a note that was never written never reaches the log":
+    given []
+    when Retopic(id="ghost", topic="food")
+    expect Err(error=NoSuchNote)
+
+test "the page is the browser's job and the board is the data tier's":
+    expect place(page) == client
+    expect place(book) == data
+    expect place(topics) == any
+
+property "no log this program can produce makes the page unrenderable"(log: list[Event]):
+    given log
+    expect page contains "notes"

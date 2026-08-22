@@ -227,7 +227,7 @@ fn a_loop_that_is_not_read_as_a_join_says_why_after_fusion() {
 
     let line = text
         .lines()
-        .find(|l| l.contains("not read as a join"))
+        .find(|l| l.contains("not read as a relational operator"))
         .unwrap_or_else(|| panic!("the loop pays for a lookup and does not say why:\n{text}"));
     assert!(
         line.contains("not an equi-join on the left row"),
@@ -236,7 +236,8 @@ fn a_loop_that_is_not_read_as_a_join_says_why_after_fusion() {
     // Beside the cost it explains, rather than somewhere else in the report: a reason a reader has
     // to go looking for is a reason they will not find.
     let (cause, cost_line) = (
-        text.lines().position(|l| l.contains("not read as a join")),
+        text.lines()
+            .position(|l| l.contains("not read as a relational operator")),
         text.lines().position(|l| l.contains("on every event")),
     );
     assert_eq!(
@@ -318,7 +319,7 @@ fn a_loop_that_filters_by_an_equality_is_a_join_answering_what_its_body_asked() 
     ));
     let line = text
         .lines()
-        .find(|l| l.contains("not read as a join"))
+        .find(|l| l.contains("not read as a relational operator"))
         .unwrap_or_else(|| panic!("the loop pays for a filter and does not say why:\n{text}"));
     assert!(
         line.contains("no key to arrange the collection by"),
@@ -505,6 +506,222 @@ fn two_lookups_by_the_same_key_share_one_index() {
     );
 }
 
+/// **A filter that is a membership test is the difference; one that merely contains a membership
+/// test says so.**
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7. The
+/// recognition is deliberately narrower than the join's: a join is read at a *site inside* a body
+/// because a loop does other things besides look up, and a filter's predicate **is** the operator,
+/// so a predicate that asks a membership question and something else is not this shape.
+///
+/// Three cases, because a rule that recognised everything would pass the first alone and one that
+/// recognised nothing would pass the last two. The middle one is the case §99.9 item 5 is explicit
+/// about: a refusal that leaves a program at `O(n)` per event is the defect with a sentence
+/// attached, so the sentence has to name **which** condition failed rather than the one the shape
+/// happens to share with every other filter in the tree.
+#[test]
+fn a_predicate_that_is_a_membership_test_is_the_operator_and_one_that_contains_it_is_not() {
+    use beck_core::plan::{Op, Plan};
+
+    let restricted = |name: &str, body: &str| -> bool {
+        Plan::compile(&ok(name, &capturing(body)))
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Restrict { .. }))
+    };
+
+    assert!(
+        restricted(
+            "membership.beck",
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return filter_list(map_keys(s.items), lambda k: map_contains(s.items, k))\n",
+        ),
+        "a filter whose predicate asks a captured collection whether it holds a key is the \
+         intersection by key"
+    );
+
+    // The same question with one more clause. The reason has to name *that*, because every other
+    // condition this shape could fail is one it shares with an ordinary filter.
+    let and_more = ok(
+        "and-more.beck",
+        &capturing(
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return filter_list(map_keys(s.items), \
+                                    lambda k: not str_is_empty(k) and map_contains(s.items, k))\n",
+        ),
+    );
+    assert!(
+        !Plan::compile(&and_more)
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Restrict { .. })),
+        "a predicate that asks a membership question and something else was read as the \
+         membership question alone, which is a different filter"
+    );
+    let text = cost(&and_more);
+    let line = text
+        .lines()
+        .find(|l| l.contains("not read as a relational operator"))
+        .unwrap_or_else(|| panic!("the filter pays for a capture and does not say why:\n{text}"));
+    assert!(
+        line.contains("asks something else as well"),
+        "the reason names the wrong condition: {line:?}"
+    );
+
+    // And the probe key: a membership test whose key is not a function of the element is not an
+    // index probe, so the collection would have to be scanned to answer it.
+    let elsewhere = ok(
+        "key-elsewhere.beck",
+        &capturing(
+            "def rows(s: State, session: Session) -> list[Str]:\n    \
+                 return filter_list(map_keys(s.items), \
+                                    lambda k: map_contains(s.items, session.actor))\n",
+        ),
+    );
+    assert!(
+        !Plan::compile(&elsewhere)
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Restrict { .. })),
+        "a probe key that reads the session rather than the element was read as an index probe"
+    );
+}
+
+/// **A difference and the intersection beside it are one index and no rows.**
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7, and the two
+/// halves of the claim that let a `filter_list` be rewritten at all when a `map_list` is what
+/// becomes a join.
+///
+/// The first is §99.5 decision 4 again: `corpus/38-backorders.beck` asks the stock two opposite
+/// questions and they are answered from **one** `map_values`, by the hash-consing that was already
+/// there.
+///
+/// The second is the operator's reason for existing. A [`beck_core::plan::Op::Join`] emits a *row*,
+/// so a `filter_list` rewritten into one would need a projection underneath it to give its
+/// consumers back the element they read — and that projection is an operator per element, per
+/// event, undoing what the rewrite just did. [`beck_core::plan::Op::Restrict`] emits the left
+/// element, so the plan gains **no** loop it did not already have: the assertion is that the
+/// recognised plan has exactly the per-element operators the refused one has, which is what
+/// "no representational change at all" means when it is counted rather than said.
+#[test]
+fn a_difference_and_the_intersection_beside_it_are_one_index_and_no_rows() {
+    use beck_core::plan::{Op, Plan, Presence, Relate};
+
+    let placed = corpus("38-backorders.beck");
+    let plan = Plan::compile(&placed);
+
+    let restricts: Vec<(usize, Presence)> = plan
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, n)| match n.op {
+            Op::Restrict { keep, .. } => Some((i, keep)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        restricts.iter().map(|&(_, k)| k).collect::<Vec<_>>(),
+        vec![Presence::In, Presence::NotIn],
+        "the program asks the stock whether it holds a key and whether it does not: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+    let indexes: Vec<usize> = restricts
+        .iter()
+        .map(|&(i, _)| plan.nodes[i].inputs[1])
+        .collect();
+    assert_eq!(
+        indexes[0],
+        indexes[1],
+        "the two halves of the partition built two indexes over one collection: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+    assert!(
+        matches!(plan.nodes[indexes[0]].op, Op::MapValues),
+        "the index is not the `map_values` arrangement the collection already had"
+    );
+    for &(i, _) in &restricts {
+        let captures = plan.nodes[i].op.funs()[0].captures.len();
+        assert_eq!(
+            captures, 0,
+            "the probe key captured {captures} operators, so it is not a function of the element \
+             alone and the operator is not `O(δ)`"
+        );
+    }
+
+    // The half that says the operator is not a join wearing a different name.
+    let loops = |relate: Relate| -> usize {
+        Plan::compile_with(&placed, relate)
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.op, Op::MapList { .. } | Op::FlatMap { .. }))
+            .count()
+    };
+    assert_eq!(
+        loops(Relate::Recognise),
+        loops(Relate::Refuse),
+        "recognising the difference added a per-element operator the program did not write, which \
+         is the projection a join would need to give a filter's consumers back their element: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+}
+
+/// **A `distinct` is a lowering, and the count above one does not visit it.**
+///
+/// [`docs/99`](../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7's second
+/// half, and the two things about it that are decisions rather than code.
+///
+/// The first is that there is nothing to recognise: `list_unique` **names** the operator, so this
+/// takes no [`beck_core::plan::Relate`] switch where the join and the difference do — nothing is
+/// being read out of a shape and no choice is being made on the program's behalf. What bought that
+/// is the primitive, and the assertion is the negative one: with the recognition refused the
+/// operator is still there, because it never came from a recognition.
+///
+/// The second is that the operator's output is an **arrangement** and not a value, so `list_len`
+/// over it is [`beck_core::plan::Op::Count`] — the arrangement's size, §3.8's "±1 per event, never
+/// by recount" — rather than a recompute that would have to build the list to measure it. A
+/// `distinct` that published a `Value::List` would still render the right page and would cost the
+/// distinct values on every event that touched the collection.
+#[test]
+fn a_distinct_is_an_arrangement_and_the_count_above_it_is_not_a_recompute() {
+    use beck_core::plan::{Op, Plan, Relate};
+
+    let placed = corpus("39-topics.beck");
+    let plan = Plan::compile(&placed);
+    let at: Vec<usize> = (0..plan.nodes.len())
+        .filter(|&i| matches!(plan.nodes[i].op, Op::Distinct))
+        .collect();
+    assert_eq!(
+        at.len(),
+        1,
+        "the program asks for the values in use once: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+    assert!(
+        plan.nodes[at[0]].op.is_arrangement(),
+        "a `distinct` that published a value rather than an arrangement would cost its distinct \
+         values on every event that touched the collection"
+    );
+    assert!(
+        plan.nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Count) && n.inputs == vec![at[0]]),
+        "the count of the values in use is not the arrangement's size: {:?}",
+        plan.nodes.iter().map(|n| n.op.name()).collect::<Vec<_>>()
+    );
+
+    // The negative half: this operator does not come from the recogniser, so refusing the
+    // recogniser does not remove it.
+    assert!(
+        Plan::compile_with(&placed, Relate::Refuse)
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, Op::Distinct)),
+        "`Relate::Refuse` removed the operator, so it is a recognition after all and owes the \
+         off switch docs/08 §8.3 item 8 asks of one"
+    );
+}
+
 /// **Several lookups in one body are several joins**, chained — not a refusal.
 ///
 /// `corpus/33-awareness.beck` renders a person's whereabouts *and* their note, so its loop looks up
@@ -647,6 +864,101 @@ fn a_relational_view_could_be_maintained_by_delta() {
     }
     // And every operation is reported with the rule it would be maintained by, not just its name.
     assert!(page.ops.iter().all(|(_, r)| !r.is_empty()));
+}
+
+/// **A class written the way the styling design asks is pointwise; a join over a collection is
+/// not.** One primitive, two verdicts, decided by what it is applied to.
+///
+/// [`docs/104`](../../../../docs/104-styling-and-the-component-library.md) §104.4 asks programs to
+/// write a class as a *list of alternatives*, because a list can be enumerated and a concatenation
+/// cannot. The `ui:` lowering makes that list a `str_join`, and this analysis used to block on the
+/// **name** — so the shape the design document's own example recommends reported `recompute`.
+///
+/// It was wrong, and the plan is what says so: a program written the documented way and the same
+/// program written around it compile to **byte-identical plans**. The `str_join` is inside the
+/// per-element function of a maintained `map_list`, applied to what moved and nothing else, which
+/// is what every "pointwise" row in [`RULES`] means. The report said a page had stopped being
+/// maintained when nothing about it had changed, and the response to that report was to make the
+/// sketch worse to read.
+///
+/// So the rule is about the *argument*: a join of a fixed list of parts is a function of those
+/// parts; a join over a maintained collection reduces it to one string and has no delta rule to
+/// have. Both directions are asserted here because a rule that looked at the name alone would give
+/// these two the same answer, whichever answer it gave.
+#[test]
+fn a_join_of_a_fixed_list_is_pointwise_and_a_join_over_a_collection_is_not() {
+    // The shape has to be in a program, or neither half of this has anything to be about. The
+    // sketch carries §104.4's own example: `class=[…, done_class(t)]`.
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/todo.beck"),
+    )
+    .expect("the sketch is readable");
+    assert!(
+        src.contains(r#"class=["flex", "gap-2", "items-baseline", done_class(t)]"#),
+        "the sketch no longer writes its class as a list with a name in it, so nothing in the tree \
+         is the shape docs/104 §104.4 asks for"
+    );
+    let p = corpus("../examples/todo.beck");
+    assert_eq!(
+        verdicts(&p).get("page"),
+        Some(&Verdict::Incremental),
+        "the shape docs/104 §104.4 recommends reports as a recompute"
+    );
+    // …and the rule is *stated* rather than merely not-blocking, which is what every other
+    // operation in the report gets.
+    let a = assess(&p);
+    let page = a.iter().find(|a| a.label.as_ref() == "page").expect("page");
+    let join = page
+        .ops
+        .iter()
+        .find(|(op, _)| op.name() == "str_join")
+        .unwrap_or_else(|| {
+            panic!(
+                "the sketch's class list did not reach the report: {:?}",
+                page.ops
+            )
+        });
+    assert!(
+        join.1.contains("fixed list"),
+        "the rule does not say what makes it pointwise: {:?}",
+        join.1
+    );
+
+    // The other side, in the same helper so nothing but the argument differs. A join over a
+    // maintained collection is a reduction, and the reason has to name *that* rather than the
+    // primitive — a program told "`str_join` has no delta rule" would go looking for the wrong fix.
+    let over_a_collection = ok(
+        "joined.beck",
+        &with_view(
+            "def joined(s: State) -> Pick:\n    \
+                 return Pick(label=str_join(map_list(map_keys(s.items), lambda k: k), \", \"))",
+            "chosen: Signal[Pick] = signal_map(items, joined)",
+        ),
+    );
+    let v = verdicts(&over_a_collection);
+    let Some(Verdict::Recompute { because }) = v.get("chosen") else {
+        panic!("a join that reduces a collection to one string is not maintainable: {v:?}");
+    };
+    assert!(
+        because.contains("over a collection"),
+        "the reason names the primitive rather than the case: {because:?}"
+    );
+
+    // And the same program with a fixed list where the collection was: everything else is
+    // identical, so the verdict can only have come from the argument.
+    let over_a_list = ok(
+        "fixed.beck",
+        &with_view(
+            "def joined(s: State) -> Pick:\n    \
+                 return Pick(label=str_join([\"items\", str(map_len(s.items))], \" \"))",
+            "chosen: Signal[Pick] = signal_map(items, joined)",
+        ),
+    );
+    assert_eq!(
+        verdicts(&over_a_list).get("chosen"),
+        Some(&Verdict::Incremental),
+        "a join of a fixed list is a function of its parts"
+    );
 }
 
 #[test]

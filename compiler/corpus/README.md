@@ -70,5 +70,25 @@ of one shape would prove that the shape works, which Phase 1 already did. What v
   group emptied to `0` and then rebuilt — `0` rather than nothing, because the sum of no numbers is
   a number where the smallest of no rows is not.
 
+- **a relationship asked only whether it *exists*** (program 38,
+  [`docs/99`](../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7). Programs 34 to 37
+  ask the second collection a question and show the answer; this one asks it nothing but whether it
+  holds the key, and the answer decides which of two lists a row is on — the algebra's difference,
+  and the intersection beside it. Both halves index the stock once. It is the only program here
+  whose page moves because of an event that touched **nothing the page shows**: stocking an item
+  moves every order waiting on it and visits no order that wants something else, which is the half
+  of the delta rule no test over a single collection can see. Its awkward events are written out
+  rather than generated — an order amended while it was off the page, so what comes back is what it
+  is now; and one cancelled while it was on, so a change on the right cannot resurrect it.
+
+- **a page that shows a *set*** (program 39,
+  [`docs/99`](../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 7). Every other
+  program here shows rows, or a question asked of rows; this one shows the topics its notes are
+  filed under, each once, as a chip row above the notes. It is the only program whose page has an
+  entry that can **move without its value changing** — a note arriving before the one that is
+  currently first under its topic republishes that topic somewhere else — and it is what caught the
+  operator's one real defect, on a generated log: a value leaving a position another value is
+  arriving at. Its awkward events are written out for that reason.
+
 Every file is a program someone could plausibly write. Where one exists to exercise a corner, its
 first comment says which corner and why.
