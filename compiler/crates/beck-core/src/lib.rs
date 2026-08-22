@@ -42,6 +42,7 @@ pub mod plan;
 pub mod pmap;
 pub mod prelude;
 pub mod project;
+pub mod query;
 pub mod read;
 pub mod relate;
 pub mod render;

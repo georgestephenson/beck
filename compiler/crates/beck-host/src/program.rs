@@ -117,6 +117,17 @@ impl Runtime {
         self.backend.name()
     }
 
+    /// The backend itself, for whoever has to prepare something this runtime did not.
+    ///
+    /// The read model's relational SQL is the caller: a `join`, a `group by` and a `distinct` are
+    /// compiled into a plan at *query* time and a plan is prepared by a backend
+    /// ([`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 9). It
+    /// is the same backend the program runs on, which is the property that matters — a query and
+    /// the page it is a view of are executed by one implementation.
+    pub fn executor(&self) -> &dyn Backend {
+        self.backend.as_ref()
+    }
+
     pub fn placed(&self) -> &Placed {
         &self.placed
     }

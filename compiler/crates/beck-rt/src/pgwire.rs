@@ -23,8 +23,10 @@
 //!   application's whole state must not be reachable from another host, and a flag that turns that
 //!   off is a decision with an ADR rather than a convenience.
 //! * **No TLS.** The same reason and the same bound.
-//! * **No `pg_catalog`.** `psql`'s `\d` sends a join against four catalogue relations and this SQL
-//!   has no joins. [`beck_core::read::Schema::CATALOGUE`] is the substitute, and it is a table.
+//! * **No `pg_catalog`.** `psql`'s `\d` sends a join against four catalogue relations, and those
+//!   relations do not exist here — the SQL has joins now, and nothing for one to join.
+//!   [`beck_core::read::Schema::CATALOGUE`] is the substitute, and it is a table like any other:
+//!   it can be filtered, grouped and joined, including to itself.
 //! * **No writes.** The log is the only way state changes; a read model that accepted an `insert`
 //!   would be a second way, which is the property [`01`](../../../../../docs/01-vision-and-premise.md)
 //!   §1.1 is about.
@@ -405,6 +407,7 @@ async fn run(
 ) -> Result<Answer, SqlError> {
     app.read_snapshot(|state, version| {
         let rows = Snapshot {
+            app,
             reader,
             state,
             version,
@@ -416,6 +419,7 @@ async fn run(
 
 /// Where a table's rows come from at one version.
 struct Snapshot<'a> {
+    app: &'a Arc<App>,
     reader: &'a beck_core::engine::Reader,
     state: &'a Value,
     version: u64,
@@ -488,6 +492,13 @@ impl read::Rows for Snapshot<'_> {
                     })?
             }
         })
+    }
+
+    /// The backend a `join`, a `group by` and a `distinct` are prepared against — the same one the
+    /// program itself runs on, so a query and the page it is a view of are executed by one
+    /// implementation ([`beck_core::query`]).
+    fn backend(&self) -> Option<&dyn beck_core::backend::Backend> {
+        Some(self.app.runtime().executor())
     }
 }
 

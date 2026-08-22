@@ -1,6 +1,8 @@
 # 105 — The ecosystem answer
 
-> **Design, not a report. Nothing here is built.** [`09`](09-risks-and-open-questions.md) §9.2 calls
+> **Design, not a report. Nothing here is built except the algebra**, which
+> [`99`](99-the-data-tier-means-of-combination.md) has since finished — §105.13 says which claims
+> that moves. [`09`](09-risks-and-open-questions.md) §9.2 calls
 > ecosystem access "the strategically important one" and [`01`](01-vision-and-premise.md) §1.5 item 7
 > states it harder — "a language that cannot call the Python and npm ecosystems is a research
 > project". Both are correct instinct with no artefact behind them, and neither answers the question
@@ -501,7 +503,10 @@ diagnostic naming the merge point as the alternative.
 
 ## 105.13 What this document does not claim
 
-- **Nothing here is built.** Not the algebra, not a column, not a chart, not the sidecar. The four
+- **Nothing here is built, with one exception that has since landed.** Not a column, not a chart,
+  not the sidecar — but the **algebra** is: [`99`](99-the-data-tier-means-of-combination.md) §99.9
+  closed every row of its basis, and the read model's SQL reaches it, so the pandas row of §105.6 is
+  answered rather than argued. The four
   code facts asserted — `place.rs:760`, `core.rs:790`, `html.rs`'s open vocabulary,
   `beck-patch.js:10` — were read from the tree on 2026-08-16 and are the only claims about the
   implementation this document makes.

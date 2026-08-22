@@ -1,16 +1,16 @@
 # 99 — The data tier's means of combination
 
-> **The join, both of its indexes, and all four aggregates are built; `distinct` and difference are
-> not.** §99.9 items 1, 3, 4, 5 and 6 have landed — the shape gate, `arrange_by`, the `Join` operator
-> with §99.5's bilinear delta rule, the recognition that emits both for the loop a program already
-> wrote, and `count`, `min`, `max` and `sum` per group, the last three as `Op::GroupBy`, which
-> answers a question about a group without the group existing. `sum` is the one that owed a decision
-> rather than an operator, and the decision is that **a sum is its answer and not the order it was
-> added in** — exact over `Int`, raising only when the total does not fit, and absent over `Float`,
-> because there the same definition would disagree with the `+` the language already has. What is
-> left is `distinct` and difference, fusion for the new operators, and the read-model SQL compiling
-> into the plan. §99.9 is where each of them sits. Everything below is the design; what is built says
-> so where it is built.
+> **Every row of §99.4 is built, and the read-model SQL reaches all of it.** §99.9 items 1 and 3–9
+> have landed — the shape gate, `arrange_by`, the `Join` operator with §99.5's bilinear delta rule,
+> the recognition that emits both for the loop a program already wrote, `count`, `min`, `max` and
+> `sum` per group, the difference and its intersection, `distinct`, and the SQL surface, which grew
+> a `join`, a `group by` and a `distinct` **by compiling into the plan** rather than by growing a
+> second interpreter (item 9). `sum` is the one that owed a decision rather than an operator, and the
+> decision is that **a sum is its answer and not the order it was added in** — exact over `Int`,
+> raising only when the total does not fit, and absent over `Float`, because there the same
+> definition would disagree with the `+` the language already has. What is left is **item 8 alone**,
+> fusion for the new operators, and it has no program to be about (§99.9). Everything below is the
+> design; what is built says so where it is built.
 >
 > [`25`](25-benchmarks-and-expressiveness.md) asked
 > whether Beck has "Scheme's full means of combination and means of abstraction" and answered it for
@@ -913,8 +913,48 @@ decisions nobody can check. What would give it a subject is a program that filte
 something the *left* side decides, which is an ordinary page (`the issues whose assignee is on the
 roster, sorted`) and simply is not written here yet.
 
-**9. The read-model SQL grows joins and `group by` by compiling into the plan**, not by growing its
-own interpreter — which closes §23.19 and §12.5 together and keeps one code path.
+**9. The read-model SQL grows joins and `group by` by compiling into the plan. Done**, and the
+finding is how little of it there was to write: the SQL does not join, group or deduplicate
+anything. `crates/beck-core/src/query.rs` writes the Beck expression a person would have written and
+hands it to `Plan::of_query`, and §99.6's recogniser does the rest.
+
+- `from a join b on b.k = a.k` becomes `for x in a: for y in b where y.k == x.k`, which is item 5's
+  shape exactly, so the operators are the `arrange_by` and the `Join` a loop gets. One stage per
+  join, **left-deep**, because each stage has to be a `map_list` of its own for the recogniser to
+  see it — nesting them inside one per-element function indexes the first join and leaves the rest
+  as nested loops.
+- `group by g` becomes the loop `corpus/35-workload.beck` writes by hand: `map_list(list_unique(
+  map_list(R, λr. g(r))), λk. …)`, with each aggregate a question about `filter_list(R, λr. g(r) ==
+  k)`. So `count(*)` is the join's tally and **no group is built**, `min` and `max` are
+  `Op::GroupBy`'s multiset, and `sum` is its running total — item 6's four aggregates, reached from
+  SQL without a fifth line of engine.
+- `distinct` is `list_unique`, which is `Op::Distinct`.
+
+**What it cost was two agreements rather than an operator**, and both are the kind of thing a second
+interpreter would have got quietly wrong:
+
+- **What a column *is*.** A table's element is a record for a collection of models and the element
+  itself for a collection of scalars, and a newtype's payload is what a cell has always displayed.
+  A join comparing `Value`s would have compared `Id("p1")` against `"p1"` and answered no rows for
+  two columns a person can see are equal. `Table::row_values` is now the one rule — a newtype seen
+  through, an `Option` flattened, `Unit` for NULL — and both the scan's cells and the plan's rows go
+  through it.
+- **Where SQL's equality is not `Value`'s.** A `null` equals nothing in SQL and `Unit` equals `Unit`
+  here; an `Int` and a `Float` compare in SQL and are different values here. Both are **refused** on
+  a join key, by name, rather than answered differently from every other database.
+
+The cost, measured at two sizes with the recognition switched off beside it
+(`scaling.rs::answering_a_join_in_sql_does_not_reconsider_every_pair`): a join over two collections
+of 200 rows and of 1,600 costs **5,004 backend steps and 40,004** — 8× the steps for 8× the rows,
+which is flat per row — against **244,004 and 15,392,004** with `Relate::Refuse`, which is the
+nested loop the interpreter would have been. `beck explain sql --query` prints the operators, and
+`--no-join` is the off switch on this surface too.
+
+What is still not in this SQL is named rather than implied: no outer join (an unmatched row would
+need columns invented for it), no `having`, no subquery, no expression in a select list, and no
+cost-based join ordering — the `from` list fixes the order, which is §99.8's "an inferred surface
+postpones the solver" arrived at from the other side. A *written* surface fixes the order outright,
+so rungs 0 and 1 did not come due a seventh time either.
 
 Items 1–2 were days, items 4–5 were the phase, and item 3 followed them rather than preceding them.
 Item 6 arrived in three pieces for the reason it names — the count with item 3, the extremes once the
@@ -954,11 +994,13 @@ which fixes most of the plan before any cost is consulted. `ASSUMED_CARDINALITY`
 ## 99.10 What this document does not claim
 
 - **What is built is the join, its two indexes, all four aggregates, the difference and
-  `distinct`** — which is every row of §99.4. There is still no `group by` and no `except` a program
-  can *write*: every operator here but one is emitted for an expression somebody already wrote, and
-  `Op::GroupBy` and `Op::Restrict` are the names of operators rather than of constructs. The
-  exception is `distinct`, and it is an exception in the other direction — `list_unique` is a
-  *function*, not a construct, and the operator is its lowering. The measurements in
+  `distinct`** — which is every row of §99.4. There is still no `group by` and no `except` a **Beck
+  program** can *write*: every operator here but one is emitted for an expression somebody already
+  wrote, and `Op::GroupBy` and `Op::Restrict` are the names of operators rather than of constructs.
+  The exception is `distinct`, and it is an exception in the other direction — `list_unique` is a
+  *function*, not a construct, and the operator is its lowering. **A `group by` is spelled in the
+  read model's SQL** (item 9) and that is not the same thing: it is a query a client sends, compiled
+  into the same operators, and nothing in the language gained a keyword. The measurements in
   §99.3 are of the compiler *before* the operator, and every command is quoted in full so they can
   be re-run — with `--no-join`, which is how that transcript is reproduced today.
 - **It does not reopen D26.** Nothing here puts a relation in the store or writes anything on the
@@ -1009,13 +1051,25 @@ which fixes most of the plan before any cost is consulted. `ASSUMED_CARDINALITY`
   would be a fifth aggregate on `Op::GroupBy` — the multiset it already holds has the answer — and
   it is unbuilt for the reason the row above gives about a fifth aggregate generally: it is an
   operator somebody writes, not a function anybody passes.
+- **A query is answered cold, and that is a property of the surface rather than a limitation of the
+  operators.** A page's plan is compiled once and maintained; a `select` arrives at run time, so its
+  plan is compiled, prepared and run for that one question, and the index a join builds is thrown
+  away with it. What item 9 removes is the `O(n × m)` inside one answer, not the cost of answering
+  twice — and it is the right trade for an ad-hoc query, because the alternative is an arrangement
+  the sequencer maintains forever for a question nobody asked again. §23.19's "a read model costs
+  nothing per event" is the property that would have to go, and it does not.
+- **The SQL is a subset and the refusals are named**, in `crates/beck-core/src/query.rs`: no outer
+  join, no `having`, no subquery, no expression in a select list, no join key that can be null or
+  whose two sides are different types, and no `sum` over anything but an `Int` — the last of which is
+  [`46`](46-standard-library-report.md) §46.16's decision reaching a client rather than a gap.
 
 ## 99.11 What this corrects, elsewhere
 
 | Document | Correction |
 |---|---|
 | [`05`](05-tier-lowering.md) §5.3 | The incremental-views paragraph described a joined read model updating "by delta, not by re-join" when there was no join to update and no operator related two collections. It now says that, in the past tense, and lists what has since been built |
-| [`23`](23-incremental-views-report.md) §23.19 | "Joins, subqueries, aggregates — **nothing**, unchanged" is now true of **subqueries alone**: an equi-join over either index, all four aggregates, a semi-join and anti-join by key, and `distinct` are built. §99.9 holds what is left, which is no longer an operator — it is the read-model SQL compiling into the plan (item 9) |
+| [`23`](23-incremental-views-report.md) §23.19 | "Joins, subqueries, aggregates — **nothing**, unchanged" is now true of **subqueries alone**: an equi-join over either index, all four aggregates, a semi-join and anti-join by key, and `distinct` are built, and the read-model SQL reaches the join, the `group by` and the `distinct` by compiling into them (item 9) |
 | [`23`](23-incremental-views-report.md) §23.19 | Same, for the read-model half — and its `count(*)` row is grouping's, not the SQL's |
+| [`12`](12-standards-and-conformance.md) §12.5 | "`psql`'s backslash commands are **not** supported, because they query `pg_catalog` and this SQL has no joins" was two claims and only the first survives: the SQL has joins, and what is missing is `pg_catalog` itself |
 | [`08`](08-roadmap.md) §8.4 | The Phase 5 TPC-H row is conditioned on "§5.3's engine" that no phase builds. Phase 4 now carries the bullet |
 | [`23`](23-incremental-views-report.md) §23.8 | Its "the analysis says a plan could, the engine does not" caveat has a second instance — a captured per-element function — and it was undocumented |
