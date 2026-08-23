@@ -1834,3 +1834,141 @@ fn reordering_a_keyed_list_costs_the_same_per_row_however_long_it_gets() {
         long / short
     );
 }
+
+/// **Answering a `join` in SQL does not reconsider every pair**, and the operator that stops it is
+/// the plan's rather than one this surface grew.
+///
+/// [`docs/99-the-data-tier-means-of-combination.md`](../../../../docs/99-the-data-tier-means-of-combination.md)
+/// §99.9 item 9. The read-model SQL had no join at all, and the way a hand-written interpreter
+/// grows one is a nested loop: for every left row, walk the right collection. That is the same
+/// defect the gate above is about, arrived at from the other side — and the fix is the same
+/// operator, because a `select … join … on` compiles to the loop
+/// [`beck_core::relate`] already reads as an equi-join over an index.
+///
+/// A shape rather than a rate, with no clock in it, and the instrument is **`Work::steps`** rather
+/// than the engine's own counters. That is §99.9 item 3's lesson applied here: a refused join runs
+/// its nested `filter_list` *inside* one per-element function, which the engine charges as one
+/// application however many rows it walks — so the four counters report the same linear number
+/// either way and see nothing. `steps` is what the backend executed inside those calls, taken
+/// through [`beck_core::backend::Steps`], and it is the counter that can tell an opaque operator's
+/// cost from its arity.
+///
+/// # Both settings, so the gate carries its own evidence that it can fail
+///
+/// `Relate::Refuse` compiles the same expression to the nested loop it literally is, which is what
+/// the query would have cost had this been written as an interpreter. A green run therefore states
+/// the difference the operator makes rather than only that today's number is small.
+#[test]
+fn answering_a_join_in_sql_does_not_reconsider_every_pair() {
+    use beck_core::plan::Relate;
+    use beck_core::read::{Rows, Schema, SqlError, Stmt, Table};
+    use beck_core::Value;
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/34-assignments.beck");
+    let src = std::fs::read_to_string(&path).expect("the corpus program is readable");
+    let (placed, diags, map) = beck_core::compile_str("34-assignments.beck", &src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("the corpus program compiles");
+    let schema = Schema::of(&placed, &beck_core::plan::Plan::compile(&placed));
+
+    /// Two collections that relate: `n` issues, each assigned to one of `n` people.
+    struct Two {
+        backend: Arc<dyn beck_core::backend::Backend>,
+        issues: Vec<Value>,
+        people: Vec<Value>,
+    }
+
+    impl Rows for Two {
+        fn scan(&self, table: &Table) -> Result<Vec<Value>, SqlError> {
+            Ok(match table.name.as_ref() {
+                "issues" => self.issues.clone(),
+                "people" => self.people.clone(),
+                other => panic!("the query read a table this harness does not have: {other}"),
+            })
+        }
+        fn backend(&self) -> Option<&dyn beck_core::backend::Backend> {
+            Some(self.backend.as_ref())
+        }
+    }
+
+    fn row(ty: &str, fields: &[(&str, String)]) -> Value {
+        let mut f = beck_core::core::Fields::new();
+        for (k, v) in fields {
+            f.insert(Arc::from(*k), Value::str_(v.as_str()));
+        }
+        Value::data(Arc::from(ty), None, f)
+    }
+
+    let sql = "select i.title, p.name from issues i join people p on i.assignee = p.id";
+    let select = match beck_core::read::parse(sql).expect("parses") {
+        Stmt::Select(s) => s,
+        other => panic!("not a select: {other:?}"),
+    };
+
+    let work_at = |relate: Relate, n: usize| -> u64 {
+        let rows = Two {
+            backend: beck_eval::backend(&placed),
+            issues: (0..n)
+                .map(|i| {
+                    row(
+                        "Issue",
+                        &[
+                            ("id", format!("i{i:06}")),
+                            ("title", format!("issue {i}")),
+                            ("assignee", format!("p{i:06}")),
+                        ],
+                    )
+                })
+                .collect(),
+            people: (0..n)
+                .map(|i| {
+                    row(
+                        "Person",
+                        &[("id", format!("p{i:06}")), ("name", format!("person {i}"))],
+                    )
+                })
+                .collect(),
+        };
+        let compiled =
+            beck_core::query::compile_with(&schema, &select, relate).expect("the query compiles");
+        let (answered, work) = compiled
+            .run_measured(&schema, &rows)
+            .expect("the query runs");
+        assert_eq!(answered.len(), n, "the join answered the wrong rows");
+        println!(
+            "{relate:?} over {n:>5}×{n:<5}: {:>9} steps ({} applications, {} touched, \
+             {} recomputed)",
+            work.steps, work.applications, work.touched, work.recomputed
+        );
+        work.steps
+    };
+
+    let (small, large) = (200, 1_600);
+    let indexed = (
+        work_at(Relate::Recognise, small),
+        work_at(Relate::Recognise, large),
+    );
+    let nested = (
+        work_at(Relate::Refuse, small),
+        work_at(Relate::Refuse, large),
+    );
+
+    // Eight times the rows on both sides. With the index, the work is linear in the rows, so the
+    // cost *per row* does not grow; the bound is 3× for the gate above's reason.
+    let per_row = |(a, b): (u64, u64)| (b as f64 / large as f64) / (a as f64 / small as f64);
+    assert!(
+        per_row(indexed) < 3.0,
+        "an indexed join cost {:.1}× more per row over 8× the rows: {indexed:?}",
+        per_row(indexed)
+    );
+    // And the gate can fail: without the operator every left row walks the right collection, so the
+    // cost per row grows with the collection. Asserted as a floor rather than a value, because what
+    // is being claimed is the *shape*.
+    assert!(
+        per_row(nested) > 4.0,
+        "the refused join cost only {:.1}× more per row over 8× the rows, so this gate is \
+         measuring one path twice: {nested:?}",
+        per_row(nested)
+    );
+}

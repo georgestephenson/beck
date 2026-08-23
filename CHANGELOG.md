@@ -17,6 +17,193 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-23 — A test stops writing generated pages into the source tree.**
+  `beck-cli/tests/stdlib.rs::every_library_documents` ran `beck doc module` over every file in
+  `lib/` with no `--out`, so each run wrote a page into the default output directory — which for a
+  test binary is `crates/beck-cli/doc/`. Eleven HTML files had been checked in that way, by whoever
+  next ran `git add -A`, and a twelfth arrived the moment `lib/json.beck` did. Nothing reads them:
+  the published site is assembled into `site/` by `.github/workflows/docs.yml`, which passes its own
+  `--out`. They are deleted, the directory is ignored, and the test passes `--stdout` — which also
+  lets it assert that the page has something in it rather than only that the command exited zero.
+  **A test that writes into the tree it is testing makes every diff after it suspect**, which is how
+  this was found: the page for a new library module turned up in an unrelated commit.
+
+- **2026-08-23 — A macro crosses a module boundary, so the standard library ships one.**
+  [`docs/02`](docs/02-syntax.md) §2.4, [`docs/08`](docs/08-roadmap.md) §8.5.4. Expansion ran per
+  module, on the parsed file, **before any import was resolved** — so a macro was usable in the file
+  that declared it and nowhere else. Nothing refused it; the name was simply not there, which is why
+  neither §2.4 nor [`docs/102`](docs/102-the-macro-interpreter-report.md) had written the constraint
+  down until the `derive` work went looking for it. It is what made every one of the macro
+  interpreter's successors a mechanism a program could use and a library could not ship.
+  **What crosses is the source**, and that follows from a rule §102.2 already stated about a `def`:
+  a macro body is compile-time callable as it was *written*, before expansion. So
+  `expand_module_with` takes the **parsed** modules an importer names, and `project.rs` — which
+  already loaded every source and ordered them topologically — hands over the ones that declare a
+  macro. It keeps a parse only for those: the text is searched for the keyword first, so a module
+  with no macro pays nothing, which is the same guard `collect_macros` already had one level down
+  and which widened by exactly one word — a module with no macros that *imports* one still has to
+  hand over its definitions, because the imported macro's body may call them.
+  **Two rules were already the right ones and stayed.** The flat namespace decides a collision:
+  two macros of one name cannot both be in scope, wherever they came from, and `B0200` — which has
+  always refused a module that declared one twice — refuses that too, so the crossing added no
+  second rule about names. And a macro is visible where its module is imported *directly*, which is
+  what a `def` already does.
+  **The limit is an interface.** A macro has no signature, so a `.becki` has nothing to publish and
+  an import that resolves to an interface alone does not carry one. `B0307`'s note says so where
+  somebody meets it — "if `x` is a macro, this module has to declare it or import one that does" —
+  which is now the likeliest cause of that error and was not worth saying while the answer was
+  "macros do not cross".
+  **`compiler/lib/json.beck` is the first library file to ship a macro.** `import json`, then
+  `derive_json:` over a `model`, and its `ToJson` impl is generated from the fields in the
+  declaration — closing the row [`docs/46`](docs/46-standard-library-report.md) §46.16 and
+  `prelude.rs` have carried since the standard library was written, and closing it with **no
+  reflection in the running program**. The base cases (`Int`, `Float`, `Str`, `Bool`) are written by
+  hand on purpose: a macro should generate per-field drudgery and nothing else, and what an `Int`
+  means as JSON is a decision. The library derives nothing for *itself* — a `model` declared there
+  would be a name every importer could not use, and a test fixture is the last thing worth spending
+  the flat namespace on — so what `derive_json` does is asserted from outside, in
+  `macro_interp.rs`, beside the crossing it depends on. `examples/derive.beck`, which carried the
+  hand-written version for one commit, is deleted: two `ToJson`s in one tree is one too many, and
+  the library is the one that is real.
+  **And one defect closed on the way, because it was in the way.**
+  `DEFECTS.md::the-gesture-measurement-asserts-on-a-clock` — `measure_mode_b.rs`'s
+  `what_a_gesture_costs_against_a_command` asserted a wall-clock ratio at 1.0× with 18% of measured
+  margin — went red twice in this work's own full-suite runs and green alone, which is
+  [`docs/13`](docs/13-testing.md) §13.7's warning happening. It now asserts on a **counter**:
+  `Client::steps` reports what the kernel's backend has executed, and a gesture must charge
+  *strictly less* than a command. **6,244 steps against 4,228 at 100 cards and 61,144 against 41,128
+  at 1,000** — 1.48× and 1.49×, against the clock's 1.16× and 1.23×, which are still printed because
+  what a gesture costs is worth reading. Strictly less rather than "no more" is what makes it able
+  to fail: both paths end in the same render, so a gesture that stopped being routed locally would
+  charge exactly what a command charges, and `>=` would have accepted that.
+
+
+- **2026-08-23 — A macro can decorate a declaration, so `derive` is written in Beck.**
+  [`docs/02`](docs/02-syntax.md) §2.4's sketch, [`docs/08`](docs/08-roadmap.md) §8.5.4's first
+  successor to the macro interpreter. The sketch takes a `model`, reads what is in it, and emits
+  code per field — and the roadmap had it filed as **Lane A**, waiting on `typed macro` and the
+  checker's answers. **It was not.** A model's fields are *in its declaration*:
+  `(model Point (typarams) (field x Int) …)` is syntax, so `node_args` reads what `.as_model()` was
+  going to, and not one line of `check/` or `ty.rs` changed. That is the third time this project's
+  lane rule has been got wrong and the first time the *item* was, which §8.5.5 now records.
+  **What it needed was four rules made uniform, each a rule rather than a case for `derive`.** A
+  block passed to a macro **in item position** holds declarations, because §2.3's block rule passes
+  code and a `model` is code — and a block anywhere else still holds statements, which is the half
+  the gate asserts, because a `model` inside a function body would turn a mistake into a mystery. A
+  `quote:` holds them too, because a `quote` builds syntax and what may be written in one should be
+  what may be written in a program. `$` unquotes where a **type** and where a **field name** go,
+  not only where an expression does. And a `do` at module level is flattened all the way down,
+  because `derive` returns the block it was given beside what it generated, which is a `do` inside
+  a `do`.
+  **The `$`-in-a-type rule is what hygiene makes necessary rather than convenient**, and it is the
+  reason `derive` cannot be written with string concatenation: a type name *written* in a template
+  gets a fresh hygiene scope and refers to nothing, so the generated `impl` has to unquote the
+  caller's own name node.
+  `compiler/examples/derive.beck` is the program. It generates a JSON encoder from a model's
+  fields — two models, different fields, one macro — closing the row
+  [`docs/46`](docs/46-standard-library-report.md) §46.16 and `prelude.rs` have both carried since
+  the standard library was written ("turning a `model` into a `Json` is a function somebody writes,
+  which is what `@derive` is for when it exists"), and closing it with **no reflection in the
+  running program**: the macro reads syntax at compile time and what executes is a `to_json` naming
+  each field as though somebody had typed it. Gated by `macro_interp.rs`, four tests, one of them
+  the negative.
+  **What the work found is the constraint neither §2.4 nor [`docs/102`](docs/102-the-macro-interpreter-report.md)
+  had written down: a macro does not cross a module boundary.** `expand_module` takes one parsed
+  file and runs before any import is resolved, so a macro is usable where it is declared and
+  nowhere else. That is why `derive` is an example rather than a `lib/` function — the trait and its
+  base impls could ship there and the `derive` could not, and half a facility is not one — and it is
+  why §2.5's `sql"…"` would be an example too. Nothing refuses it; the name is simply not there,
+  which is the kind of absence §8.5.6 exists to find. It is now §8.5.4's item in front of the rest
+  of the macro interpreter's successors.
+  What is still owed of the sketch is its *spelling*: `.as_model()`, and the `*traits` a parameter
+  list has no rest form for. `DEFECTS.md::a-bounded-impl-parameter-is-refused-by-the-compiler-that-suggests-it`
+  is what the work ran into on the way and did not fix.
+
+- **2026-08-23 — A list of numbers is a column, and no program can tell.**
+  [`docs/105`](docs/105-the-ecosystem-answer.md) §105.10, [`docs/08`](docs/08-roadmap.md) §8.5.4's
+  item after the aggregates. `Value::List` was `Arc<Vec<Value>>` — 16 bytes an element, right for a
+  keyed arrangement and wrong for a million doubles — and `Value::Float` holds an order-preserving
+  key rather than `f64` bits, which is right for a map key and wrong for a kernel. So there was
+  nothing in this language a BLAS routine or an Arrow reader could be handed a pointer to.
+  `beck-core/src/seq.rs` is the second representation: a list of `Int` or of `Float` is a dense
+  buffer, **8,000 bytes against 16,000** for a thousand integers and 64,000 against 128,000 for
+  eight thousand, with `Seq::floats()` the `&[f64]` that did not exist. `Value` is **still 16
+  bytes** — the layout enum sits behind the `Arc`, so nothing that is not a list pays for it, which
+  is the trade `Record`'s own doc comment already refused once.
+  **The layout was the easy half.** Two lists holding the same elements are one value, and four
+  mechanisms have to agree: order and equality — written by hand, because a *derived* `Ord` compares
+  the layout's discriminant first and would sort every column before every list, in the order that
+  reaches the rendered page and the replay digest — the state digest, and the wire format. Both
+  float columns go back through `Value::float` to compare, because `-0.0` and `NaN` are exactly the
+  two IEEE values that constructor exists to canonicalise and a raw `f64` buffer holds them as
+  themselves. `beck-cli/tests/columns.rs` folds every corpus program's generated log with the layout
+  switched on and again with it off and holds the two runs to the same digest after every event and
+  the same page for every subscriber — which is also [`docs/08`](docs/08-roadmap.md) §8.3 item 8's
+  off switch proved rather than promised (`AppConfig::columns`, `beck_core::seq::set_columns`).
+  **A layout with no producer would have made that gate compare one run with itself**, so where a
+  column is *born* is part of the change: `Seq::pack` reads the elements a primitive produced, and
+  `Seq::push` promotes an **empty** list on its first element — which is what gives the accumulator
+  idiom `go(i + 1, list_append(done, x))` a column with no program changing a line. `map_list`,
+  `filter_list` and `concat_lists` build straight into a `Seq` rather than into a `Vec<Value>` that
+  is then packed, so a mapped list of numbers costs one allocation and one pass rather than two of
+  each; `list_min`, `list_max` and `list_sum` read the dense buffer. The sweep reports **6 of 40
+  programs building a column while folding and rendering, 462 columns in all** — and the first
+  instrument said zero, truthfully and about the wrong thing: it walked the accumulator, and
+  `corpus/26-sensors.beck` builds its `list[Float]` inside its *view*, where it lives for as long as
+  it takes to render.
+  **What it costs and what it buys, measured with the switch as the control.** Memory is exact and
+  gated: 8,000 bytes against 16,000 at a thousand integers and 64,000 against 128,000 at eight
+  thousand. Time is a report rather than a gate ([`docs/13`](docs/13-testing.md) §13.7) and it says
+  two things. On a 200,000-element numeric workload — built by accumulation, then mapped, filtered,
+  summed and counted — the release binary takes **202–212 ms with the layout on against 218–242 ms
+  with it off**, three runs, the same direction each time. On Are We Fast Yet there is **no
+  measurable change**: `havlak` 2,519 ms against 2,556 and `richards` 1,387 against 1,396, the only
+  two benchmarks long enough to read over ~24 ms of process startup — and `awfy/list.beck` says in
+  its own header why, which is that it deliberately holds no `list[Int]`. That is the honest shape
+  of the result: the layout moves numeric work and leaves everything else alone.
+  **The by-value iterator was the one real hazard and it is not on the hot paths.** A column has no
+  `Value` to lend, so `Seq::iter` yields by value — which would have put an atomic increment per
+  element on the digest, the wire format and `to_json`, all of which walk every element and keep
+  none. `Seq::for_each` and `try_for_each` lend where the layout has something to lend, so a boxed
+  list pays exactly what it paid before this module existed.
+  **Arrow is not built**, and the reason is a gate rather than an effort: nothing in this workspace
+  reads Arrow, so an encoder written here would be a writer checked by its own reader — the
+  objection [`docs/07`](docs/07-dependencies.md) §7.4 makes about hand-written formats, and the
+  reason [`adr/0030`](docs/adr/0030-the-webassembly-emitter-writes-its-own-bytes.md) made the
+  WebAssembly emitter wait for a JavaScript engine. The `arrow` dependency lands with the Parquet
+  archive that needs a reader for what it writes ([`docs/08`](docs/08-roadmap.md) §8.5.4's G item),
+  whose named predecessor this was.
+
+- **2026-08-22 — The read model's SQL grows a `join`, a `group by` and a `distinct` by compiling
+  into the plan.** [`docs/99`](docs/99-the-data-tier-means-of-combination.md) §99.9 item 9, which
+  closes [`docs/23`](docs/23-incremental-views-report.md) §23.19 and
+  [`docs/12`](docs/12-standards-and-conformance.md) §12.5 together. A `psql` client could read every
+  table a program has and could not relate two of them, and the way a hand-written SQL interpreter
+  grows a join is a nested loop — a second join in this project, agreeing with the engine's by
+  inspection, covered by nothing. **So the surface joins nothing.** `beck-core/src/query.rs` writes
+  the Beck expression a person would have written — `select … join … on b.k = a.k` becomes
+  `for x in a: for y in b where y.k == x.k`, `group by g` becomes the loop over `list_unique` that
+  `corpus/35-workload.beck` writes by hand — and hands it to `Plan::of_query`, where §99.6's
+  recogniser emits `Op::ArrangeBy`, `Op::Join`, `Op::GroupBy` and `Op::Distinct`. There is one join
+  in this project, one of each aggregate, and one `distinct`. Joins are **left-deep**, one stage per
+  `join`, because each stage has to be a `map_list` of its own for the recogniser to see it.
+  **What it cost was two agreements rather than an operator**, and both would have been quiet bugs
+  in a second interpreter: one rule for what a column *is* — `Table::row_values`, a newtype seen
+  through and an `Option` flattened, shared by the scan's cells and the plan's rows, because a join
+  comparing `Id("p1")` with `"p1"` answers no rows for two columns a person can see are equal — and
+  a **named refusal** wherever SQL's equality is not `Value`'s: a nullable join key (a null would
+  match a null) and a join across two types (no coercion). `sum` over anything but an `Int` is
+  refused with [`docs/46`](docs/46-standard-library-report.md) §46.16's own reason. Measured with
+  the recognition switched off beside it per [`docs/08`](docs/08-roadmap.md) §8.3 item 8: a join
+  over two collections of 200 rows and of 1,600 costs **5,004 backend steps and 40,004** — flat per
+  row — against **244,004 and 15,392,004** for the nested loop, gated by
+  `scaling.rs::answering_a_join_in_sql_does_not_reconsider_every_pair`, whose instrument is
+  `Work::steps` because the engine's own counters charge a refused join's inner scan as one
+  application and see nothing. Ten gates in `read_models.rs` hold the answers, driven by
+  `tokio-postgres`. `beck explain sql --query "<select>"` prints the operators and `--no-join` is the
+  off switch. A query is answered **cold** — its plan is compiled, prepared and thrown away with the
+  answer — so §23.19's "a read model costs nothing per event" is untouched.
+
 - **2026-08-22 — Interface state gets a home that is not the log: `gestures(step, init)`.**
   [`docs/10`](docs/10-decisions.md) D30, correcting D1, and
   [`docs/104`](docs/104-styling-and-the-component-library.md) §104.8's Wall 1 comes down.
@@ -55,7 +242,7 @@ carry the order, so leave them where they land.
   stale somewhere different, and twice in one day when programs 38 and 39 landed together.
   **The hard part was never the assertion; it was that a count has to be findable in prose.** A
   test cannot grep for `985` and know which document meant which quantity. So a marked number
-  carries an HTML comment naming it — `991<!--c:native-compiled-->` — invisible where the markdown
+  carries an HTML comment naming it — `995<!--c:native-compiled-->` — invisible where the markdown
   renders and greppable where it is edited, and **the number is read out of the sentence rather
   than out of the marker**: a marker carrying its own value would agree with itself while the prose
   beside it said something else, which is the failure being gated.

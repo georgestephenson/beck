@@ -39,6 +39,17 @@ pub struct Parser<'a> {
     /// clause keywords. They are *not* reserved anywhere else: a program with a function called
     /// `expect` keeps working, and §21.2's construct does not cost the language four words.
     in_test: usize,
+    /// Whether a block attached to a call here may hold **declarations** rather than statements.
+    ///
+    /// §2.3's block rule passes a block to a macro as syntax, and §2.4's `derive` is a macro whose
+    /// block is a `model`. So `derive(ToJson):` written as a module item takes declarations, and
+    /// the same call inside a `def` takes statements — because a `model` inside a function body is
+    /// not a thing this language has, and reading one there would turn a mistake into a mystery.
+    ///
+    /// True while a module item is being parsed and until something descends into a *value* body:
+    /// [`Parser::block`] clears it and [`Parser::attach_block`] carries it, so a macro block nested
+    /// directly inside another macro block keeps it and a `def` body inside either does not.
+    items_here: bool,
 }
 
 /// Parse a whole module.
@@ -53,6 +64,7 @@ pub fn parse_module(file: FileId, name: &str, src: &str, diags: &mut Diagnostics
         attached_block: false,
         nesting: Nesting::new(),
         in_test: 0,
+        items_here: false,
     };
     let mut items = vec![Node::sym(name, Span::new(file, 0..0))];
     while !p.at_eof() {
@@ -60,6 +72,7 @@ pub fn parse_module(file: FileId, name: &str, src: &str, diags: &mut Diagnostics
         if p.at_eof() {
             break;
         }
+        p.items_here = true;
         match p.item() {
             Some(item) => items.push(item),
             None => p.recover_to_next_item(),
@@ -1048,11 +1061,19 @@ impl<'a> Parser<'a> {
         false
     }
 
+    /// A **value** block: the body of a `def`, an `if`, a `for`, a `test`. Declarations are not
+    /// items here, so [`Parser::items_here`] is cleared for its duration.
     fn block(&mut self) -> Option<Node> {
+        self.block_of(false)
+    }
+
+    fn block_of(&mut self, items: bool) -> Option<Node> {
         if !self.enter() {
             return None;
         }
+        let was = std::mem::replace(&mut self.items_here, items);
         let out = self.block_inner();
+        self.items_here = was;
         self.nesting.leave();
         out
     }
@@ -1080,7 +1101,9 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 Tok::Eof => break,
-                _ => match self.statement() {
+                // A declaration is an item, and a block only reads one where a call in item
+                // position put it there.
+                _ => match self.line_of_this_block() {
                     Some(s) => stmts.push(s),
                     None => {
                         self.recover_in_block();
@@ -1097,6 +1120,30 @@ impl<'a> Parser<'a> {
         }
         let end = self.span();
         Some(Node::form(sym::DO, stmts, start.to(end)))
+    }
+
+    /// One line of a block: an item where this block holds them, a statement everywhere else.
+    fn line_of_this_block(&mut self) -> Option<Node> {
+        match self.items_here && self.at_declaration() {
+            true => self.item(),
+            false => self.statement(),
+        }
+    }
+
+    /// Whether the line about to be read declares something rather than computing something.
+    ///
+    /// The seven words a module item can start with, plus `@` for a decorated one. `test` and
+    /// `property` are deliberately absent: a macro that produced a test would be producing a
+    /// harness, and nothing asks for that.
+    fn at_declaration(&self) -> bool {
+        if self.at(&Raw::At) {
+            return true;
+        }
+        [
+            "def", "macro", "model", "union", "trait", "impl", "type", "newtype",
+        ]
+        .iter()
+        .any(|k| self.at_kw(k))
     }
 
     fn recover_in_block(&mut self) {
@@ -1183,6 +1230,7 @@ impl<'a> Parser<'a> {
             attached_block: false,
             nesting: self.nesting.resumed(),
             in_test: self.in_test,
+            items_here: self.items_here,
         }
     }
 
@@ -1626,6 +1674,27 @@ impl<'a> Parser<'a> {
         loop {
             if self.at(&Raw::Dot) {
                 self.bump();
+                // `x.$f` — the field a macro was handed rather than one it wrote. §2.4's `derive`
+                // reads a model's fields and emits code that reads them, so the name comes out of
+                // the caller's syntax; writing one in the template would be a fresh hygiene scope
+                // and would name nothing.
+                if self.at(&Raw::Dollar) {
+                    let dollar = self.span();
+                    self.bump();
+                    let inner = self.primary()?;
+                    let name = Node::form(sym::UNQUOTE, vec![inner], dollar.to(self.span()));
+                    let span = e.span().to(name.span());
+                    e = match self.at(&Raw::LParen) {
+                        true => {
+                            let (args, aspan) = self.call_args()?;
+                            let mut items = vec![e, name];
+                            items.extend(args);
+                            Node::form(sym::DOT, items, span.to(aspan))
+                        }
+                        false => Node::form(sym::DOT, vec![e, name], span),
+                    };
+                    continue;
+                }
                 let (name, name_span) = self.ident("a field or method name")?;
                 let span = e.span().to(name_span);
                 // `(. obj name)` is a field read; `(. obj name args...)` a method call — exactly
@@ -1683,7 +1752,9 @@ impl<'a> Parser<'a> {
     fn attach_block(&mut self, callee: Node) -> Option<Node> {
         let colon = self.span();
         self.bump(); // :
-        let body = self.block()?;
+                     // The block a macro receives keeps whatever position the call was in, so `derive(…):`
+                     // written as a module item takes a `model` and the same call in a function body does not.
+        let body = self.block_of(self.items_here)?;
         let bspan = body.span();
         let quoted = Node::form(sym::QUOTE, vec![body], bspan);
         let kw = Node::form(
@@ -1795,7 +1866,11 @@ impl<'a> Parser<'a> {
         if self.at_kw("quote") {
             self.bump();
             self.expect(&Raw::Colon, "`:` after `quote`");
-            let body = self.block()?;
+            // A `quote:` builds syntax, so what may be written in one is what may be written in a
+            // program: a `model`, a `trait`, an `impl` — not only the statements a value block
+            // holds. Whether the result belongs where the macro was called is the checker's
+            // question, and it asks it about the expansion rather than about the template.
+            let body = self.block_of(true)?;
             let bspan = body.span();
             return Some(Node::form(sym::QUOTE, vec![body], span.to(bspan)));
         }
@@ -1930,6 +2005,16 @@ impl<'a> Parser<'a> {
 
     fn type_expr_inner(&mut self) -> Option<Node> {
         let start = self.span();
+        // `$T` where a type goes. A macro that generates an `impl` has to name the type it is
+        // generating for, and that name comes from the caller's syntax — §2.4's `derive` cannot be
+        // written at all without it, because a name *written* in the template would be a fresh
+        // hygiene scope rather than the model the macro was handed.
+        if self.at(&Raw::Dollar) {
+            self.bump();
+            let inner = self.type_expr()?;
+            let span = start.to(inner.span());
+            return Some(Node::form(sym::UNQUOTE, vec![inner], span));
+        }
         if self.at(&Raw::LParen) {
             self.bump();
             let mut params = Vec::new();

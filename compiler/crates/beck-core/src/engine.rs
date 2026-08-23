@@ -96,7 +96,7 @@ impl Arrangement {
         if let Some(v) = self.listed.get() {
             return (v.clone(), 0);
         }
-        let listed = Value::List(Arc::new(self.entries.values().cloned().collect()));
+        let listed = Value::list(self.entries.values().cloned().collect());
         // A race loses the loser's copy and keeps the winner's; both are the same list, so which
         // one wins is not observable. `get_or_init` would be neater and would hold a lock.
         match self.listed.set(listed.clone()) {
@@ -1226,7 +1226,7 @@ impl Engine {
         // gates that exclude `materialised` keep excluding assembly rather than starting to
         // include it.
         self.work.materialised += rows.len() as u64;
-        Ok(Value::List(Arc::new(rows)))
+        Ok(Value::list(rows))
     }
 
     /// The rows one collection keeps because another one answers their key, or because it does
@@ -2842,10 +2842,10 @@ fn value_bytes(v: &Value, seen: &mut std::collections::BTreeSet<usize>) -> u64 {
             if !fresh(Arc::as_ptr(xs) as usize) {
                 return 0;
             }
-            let mut n = (xs.len() * std::mem::size_of::<Value>()) as u64;
-            for x in xs.iter() {
-                n += value_bytes(x, seen);
-            }
+            // What the list itself occupies, which is the layout's own answer: half as much for a
+            // column, and the elements below cost nothing more either way.
+            let mut n = xs.heap_bytes() as u64;
+            xs.for_each(|x| n += value_bytes(x, seen));
             n
         }
         Value::Map(m) => {

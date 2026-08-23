@@ -570,3 +570,495 @@ fn a_reader_that_cannot_count_falls_back_to_scanning() {
         .expect("the fallback answers");
     assert_eq!(counted(&answer), 2);
 }
+
+// -------------------------------------------------------------------------------------------
+// The relational half — docs/99 §99.9 item 9
+// -------------------------------------------------------------------------------------------
+//
+// A `join`, a `group by` and a `distinct` are not interpreted by the SQL: they are compiled into a
+// plan and run by the engine, so the operators are `Op::Join`, `Op::ArrangeBy`, `Op::GroupBy` and
+// `Op::Distinct` — the ones a program's own view compiles to. These assert both halves: that the
+// answers are right, and that the plan a query compiles to is made of those operators rather than
+// of something this surface grew for itself.
+
+/// A `Command` whose fields are all plain strings.
+///
+/// Not `support::command`, which wraps a field called `id` in the todo sketch's `Id` newtype:
+/// `34-assignments.beck` has no such type, and a wrapped key would be a `Value` the join compares
+/// against an unwrapped one — which is exactly the confusion `read::Table::row_values` normalises
+/// away, so building the wrong command here would test the normalisation instead of the join.
+fn plain(variant: &str, fields: &[(&str, &str)]) -> beck_core::Value {
+    let mut map = beck_core::core::Fields::new();
+    for (name, value) in fields {
+        map.insert(Arc::from(*name), beck_core::Value::str_(value));
+    }
+    beck_core::Value::data(Arc::from("Command"), Some(Arc::from(variant)), map)
+}
+
+/// An application over `corpus/34-assignments.beck`, which holds two collections that relate.
+async fn app_with_assignments() -> Arc<App> {
+    let src = include_str!("../../../corpus/34-assignments.beck");
+    let (placed, diags, map) = beck_core::compile_str("corpus/34-assignments.beck", src);
+    assert!(!diags.has_errors(), "{}", diags.render(&map));
+    let placed = placed.expect("compiles");
+    let backend = beck_eval::backend(&placed);
+    let runtime = beck_rt::Runtime::new(placed, backend).expect("prepares");
+    let app = App::start(runtime, Arc::new(MemoryLog::new()), AppConfig::default())
+        .await
+        .expect("starts");
+    for (id, name) in [("p1", "Ada"), ("p2", "Bo")] {
+        app.propose(
+            format!("hire-{id}"),
+            "ana",
+            plain("Hire", &[("id", id), ("name", name)]),
+        )
+        .await
+        .expect("accepted");
+    }
+    for (id, title, assignee) in [
+        ("i1", "first", "p1"),
+        ("i2", "second", "p1"),
+        ("i3", "third", "p2"),
+        ("i4", "orphan", "nobody"),
+    ] {
+        app.propose(
+            format!("file-{id}"),
+            "ana",
+            plain(
+                "File",
+                &[("id", id), ("title", title), ("assignee", assignee)],
+            ),
+        )
+        .await
+        .expect("accepted");
+    }
+    app
+}
+
+/// The plan a query compiles to, so a test can say which operators answered it.
+fn operators(schema: &Schema, sql: &str) -> Vec<String> {
+    let s = match beck_core::read::parse(sql).expect("parses") {
+        beck_core::read::Stmt::Select(s) => s,
+        other => panic!("not a select: {other:?}"),
+    };
+    let compiled = beck_core::query::compile(schema, &s).expect("compiles");
+    compiled
+        .plan()
+        .nodes
+        .iter()
+        .map(|n| n.op.name().to_string())
+        .collect()
+}
+
+fn assignments_schema() -> Schema {
+    schema_of(
+        include_str!("../../../corpus/34-assignments.beck"),
+        "corpus/34-assignments.beck",
+    )
+}
+
+#[tokio::test]
+async fn a_join_relates_two_collections_and_is_the_plans_join() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+
+    let rows = client
+        .query(
+            "select i.title, p.name from issues i join people p on i.assignee = p.id \
+             order by i.title",
+            &[],
+        )
+        .await
+        .expect("a join");
+    let got: Vec<(String, String)> = rows.iter().map(|r| (r.get(0), r.get(1))).collect();
+    // An inner join: `orphan` names a person who was never hired, so it is not a row.
+    assert_eq!(
+        got,
+        vec![
+            ("first".to_string(), "Ada".to_string()),
+            ("second".to_string(), "Ada".to_string()),
+            ("third".to_string(), "Bo".to_string()),
+        ]
+    );
+
+    // And it is the plan's operator rather than a loop this surface grew: the index is an
+    // `arrange_by` and the probe is a `join`, which is exactly what a `for` loop over the same two
+    // collections compiles to.
+    let ops = operators(
+        &assignments_schema(),
+        "select i.title, p.name from issues i join people p on i.assignee = p.id",
+    );
+    assert!(ops.contains(&"join".to_string()), "{ops:?}");
+    assert!(ops.contains(&"arrange_by".to_string()), "{ops:?}");
+}
+
+#[tokio::test]
+async fn a_where_on_either_side_of_a_join_narrows_the_right_rows() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+
+    let titles: Vec<String> = client
+        .query(
+            "select i.title from issues i join people p on i.assignee = p.id \
+             where p.name = 'Ada' order by i.title",
+            &[],
+        )
+        .await
+        .expect("a join with a filter on the right")
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(titles, vec!["first".to_string(), "second".to_string()]);
+
+    // A condition that spans both tables cannot be pushed into either scan, and is applied to the
+    // joined rows instead — same answer, and the query does not refuse.
+    let titles: Vec<String> = client
+        .query(
+            "select i.title from issues i join people p on i.assignee = p.id \
+             where i.title = 'third' or p.name = 'Ada' order by i.title",
+            &[],
+        )
+        .await
+        .expect("a spanning filter")
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(
+        titles,
+        vec![
+            "first".to_string(),
+            "second".to_string(),
+            "third".to_string()
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_group_by_answers_per_group_and_is_the_plans_group_by() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+
+    let rows = client
+        .query(
+            "select assignee, count(*) as issues from issues group by assignee order by assignee",
+            &[],
+        )
+        .await
+        .expect("a group by");
+    let got: Vec<(String, i64)> = rows.iter().map(|r| (r.get(0), r.get(1))).collect();
+    assert_eq!(
+        got,
+        vec![
+            ("nobody".to_string(), 1),
+            ("p1".to_string(), 2),
+            ("p2".to_string(), 1),
+        ]
+    );
+
+    // `count(*)` per group is the join's own tally over an `arrange_by` — no group is built, which
+    // is docs/99 §99.9 item 6's first aggregate reaching this surface.
+    let ops = operators(
+        &assignments_schema(),
+        "select assignee, count(*) from issues group by assignee",
+    );
+    assert!(ops.contains(&"distinct".to_string()), "{ops:?}");
+    assert!(ops.contains(&"arrange_by".to_string()), "{ops:?}");
+    assert!(ops.contains(&"join".to_string()), "{ops:?}");
+    assert!(
+        !ops.contains(&"group_by".to_string()),
+        "a count built a group: {ops:?}"
+    );
+
+    // An extreme is `Op::GroupBy`'s multiset, and it is a different operator for that reason.
+    let ops = operators(
+        &assignments_schema(),
+        "select assignee, min(title) from issues group by assignee",
+    );
+    assert!(ops.contains(&"group_by".to_string()), "{ops:?}");
+}
+
+#[tokio::test]
+async fn an_extreme_per_group_is_answered_from_the_multiset() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+
+    let rows = client
+        .query(
+            "select assignee, min(title) as lo, max(title) as hi from issues \
+             group by assignee order by assignee",
+            &[],
+        )
+        .await
+        .expect("two extremes");
+    let got: Vec<(String, String, String)> = rows
+        .iter()
+        .map(|r| (r.get(0), r.get(1), r.get(2)))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (
+                "nobody".to_string(),
+                "orphan".to_string(),
+                "orphan".to_string()
+            ),
+            ("p1".to_string(), "first".to_string(), "second".to_string()),
+            ("p2".to_string(), "third".to_string(), "third".to_string()),
+        ]
+    );
+}
+
+/// Three tables, one of them joined to itself — the left-deep chain, where every stage has to be a
+/// loop of its own for the recogniser to see it.
+///
+/// A three-way join written as nested loops inside one per-element function would index the first
+/// join and leave the second as a scan per row; written left-deep, each stage is a `map_list` over
+/// the stage below it and gets its own index. The plan says which happened: two joins and two
+/// indexes, not one.
+#[tokio::test]
+async fn a_three_way_join_indexes_every_stage_and_a_table_may_be_joined_to_itself() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+
+    let rows = client
+        .query(
+            "select i.title, p.name, q.id from issues i join people p on i.assignee = p.id \
+             join people q on q.name = p.name order by i.title",
+            &[],
+        )
+        .await
+        .expect("a three-way join");
+    let got: Vec<(String, String, String)> = rows
+        .iter()
+        .map(|r| (r.get(0), r.get(1), r.get(2)))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("first".to_string(), "Ada".to_string(), "p1".to_string()),
+            ("second".to_string(), "Ada".to_string(), "p1".to_string()),
+            ("third".to_string(), "Bo".to_string(), "p2".to_string()),
+        ]
+    );
+
+    let ops = operators(
+        &assignments_schema(),
+        "select i.title, p.name, q.id from issues i join people p on i.assignee = p.id \
+         join people q on q.name = p.name",
+    );
+    assert_eq!(
+        ops.iter().filter(|o| *o == "join").count(),
+        2,
+        "a stage was left as a nested loop: {ops:?}"
+    );
+    assert_eq!(
+        ops.iter().filter(|o| *o == "arrange_by").count(),
+        2,
+        "a stage was left without an index: {ops:?}"
+    );
+}
+
+/// A table named twice without a name of its own is refused rather than silently self-joined.
+#[tokio::test]
+async fn one_name_for_two_tables_in_a_from_is_refused() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+    let e = client
+        .query(
+            "select * from people join people on people.id = people.id",
+            &[],
+        )
+        .await
+        .expect_err("ambiguous");
+    let db = e.as_db_error().expect("a real error response");
+    assert!(db.message().contains("as x"), "{}", db.message());
+}
+
+#[tokio::test]
+async fn a_group_by_over_a_join_groups_the_joined_rows() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+
+    let rows = client
+        .query(
+            "select p.name, count(*) from issues i join people p on i.assignee = p.id \
+             group by p.name order by p.name",
+            &[],
+        )
+        .await
+        .expect("a grouped join");
+    let got: Vec<(String, i64)> = rows.iter().map(|r| (r.get(0), r.get(1))).collect();
+    assert_eq!(got, vec![("Ada".to_string(), 2), ("Bo".to_string(), 1)]);
+}
+
+#[tokio::test]
+async fn distinct_is_the_algebras_delta_rather_than_a_comparison_over_rows() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+
+    let got: Vec<String> = client
+        .query(
+            "select distinct assignee from issues order by assignee",
+            &[],
+        )
+        .await
+        .expect("distinct")
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(
+        got,
+        vec!["nobody".to_string(), "p1".to_string(), "p2".to_string()]
+    );
+
+    let ops = operators(
+        &assignments_schema(),
+        "select distinct assignee from issues",
+    );
+    assert!(ops.contains(&"distinct".to_string()), "{ops:?}");
+}
+
+#[tokio::test]
+async fn an_aggregate_with_no_group_by_is_one_row_about_the_whole_table() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+
+    let r = client
+        .query_one(
+            "select min(title) as lo, max(title) as hi, count(*) as n from issues",
+            &[],
+        )
+        .await
+        .expect("one row");
+    assert_eq!(r.get::<_, String>(0), "first");
+    assert_eq!(r.get::<_, String>(1), "third");
+    assert_eq!(r.get::<_, i64>(2), 4);
+}
+
+/// The two aggregates this surface refuses, and both refusals are the language's decision reaching
+/// SQL rather than an implementation gap.
+#[tokio::test]
+async fn a_float_sum_and_an_aggregate_over_a_nullable_column_are_refused_by_name() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+
+    // There is no `Float` column here, so the check that reaches a person is the message: a `sum`
+    // over anything but a `Bigint` says why, and `title` is text.
+    let e = client
+        .query(
+            "select assignee, sum(title) from issues group by assignee",
+            &[],
+        )
+        .await
+        .expect_err("a sum over text");
+    let db = e.as_db_error().expect("a real error response");
+    assert_eq!(db.code().code(), "0A000");
+    assert!(db.message().contains("list_sum"), "{}", db.message());
+}
+
+/// A `select` naming a column the `group by` does not is refused with Postgres's own code.
+#[tokio::test]
+async fn a_column_outside_the_group_by_is_refused() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+    let e = client
+        .query("select title, count(*) from issues group by assignee", &[])
+        .await
+        .expect_err("not grouped");
+    let db = e.as_db_error().expect("a real error response");
+    assert_eq!(db.code().code(), "42803");
+}
+
+/// The catalogue is a table a join may name, which is the nearest thing this read model has to
+/// `pg_catalog`: "which tables have a column called `id`" is a question about it.
+#[tokio::test]
+async fn the_catalogue_can_be_grouped_and_joined_like_any_other_table() {
+    let app = app_with_assignments().await;
+    let client = connect(app).await;
+
+    let got: Vec<(String, i64)> = client
+        .query(
+            "select table_name, count(*) from beck_columns group by table_name \
+             order by table_name",
+            &[],
+        )
+        .await
+        .expect("a grouped catalogue")
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect();
+    assert!(
+        got.contains(&("issues".to_string(), 3)),
+        "the catalogue does not describe the issues table: {got:?}"
+    );
+}
+
+/// **The recognition has an off switch, and both settings are run** — docs/08 §8.3 item 8.
+///
+/// `Relate::Refuse` compiles the same expression to the nested loop it literally is, so the gate
+/// carries its own evidence that the operator is doing something: with it on the plan has a join
+/// and an index, with it off it has neither and the `filter_list` is reconsidered per left row.
+#[test]
+fn the_join_a_query_compiles_to_can_be_switched_off() {
+    let schema = assignments_schema();
+    let sql = "select i.title, p.name from issues i join people p on i.assignee = p.id";
+    let s = match beck_core::read::parse(sql).expect("parses") {
+        beck_core::read::Stmt::Select(s) => s,
+        other => panic!("not a select: {other:?}"),
+    };
+    let on = beck_core::query::compile_with(&schema, &s, beck_core::plan::Relate::Recognise)
+        .expect("compiles");
+    let off = beck_core::query::compile_with(&schema, &s, beck_core::plan::Relate::Refuse)
+        .expect("compiles");
+    let names = |c: &beck_core::query::Compiled| -> Vec<String> {
+        c.plan()
+            .nodes
+            .iter()
+            .map(|n| n.op.name().to_string())
+            .collect()
+    };
+    assert!(names(&on).contains(&"join".to_string()), "{:?}", names(&on));
+    assert!(
+        names(&on).contains(&"arrange_by".to_string()),
+        "{:?}",
+        names(&on)
+    );
+
+    // With it off there is no join and no index: the `filter_list` stays *inside* the loop's
+    // per-element function, so it is not an operator at all — it is a scan of the right-hand
+    // collection per left row, which is the nested loop the operator removes. What the plan shows
+    // is one loop whose function **captured** the other collection, and the capture is the cost.
+    assert!(
+        !names(&off).contains(&"join".to_string()),
+        "{:?}",
+        names(&off)
+    );
+    assert!(
+        !names(&off).contains(&"arrange_by".to_string()),
+        "{:?}",
+        names(&off)
+    );
+    let loops: Vec<usize> = off
+        .plan()
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| matches!(n.op.name(), "map_list" | "flat_map"))
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        loops.iter().any(|&i| off.plan().nodes[i]
+            .op
+            .funs()
+            .iter()
+            .any(|f| !f.captures.is_empty())),
+        "the refused plan captured nothing, so there is nothing for the operator to remove"
+    );
+    assert!(
+        on.plan()
+            .nodes
+            .iter()
+            .all(|n| n.op.funs().iter().all(|f| f.captures.is_empty())),
+        "the join left a capture behind"
+    );
+}

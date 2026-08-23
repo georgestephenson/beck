@@ -33,6 +33,7 @@ use beck_diag::Span;
 
 use crate::html::Html;
 use crate::pmap::PMap;
+use crate::seq::Seq;
 use crate::ty::{Effect, Tier, Ty};
 
 pub type VarId = u32;
@@ -847,7 +848,12 @@ pub enum Value {
     /// Text, with the two facts a character-indexed language needs about it: how many characters
     /// there are, and whether a character index is a byte index. [`Text`] is why.
     Str(Arc<Text>),
-    List(Arc<Vec<Value>>),
+    /// A list, in one of [`crate::seq::Seq`]'s two layouts.
+    ///
+    /// Behind the `Arc` rather than in the `Value`, which is what keeps a `Value` 16 bytes: the
+    /// layout enum costs a word inside the allocation a list already had, and nothing that is not
+    /// a list pays for it.
+    List(Arc<Seq>),
     Map(PMap<Value, Value>),
     /// A model instance or a union variant — see [`Record`].
     ///
@@ -1570,7 +1576,24 @@ impl Value {
         }
     }
 
-    pub fn as_list(&self) -> Option<&Vec<Value>> {
+    /// A list of these elements, in whatever layout they fit ([`crate::seq::Seq::pack`]).
+    ///
+    /// The one constructor, so that the choice of layout is made in one place rather than at
+    /// seventy call sites — and so that turning it off turns it off everywhere.
+    pub fn list(values: Vec<Value>) -> Value {
+        Value::List(Arc::new(Seq::pack(values)))
+    }
+
+    /// A list of elements already in a layout — what a primitive that *preserved* one hands back.
+    ///
+    /// [`Value::list`] chooses a layout; this keeps the one the caller has, which is the difference
+    /// between `list_append` on a column costing a `push` and costing a re-examination of the whole
+    /// list.
+    pub fn of_seq(seq: Seq) -> Value {
+        Value::List(Arc::new(seq))
+    }
+
+    pub fn as_list(&self) -> Option<&Seq> {
         match self {
             Value::List(xs) => Some(xs),
             _ => None,
@@ -1653,7 +1676,8 @@ impl Value {
             Value::Float(_) => format!("{}", self.as_f64().unwrap_or(0.0)),
             Value::Str(s) => s.to_string(),
             Value::List(xs) => {
-                let parts: Vec<String> = xs.iter().map(Value::display).collect();
+                let mut parts: Vec<String> = Vec::with_capacity(xs.len());
+                xs.for_each(|x| parts.push(x.display()));
                 format!("[{}]", parts.join(", "))
             }
             Value::Map(m) => {
@@ -1699,7 +1723,11 @@ impl Value {
                 .map(J::Number)
                 .unwrap_or(J::Null),
             Value::Str(s) => J::String(s.to_string()),
-            Value::List(xs) => J::Array(xs.iter().map(Value::to_json).collect()),
+            Value::List(xs) => {
+                let mut out = Vec::with_capacity(xs.len());
+                xs.for_each(|x| out.push(x.to_json()));
+                J::Array(out)
+            }
             Value::Map(m) => {
                 let mut obj = JMap::new();
                 for (k, v) in m.iter() {
@@ -1789,8 +1817,9 @@ pub fn value_to_repr(v: &Value) -> Result<serde_json::Value, NotStorable> {
         Value::Float(bits) => json!({"$": "float", "v": bits.to_string()}),
         Value::Str(s) => json!({"$": "str", "v": s.as_str()}),
         Value::List(xs) => {
-            let items: Result<Vec<_>, _> = xs.iter().map(value_to_repr).collect();
-            json!({"$": "list", "v": items?})
+            let mut items = Vec::with_capacity(xs.len());
+            xs.try_for_each(|x| value_to_repr(x).map(|v| items.push(v)))?;
+            json!({"$": "list", "v": items})
         }
         Value::Map(m) => {
             let mut pairs = Vec::with_capacity(m.len());
@@ -1825,13 +1854,13 @@ pub fn value_from_repr(j: &serde_json::Value) -> Option<Value> {
         "int" => Value::Int(j.get("v")?.as_i64()?),
         "float" => Value::Float(j.get("v")?.as_str()?.parse().ok()?),
         "str" => Value::str_(j.get("v")?.as_str()?),
-        "list" => Value::List(Arc::new(
+        "list" => Value::list(
             j.get("v")?
                 .as_array()?
                 .iter()
                 .map(value_from_repr)
                 .collect::<Option<Vec<_>>>()?,
-        )),
+        ),
         "map" => {
             let mut m = PMap::new();
             for pair in j.get("v")?.as_array()? {
@@ -1888,9 +1917,9 @@ fn hash_into(v: &Value, h: &mut blake3::Hasher) {
         Value::List(xs) => {
             h.update(&[5]);
             h.update(&(xs.len() as u64).to_le_bytes());
-            for x in xs.iter() {
+            xs.for_each(|x| {
                 hash_into(x, h);
-            }
+            });
             h
         }
         Value::Map(m) => {
@@ -2126,7 +2155,7 @@ mod tests {
             "a record holding a view is not data"
         );
         assert!(
-            value_to_repr(&Value::List(Arc::new(vec![view.clone()]))).is_err(),
+            value_to_repr(&Value::list(vec![view.clone()])).is_err(),
             "a list holding a view is not data"
         );
         assert!(

@@ -105,15 +105,19 @@ So:
   site, and `beck-cli/tests/getting_started.rs` compiles and runs every program in it. Editing it
   edits a page people read.
 - **`compiler/lib/`**: a host's table or grammar is a primitive in `prelude.rs`; composition is a
-  file there. Every file is compiled into the binary (`beck_core::stdlib`) and needs a line in
+  file there — **and a macro is a file there too**, since one crosses an import
+  ([`lib/json.beck`](compiler/lib/json.beck) ships `derive_json`). Every file is compiled into the binary (`beck_core::stdlib`) and needs a line in
   `MODULES`. The namespace is flat and spans the directory, so a name defined in two library files
   cannot be imported by one program. `beck-cli/tests/stdlib.rs` gates the directory rather than a
   list.
 - **`compiler/corpus/`**: a program added there has to place itself — no annotations. **It also
   moves every corpus-wide count the documents quote** — what the native backends compile and
   refuse, what the WebAssembly emitter is measured against, where the corpus places, how many
-  of its names rename. Each of those is marked where it is written, with an HTML comment
-  naming the quantity (`991<!--c:native-compiled-->`), and
+  of its names rename. **So does a program added to [`compiler/examples/`](compiler/examples/), or
+  to `awfy/`, `clbg/`, `sicp/` or `lib/`**: what the native backends compile is swept over all six
+  directories, so the gate fires for a file added to any of them and not only to this one. Each of
+  those quantities is marked where it is written, with an HTML comment
+  naming it (`995<!--c:native-compiled-->`), and
   `docs.rs::every_corpus_wide_count_quoted_in_prose_is_the_one_the_tree_has` derives them all
   and fails until every marked number agrees. Run it with `--nocapture` and it prints the
   table; a quantity it derives and nobody quotes fails too, so a figure cannot leave the
@@ -197,7 +201,7 @@ different claims.**
 the differential, replay-determinism, backend-seam, scaling, frames, security, pending-security,
 corpus, placement-property, patterns, general-slicer, incremental-analysis, incremental-engine,
 fusion,
-gestures, shared-arrangement, subscription, view-metrics, read-model, style, SICP, Are We Fast Yet, Benchmarks Game,
+gestures, shared-arrangement, subscription, view-metrics, read-model, columns, style, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
 mode-B, browser, client, playground, identity, OIDC, presence, cranelift, wasm-backend, release and

@@ -44,18 +44,27 @@
 //!
 //! # What this is not
 //!
-//! It is not a query planner. [`04`](../../../../../docs/04-compiler-architecture.md) §4.2 keeps the
-//! `Query` sub-language symbolic, and §20.5 holds `beck explain query` until an engine compiles one;
-//! what [`parse`] accepts is a hand-written subset over one table at a time, with no joins, no
-//! subqueries and no aggregation beyond `count(*)`. It exists so that an outside tool can read what
-//! the program holds, which is what §5.3's row is for.
+//! It is not a query planner, and it does not become one by having a join. What [`parse`] accepts
+//! is a documented subset — a scan with a `where`, an `order by` and a `limit`; an inner equi-join;
+//! a `group by` with `count`, `min`, `max` and `sum`; and `distinct` — and there are no subqueries,
+//! no expressions and no `having`. It exists so that an outside tool can read what the program
+//! holds, which is what §5.3's row is for.
+//!
+//! **What the relational half is made of is not here either.** A join, a `group by` and a
+//! `distinct` are compiled into a [`crate::plan::Plan`] by [`crate::query`] and run by
+//! [`crate::engine`], so the operators answering them are [`crate::plan::Op::Join`],
+//! [`crate::plan::Op::ArrangeBy`], [`crate::plan::Op::GroupBy`] and
+//! [`crate::plan::Op::Distinct`] — the ones a program's own view compiles to
+//! ([`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 9). This
+//! module keeps the parser, the schema, the scan and the row-level `where`, `order by` and
+//! `limit` that are the same either way.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::core::Value;
-use crate::plan::{OpId, Plan};
+use crate::plan::{Agg, OpId, Plan};
 use crate::split::Placed;
 use crate::ty::{Ty, TyDecl};
 
@@ -159,6 +168,31 @@ impl Table {
             .find(|(_, c)| c.name.as_ref() == name)
     }
 
+    /// One value as one row's worth of *values*, one per column.
+    ///
+    /// This is the rule that says what a column **is**, and it is shared rather than restated:
+    /// [`Table::row`] builds a scan's cells from it and [`crate::query`] normalises a table's rows
+    /// with it before compiling them into a plan, so a `select` that scans and a `select` that
+    /// joins cannot disagree about which part of an element a column names.
+    ///
+    /// [`Value::Unit`] stands for a field the value does not have, which becomes NULL in every
+    /// column type.
+    pub fn row_values(&self, v: &Value) -> Vec<Value> {
+        match unwrap(v) {
+            // A record: one column per field, by name.
+            Value::Data(d) if d.variant.is_none() && !d.fields.is_empty() => self
+                .columns
+                .iter()
+                .map(|c| match d.fields.get(&c.name) {
+                    Some(f) => column_value(f),
+                    None => Value::Unit,
+                })
+                .collect(),
+            // A scalar, or anything else: the single column this table then has.
+            other => self.columns.iter().map(|_| column_value(other)).collect(),
+        }
+    }
+
     /// One value as one row, coerced to the columns this table declares.
     ///
     /// Coerced rather than trusted: the column types come from the *declared* type and the value
@@ -166,23 +200,11 @@ impl Table {
     /// than a wrongly-encoded field on the wire. Nothing in the corpus reaches that branch; the
     /// branch is there because "cannot happen" is not a wire format.
     pub fn row(&self, v: &Value) -> Vec<Cell> {
-        match (&self.cardinality, unwrap(v)) {
-            // A record: one column per field, by name.
-            (_, Value::Data(d)) if d.variant.is_none() && !d.fields.is_empty() => self
-                .columns
-                .iter()
-                .map(|c| match d.fields.get(&c.name) {
-                    Some(f) => cell(f, c),
-                    None => None,
-                })
-                .collect(),
-            // A scalar, or anything else: the single column this table then has.
-            (_, other) => self
-                .columns
-                .iter()
-                .map(|c| cell(other, c))
-                .collect::<Vec<_>>(),
-        }
+        self.row_values(v)
+            .iter()
+            .zip(&self.columns)
+            .map(|(v, c)| cell_of(v, c))
+            .collect()
     }
 }
 
@@ -223,7 +245,7 @@ impl Datum {
 }
 
 /// One Beck value in one column, or NULL.
-fn cell(v: &Value, c: &Column) -> Cell {
+pub fn cell_of(v: &Value, c: &Column) -> Cell {
     let v = unwrap(v);
     // `None` is the only null this language has, and it is only reachable through an `Option`
     // column — a non-nullable column holding one would be a value that does not fit its type.
@@ -233,7 +255,7 @@ fn cell(v: &Value, c: &Column) -> Cell {
         }
         if d.variant.as_deref() == Some("Some") {
             return match d.fields.values().next() {
-                Some(inner) => cell(inner, c),
+                Some(inner) => cell_of(inner, c),
                 None => None,
             };
         }
@@ -252,6 +274,31 @@ fn cell(v: &Value, c: &Column) -> Cell {
         })),
         _ => None,
     }
+}
+
+/// One field as the value its column *is*: a newtype seen through, an `Option` flattened, and
+/// [`Value::Unit`] for the SQL NULL a `None` becomes.
+///
+/// The point is that two things agree. [`cell_of`] already saw through both when it built the cell
+/// a client is shown, so a `Str` behind a newtype has always **displayed** as its payload; what a
+/// join compares is the [`Value`] itself, and a key that compared `Id("p1")` where the column shows
+/// `p1` would answer no rows for two columns a person can see are equal. Normalising here rather
+/// than at the comparison is what makes that one rule instead of two.
+fn column_value(v: &Value) -> Value {
+    let v = unwrap(v);
+    if let Value::Data(d) = v {
+        match d.variant.as_deref() {
+            Some("None") => return Value::Unit,
+            Some("Some") => {
+                return match d.fields.values().next() {
+                    Some(inner) => column_value(inner),
+                    None => Value::Unit,
+                }
+            }
+            _ => {}
+        }
+    }
+    v.clone()
 }
 
 /// See through a newtype, which at run time is a one-field record with no variant.
@@ -453,6 +500,32 @@ impl Schema {
         rows
     }
 
+    /// The catalogue's own rows as **values**, which is what a query that joins it reads.
+    ///
+    /// [`Schema::catalogue_rows`] answers a scan and this answers the plan, and they are the same
+    /// five columns because a table a join may name has to be the table a scan named. It is built
+    /// on demand either way: the catalogue is a handful of rows describing a schema that cannot
+    /// change while a process is running.
+    pub fn catalogue_values(&self) -> Vec<Value> {
+        let mut rows = Vec::new();
+        for t in &self.tables {
+            for (i, c) in t.columns.iter().enumerate() {
+                rows.push(Value::record(
+                    "Column",
+                    None,
+                    [
+                        ("table_name", Value::text(t.name.to_string())),
+                        ("column_name", Value::text(c.name.to_string())),
+                        ("data_type", Value::text(c.ty.name().to_string())),
+                        ("nullable", Value::Bool(c.nullable)),
+                        ("position", Value::Int(i as i64 + 1)),
+                    ],
+                ));
+            }
+        }
+        rows
+    }
+
     /// The schema as `CREATE TABLE` statements, for `beck explain sql`.
     ///
     /// Nothing executes this — there is no database to execute it against, and saying so is the
@@ -499,9 +572,10 @@ impl Schema {
 /// a field called `distinct` — and a column whose name has to be quoted is a column a person must
 /// be *told* to quote. So the DDL quotes it, which is the one place they will see it written down.
 const RESERVED: &[&str] = &[
-    "abort", "and", "as", "asc", "begin", "by", "commit", "count", "desc", "discard", "distinct",
-    "end", "false", "from", "group", "is", "limit", "not", "null", "offset", "or", "order",
-    "rollback", "select", "set", "start", "table", "true", "where",
+    "abort", "and", "as", "asc", "begin", "by", "commit", "count", "cross", "desc", "discard",
+    "distinct", "end", "false", "from", "full", "group", "having", "inner", "is", "join", "left",
+    "limit", "natural", "not", "null", "offset", "on", "or", "order", "outer", "right", "rollback",
+    "select", "set", "start", "table", "true", "where",
 ];
 
 /// A name as it has to be written in this SQL: bare when it can be, quoted when it cannot.
@@ -655,7 +729,7 @@ fn model_fields(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> Option<Vec<(Arc<
 /// The elements of a collection value, in the order it holds them.
 pub fn elements(v: &Value) -> Vec<Value> {
     match v {
-        Value::List(xs) => xs.as_ref().clone(),
+        Value::List(xs) => xs.to_vec(),
         Value::Map(m) => m.iter().map(|(_, v)| v.clone()).collect(),
         other => vec![other.clone()],
     }
@@ -677,30 +751,91 @@ pub fn at_path(v: &Value, path: &[Arc<str>]) -> Option<Value> {
 
 /// What a query asks for.
 ///
-/// One table, because there is no join; and no expressions beyond a column, a literal and
-/// `count(*)`, because an expression language is what [`04`](../../../../../docs/04-compiler-architecture.md)
-/// §4.2 says the `Query` sub-language is *for* and this is not it.
+/// No expressions beyond a column, a literal and the four aggregates, because an expression
+/// language is what [`04`](../../../../../docs/04-compiler-architecture.md) §4.2 says the `Query`
+/// sub-language is *for* and this is not it.
+///
+/// What it does have is the **relational** half: several tables joined by an equality, a `group by`
+/// with its aggregates, and `distinct`. None of those is interpreted here — [`crate::query`]
+/// compiles them into a [`crate::plan::Plan`] and [`crate::engine`] runs it, so the join in a
+/// `select` and the join in a `for` loop are one operator
+/// ([`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 9).
 #[derive(Clone, Debug)]
 pub struct Select {
+    /// `select distinct` — the algebra's δ, and [`crate::plan::Op::Distinct`] is what answers it.
+    pub distinct: bool,
     pub items: Vec<Item>,
-    pub from: Option<String>,
+    /// The tables, in the order they were written. Empty for `select 1`; one for a scan; more when
+    /// the query joins, and every entry after the first carries the equality that joins it.
+    pub from: Vec<From>,
     pub filter: Vec<Vec<Cond>>,
-    pub order: Option<(String, bool)>,
+    /// `group by` — the columns whose distinct values are the output's rows.
+    pub group: Vec<Name>,
+    pub order: Option<(Name, bool)>,
     pub limit: Option<usize>,
     pub offset: usize,
 }
 
+/// One entry of the `from` list: a table, what this query calls it, and what joins it.
+#[derive(Clone, Debug)]
+pub struct From {
+    /// The table's name in the schema.
+    pub table: String,
+    /// The name a qualified column reference uses — the alias, or the table's own name.
+    pub alias: String,
+    /// The `on` equalities, as (this table's column, an earlier table's column). Empty for the
+    /// first entry, which nothing joins to.
+    pub on: Vec<(Name, Name)>,
+}
+
+/// A column reference, qualified by a table's name in this query or not.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Name {
+    pub table: Option<String>,
+    pub column: String,
+}
+
+impl Name {
+    pub fn bare(column: impl Into<String>) -> Name {
+        Name {
+            table: None,
+            column: column.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.table {
+            Some(t) => write!(f, "{t}.{}", self.column),
+            None => f.write_str(&self.column),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Item {
-    All,
-    Column(String, Option<String>),
+    /// `*`, or `t.*`.
+    All(Option<String>),
+    Column(Name, Option<String>),
     Count(Option<String>),
+    /// `min(c)`, `max(c)` or `sum(c)` — the three aggregates whose answer depends on what the rows
+    /// say. [`crate::plan::Op::GroupBy`] is what maintains each, and `count` is not one of them
+    /// because a count needs nothing of the row at all.
+    Aggregate(Agg, Name, Option<String>),
     Literal(Datum, Option<String>),
+}
+
+impl Item {
+    /// Whether this item is an aggregate, which is what decides that a query groups.
+    pub fn aggregates(&self) -> bool {
+        matches!(self, Item::Count(_) | Item::Aggregate(..))
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct Cond {
-    pub column: String,
+    pub column: Name,
     pub op: CmpOp,
     pub value: Option<Datum>,
 }
@@ -745,25 +880,25 @@ pub struct SqlError {
 }
 
 impl SqlError {
-    fn syntax(m: impl Into<String>) -> SqlError {
+    pub fn syntax(m: impl Into<String>) -> SqlError {
         SqlError {
             message: m.into(),
             code: "42601",
         }
     }
-    fn no_table(m: impl Into<String>) -> SqlError {
+    pub fn no_table(m: impl Into<String>) -> SqlError {
         SqlError {
             message: m.into(),
             code: "42P01",
         }
     }
-    fn no_column(m: impl Into<String>) -> SqlError {
+    pub fn no_column(m: impl Into<String>) -> SqlError {
         SqlError {
             message: m.into(),
             code: "42703",
         }
     }
-    fn unsupported(m: impl Into<String>) -> SqlError {
+    pub fn unsupported(m: impl Into<String>) -> SqlError {
         SqlError {
             message: m.into(),
             code: "0A000",
@@ -799,6 +934,49 @@ pub trait Rows {
         let _ = table;
         Ok(None)
     }
+
+    /// **The backend a relational query's operators are prepared against.**
+    ///
+    /// A `join`, a `group by` and a `distinct` are compiled into a [`crate::plan::Plan`] and run by
+    /// [`crate::engine`] rather than interpreted here
+    /// ([`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 9), and
+    /// preparing a plan means turning its per-element functions into
+    /// [`crate::backend::Callable`]s — which is a backend's job and not this module's.
+    ///
+    /// `None` is the honest answer for a reader with no executor behind it: those three queries are
+    /// refused with a message saying so, and every other query is answered exactly as before. The
+    /// default is `None` for [`Rows::count`]'s reason — a seam may make a reader faster or narrower,
+    /// never wrong.
+    fn backend(&self) -> Option<&dyn crate::backend::Backend> {
+        None
+    }
+}
+
+/// One column of the rows a query produced, and the table name a reference may qualify it with.
+///
+/// A `Column` is what goes on the wire; this is what a `where`, an `order by` and a select list
+/// resolve a name against. The two are separate because a joined row has columns from several
+/// tables and two of them may share a name — which is a question about the *query* rather than
+/// about the wire, where a column is a name and a type OID and nothing else.
+#[derive(Clone, Debug)]
+pub struct Field {
+    pub column: Column,
+    /// The table this came from, as this query knows it. `None` for a computed column — an
+    /// aggregate, a literal, or anything given an alias, none of which a qualified name may reach.
+    pub of: Option<Arc<str>>,
+}
+
+impl Field {
+    /// A base table's own columns, which is what a query over one table resolves against.
+    pub fn of_table(t: &Table) -> Vec<Field> {
+        t.columns
+            .iter()
+            .map(|c| Field {
+                column: c.clone(),
+                of: Some(t.name.clone()),
+            })
+            .collect()
+    }
 }
 
 impl Schema {
@@ -820,22 +998,31 @@ impl Schema {
         match parse(sql)? {
             Stmt::Ignored(_) => Ok(Vec::new()),
             Stmt::Select(s) => {
-                let table = self.resolve_from(&s)?;
-                Ok(self.project_columns(&s, table)?.0)
+                if crate::query::relational(&s) {
+                    let compiled = crate::query::compile(self, &s)?;
+                    if compiled.projected {
+                        return Ok(compiled.fields.iter().map(|f| f.column.clone()).collect());
+                    }
+                    return Ok(self.project_columns(&s, &compiled.fields)?.0);
+                }
+                let fields = match self.resolve_from(&s)? {
+                    Some(t) => Field::of_table(t),
+                    None => Vec::new(),
+                };
+                Ok(self.project_columns(&s, &fields)?.0)
             }
         }
     }
 
+    /// The one table a non-relational query reads, if it has one.
     fn resolve_from(&self, s: &Select) -> Result<Option<&Table>, SqlError> {
-        match &s.from {
+        match s.from.first() {
             None => Ok(None),
-            Some(name) => match self.table(name) {
+            Some(f) => match self.table(&f.table) {
                 Some(t) => Ok(Some(t)),
                 None => Err(SqlError::no_table(format!(
-                    "there is no read model called \"{name}\". \
-                     `select table_name from {} group by`— no: this SQL has no group by; \
-                     `select * from {}` lists what there is",
-                    Schema::CATALOGUE,
+                    "there is no read model called \"{}\". `select * from {}` lists what there is",
+                    f.table,
                     Schema::CATALOGUE
                 ))),
             },
@@ -846,35 +1033,34 @@ impl Schema {
     fn project_columns(
         &self,
         s: &Select,
-        table: Option<&Table>,
+        fields: &[Field],
     ) -> Result<(Vec<Column>, Vec<Proj>), SqlError> {
         let mut columns = Vec::new();
         let mut proj = Vec::new();
         for item in &s.items {
             match item {
-                Item::All => {
-                    let Some(t) = table else {
+                Item::All(qualifier) => {
+                    if fields.is_empty() {
                         return Err(SqlError::syntax("`select *` needs a `from`"));
-                    };
-                    for (i, c) in t.columns.iter().enumerate() {
-                        columns.push(c.clone());
+                    }
+                    for (i, f) in fields.iter().enumerate() {
+                        if let Some(t) = qualifier {
+                            if f.of.as_deref() != Some(t.as_str()) {
+                                continue;
+                            }
+                        }
+                        columns.push(f.column.clone());
                         proj.push(Proj::Column(i));
                     }
                 }
                 Item::Column(name, alias) => {
-                    let Some(t) = table else {
+                    if fields.is_empty() {
                         return Err(SqlError::no_column(format!(
                             "there is no column \"{name}\" here, because there is no `from`"
                         )));
-                    };
-                    let (i, c) = t.column(name).ok_or_else(|| {
-                        SqlError::no_column(format!(
-                            "\"{}\" has no column \"{name}\"; it has {}",
-                            t.name,
-                            names(&t.columns)
-                        ))
-                    })?;
-                    let mut c = c.clone();
+                    }
+                    let i = resolve_field(fields, name)?;
+                    let mut c = fields[i].column.clone();
                     if let Some(a) = alias {
                         c.name = Arc::from(a.as_str());
                     }
@@ -888,6 +1074,15 @@ impl Schema {
                         nullable: false,
                     });
                     proj.push(Proj::Count);
+                }
+                // An aggregate reaches this only on the path that did not compile a plan, and
+                // nothing routes one there: `query::relational` sends every query with one to the
+                // plan, where the operator that answers it lives.
+                Item::Aggregate(agg, name, _) => {
+                    return Err(SqlError::unsupported(format!(
+                        "`{}({name})` is a question about a group, and this query has none",
+                        agg.name()
+                    )))
                 }
                 Item::Literal(d, alias) => {
                     columns.push(Column {
@@ -903,8 +1098,28 @@ impl Schema {
     }
 
     fn select(&self, s: &Select, rows_of: &dyn Rows) -> Result<Answer, SqlError> {
+        // A join, a `group by` or a `distinct`: compiled into the plan and run by the engine, so
+        // the operators are the ones a program's view uses (docs/99 §99.9 item 9). What comes back
+        // is rows and what they are called; the `where` this could not push into a scan, the
+        // `order by` and the `limit` are below, shared with every other query.
+        if crate::query::relational(s) {
+            let compiled = crate::query::compile(self, s)?;
+            let rows = compiled.run(self, rows_of)?;
+            return self.finish(
+                s,
+                &compiled.fields,
+                rows,
+                &compiled.residual,
+                compiled.projected,
+            );
+        }
+
         let table = self.resolve_from(s)?;
-        let (columns, proj) = self.project_columns(s, table)?;
+        let fields = match table {
+            Some(t) => Field::of_table(t),
+            None => Vec::new(),
+        };
+        let (columns, proj) = self.project_columns(s, &fields)?;
 
         // `select count(*) from t`, with nothing to narrow it: the answer is the collection's size,
         // and the collection already knows it (§23.19). Everything below this would clone every
@@ -964,7 +1179,7 @@ impl Schema {
             });
         };
 
-        let mut rows: Vec<Vec<Cell>> = match &t.source {
+        let rows: Vec<Vec<Cell>> = match &t.source {
             Source::Catalogue => self.catalogue_rows(),
             _ => {
                 let values = rows_of.scan(t)?;
@@ -976,25 +1191,41 @@ impl Schema {
                 }
             }
         };
+        self.finish(s, &fields, rows, &s.filter, false)
+    }
 
+    /// Filter, order, project, and cut — the half of a `select` that is the same whether the rows
+    /// were scanned out of a collection or produced by the plan's operators.
+    fn finish(
+        &self,
+        s: &Select,
+        fields: &[Field],
+        mut rows: Vec<Vec<Cell>>,
+        filter: &[Vec<Cond>],
+        projected: bool,
+    ) -> Result<Answer, SqlError> {
         // Filter, then order, then offset and limit — the order SQL specifies, and the order that
         // makes `limit` mean what a person expects.
-        for disjunction in &s.filter {
+        for disjunction in filter {
             let mut tested = Vec::with_capacity(rows.len());
             for row in rows {
-                if any_matches(t, disjunction, &row)? {
+                if any_matches(fields, disjunction, &row)? {
                     tested.push(row);
                 }
             }
             rows = tested;
         }
         if let Some((name, asc)) = &s.order {
-            let (i, _) = t.column(name).ok_or_else(|| {
-                SqlError::no_column(format!(
-                    "cannot order \"{}\" by \"{name}\"; it has {}",
-                    t.name,
-                    names(&t.columns)
-                ))
+            let i = resolve_field(fields, name).map_err(|e| match projected {
+                // A grouped or deduplicated query has only the columns it selected, and saying
+                // *that* is more use than "no such column": the column may well exist in the table
+                // and simply not have survived the operator.
+                true => SqlError::no_column(format!(
+                    "cannot order by \"{name}\": this query groups or is distinct, so it can only \
+                     be ordered by something it selected — {}",
+                    names_of(fields)
+                )),
+                false => e,
             })?;
             // Stable, so the order the collection holds its elements in survives ties — which is
             // the arrangement's key order, and therefore the order the page renders in.
@@ -1014,8 +1245,19 @@ impl Schema {
             rows.truncate(n);
         }
 
-        // `count(*)` collapses. Mixing it with a column would be a group-by, which this has none
-        // of, so it is refused at parse time rather than answered wrongly.
+        // The plan already projected: its operators were compiled from the select list, so the rows
+        // are the answer and there is nothing left to pick out of them.
+        if projected {
+            return Ok(Answer {
+                tag: format!("SELECT {}", rows.len()),
+                columns: fields.iter().map(|f| f.column.clone()).collect(),
+                rows,
+            });
+        }
+        let (columns, proj) = self.project_columns(s, fields)?;
+
+        // `count(*)` collapses. Mixing it with a column would be a group-by, which this path has
+        // none of, so it is refused at parse time rather than answered wrongly.
         let out: Vec<Vec<Cell>> = if proj.iter().any(|p| matches!(p, Proj::Count)) {
             vec![proj
                 .iter()
@@ -1052,32 +1294,59 @@ enum Proj {
     Literal(Datum),
 }
 
-fn names(columns: &[Column]) -> String {
-    columns
+/// A column reference, as an index into the row a query produced.
+///
+/// Shared by the select list, the `where` and the `order by`, and by [`crate::query`]'s own
+/// resolution of a join's `on` — one rule for what a name means, so a query cannot resolve a name
+/// two ways.
+pub fn resolve_field(fields: &[Field], n: &Name) -> Result<usize, SqlError> {
+    let matching: Vec<usize> = (0..fields.len())
+        .filter(|&i| {
+            fields[i].column.name.as_ref() == n.column
+                && match &n.table {
+                    Some(t) => fields[i].of.as_deref() == Some(t.as_str()),
+                    None => true,
+                }
+        })
+        .collect();
+    match matching.as_slice() {
+        [one] => Ok(*one),
+        [] => Err(SqlError::no_column(format!(
+            "there is no column \"{n}\" here; there is {}",
+            names_of(fields)
+        ))),
+        _ => Err(SqlError::no_column(format!(
+            "\"{n}\" is ambiguous: more than one table in this query has a column called \
+             \"{}\", so qualify it — `t.{}`",
+            n.column, n.column
+        ))),
+    }
+}
+
+/// The columns a query has, as a person is told about them.
+pub fn names_of(fields: &[Field]) -> String {
+    fields
         .iter()
-        .map(|c| format!("\"{}\"", c.name))
+        .map(|f| match &f.of {
+            Some(t) => format!("\"{t}.{}\"", f.column.name),
+            None => format!("\"{}\"", f.column.name),
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-fn any_matches(t: &Table, conds: &[Cond], row: &[Cell]) -> Result<bool, SqlError> {
+fn any_matches(fields: &[Field], conds: &[Cond], row: &[Cell]) -> Result<bool, SqlError> {
     for c in conds {
-        let (i, _) = t.column(&c.column).ok_or_else(|| {
-            SqlError::no_column(format!(
-                "\"{}\" has no column \"{}\"; it has {}",
-                t.name,
-                c.column,
-                names(&t.columns)
-            ))
-        })?;
-        if matches_one(&row[i], c) {
+        let i = resolve_field(fields, &c.column)?;
+        if matches(&row[i], c) {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-fn matches_one(cell: &Cell, c: &Cond) -> bool {
+/// Whether one cell satisfies one condition.
+pub fn matches(cell: &Cell, c: &Cond) -> bool {
     match c.op {
         CmpOp::Is => cell.is_none() == c.value.is_none() && (c.value.is_none() || equal(cell, c)),
         CmpOp::IsNot => {
@@ -1353,10 +1622,14 @@ pub fn parse(sql: &str) -> Result<Stmt, SqlError> {
 }
 
 fn select(p: &mut P) -> Result<Select, SqlError> {
-    // `distinct` would need a comparison over whole rows and nothing has asked for one.
-    if p.eat_keyword("distinct") {
+    // `distinct` is the algebra's δ and it is a *plan* operator rather than a comparison over whole
+    // rows here — `list_unique` names it and [`crate::plan::Op::Distinct`] maintains it, so this
+    // surface grows it by compiling into the plan (docs/99 §99.9 item 7).
+    let distinct = p.eat_keyword("distinct");
+    if p.eat_keyword("on") {
         return Err(SqlError::unsupported(
-            "`distinct` is not in this SQL subset",
+            "`distinct on` is a PostgreSQL extension this SQL does not have; \
+             `distinct` over the whole select list is what there is",
         ));
     }
     let mut items = Vec::new();
@@ -1366,22 +1639,68 @@ fn select(p: &mut P) -> Result<Select, SqlError> {
             break;
         }
     }
-    if items.iter().filter(|i| matches!(i, Item::Count(_))).count() > 0
-        && items
-            .iter()
-            .any(|i| matches!(i, Item::All | Item::Column(_, _)))
-    {
-        return Err(SqlError::unsupported(
-            "`count(*)` beside a column would need a `group by`, and this SQL has none",
-        ));
-    }
 
-    let mut from = None;
+    let mut from = Vec::new();
     if p.eat_keyword("from") {
-        from = Some(
-            p.name()
+        from.push(From {
+            table: p
+                .name()
                 .ok_or_else(|| SqlError::syntax("`from` wants a table name"))?,
-        );
+            alias: String::new(),
+            on: Vec::new(),
+        });
+        from[0].alias = table_alias(p)?.unwrap_or_else(|| from[0].table.clone());
+        loop {
+            // The joins this SQL has, and the ones it says it does not. An outer join keeps a left
+            // row that matched nothing, which is a row this query would have to invent columns for;
+            // the operator underneath answers with the group and an empty group is no rows, so
+            // saying so is better than a `left join` that quietly means `join`.
+            if p.eat_keyword("cross") || p.eat_keyword("natural") {
+                return Err(SqlError::unsupported(
+                    "the joins here are `join … on <equality>`; a cross or natural join names no \
+                     key, and every join in this SQL is an equi-join because that is the operator \
+                     underneath it",
+                ));
+            }
+            for outer in ["left", "right", "full", "outer"] {
+                if p.keyword().as_deref() == Some(outer) {
+                    return Err(SqlError::unsupported(format!(
+                        "`{outer} join` is not in this SQL subset: an unmatched row would need \
+                         columns invented for it, and `join … on` is the inner join this has"
+                    )));
+                }
+            }
+            p.eat_keyword("inner");
+            if !p.eat_keyword("join") {
+                break;
+            }
+            let table = p
+                .name()
+                .ok_or_else(|| SqlError::syntax("`join` wants a table name"))?;
+            let alias = table_alias(p)?.unwrap_or_else(|| table.clone());
+            if !p.eat_keyword("on") {
+                return Err(SqlError::syntax(format!(
+                    "`join {table}` wants `on <column> = <column>`"
+                )));
+            }
+            let mut on = Vec::new();
+            loop {
+                let left = column_name(p).ok_or_else(|| SqlError::syntax("`on` wants a column"))?;
+                if !p.eat_sym("=") {
+                    return Err(SqlError::unsupported(format!(
+                        "a join is an equality here: `on {left} = <column>`, and no other \
+                         comparison"
+                    )));
+                }
+                let right =
+                    column_name(p).ok_or_else(|| SqlError::syntax("`on` wants a column"))?;
+                on.push((left, right));
+                if !p.eat_keyword("and") {
+                    break;
+                }
+            }
+            from.push(From { table, alias, on });
+        }
     }
 
     let mut filter = Vec::new();
@@ -1389,14 +1708,45 @@ fn select(p: &mut P) -> Result<Select, SqlError> {
         filter = where_clause(p)?;
     }
 
+    let mut group = Vec::new();
+    if p.eat_keyword("group") {
+        if !p.eat_keyword("by") {
+            return Err(SqlError::syntax("`group` wants `by`"));
+        }
+        loop {
+            group
+                .push(column_name(p).ok_or_else(|| SqlError::syntax("`group by` wants a column"))?);
+            if !p.eat_sym(",") {
+                break;
+            }
+        }
+    }
+    if p.eat_keyword("having") {
+        return Err(SqlError::unsupported(
+            "`having` is not in this SQL subset: a `where` narrows the rows before they are \
+             grouped, and there is no filter over the groups themselves",
+        ));
+    }
+
+    // `count(*)` beside a column collapses one way with a `group by` and another without one, so
+    // the check is about which of the two this is rather than about the item list alone.
+    if group.is_empty()
+        && items.iter().any(Item::aggregates)
+        && items
+            .iter()
+            .any(|i| matches!(i, Item::All(_) | Item::Column(..)))
+    {
+        return Err(SqlError::unsupported(
+            "an aggregate beside a column needs a `group by` saying which rows it aggregates",
+        ));
+    }
+
     let mut order = None;
     if p.eat_keyword("order") {
         if !p.eat_keyword("by") {
             return Err(SqlError::syntax("`order` wants `by`"));
         }
-        let col = p
-            .name()
-            .ok_or_else(|| SqlError::syntax("`order by` wants a column"))?;
+        let col = column_name(p).ok_or_else(|| SqlError::syntax("`order by` wants a column"))?;
         let asc = if p.eat_keyword("desc") {
             false
         } else {
@@ -1425,18 +1775,57 @@ fn select(p: &mut P) -> Result<Select, SqlError> {
     }
 
     Ok(Select {
+        distinct,
         items,
         from,
         filter,
+        group,
         order,
         limit,
         offset,
     })
 }
 
+/// The name a `from` entry is known by in the rest of the query: `t x`, `t as x`, or nothing.
+///
+/// Separate from [`alias`] because the words that may follow a table are not the words that may
+/// follow a select item, and a `from todos where …` whose `where` was taken as an alias would
+/// refuse the query for a missing clause it does have.
+fn table_alias(p: &mut P) -> Result<Option<String>, SqlError> {
+    if p.eat_keyword("as") {
+        return Ok(Some(
+            p.name()
+                .ok_or_else(|| SqlError::syntax("`as` wants a name"))?,
+        ));
+    }
+    match p.keyword().as_deref() {
+        Some("where") | Some("order") | Some("group") | Some("having") | Some("limit")
+        | Some("offset") | Some("join") | Some("inner") | Some("left") | Some("right")
+        | Some("full") | Some("outer") | Some("cross") | Some("natural") | Some("on") | None => {
+            Ok(None)
+        }
+        Some(_) => Ok(p.name()),
+    }
+}
+
+/// A column reference: `c`, or `t.c`.
+fn column_name(p: &mut P) -> Option<Name> {
+    let first = p.name()?;
+    if p.eat_sym(".") {
+        return match p.name() {
+            Some(column) => Some(Name {
+                table: Some(first),
+                column,
+            }),
+            None => Some(Name::bare(first)),
+        };
+    }
+    Some(Name::bare(first))
+}
+
 fn item(p: &mut P) -> Result<Item, SqlError> {
     if p.eat_sym("*") {
-        return Ok(Item::All);
+        return Ok(Item::All(None));
     }
     if let Some(lit) = p.literal() {
         let d = lit.ok_or_else(|| SqlError::unsupported("`select null` has no column type"))?;
@@ -1445,17 +1834,50 @@ fn item(p: &mut P) -> Result<Item, SqlError> {
     let name = p
         .name()
         .ok_or_else(|| SqlError::syntax("a select list wants a column, `*`, or a literal"))?;
+    // `t.*` and `t.c`: the qualifier is read here rather than in [`column_name`] because a select
+    // item may be a call, and `count` is a name until the `(` says otherwise.
+    if p.eat_sym(".") {
+        if p.eat_sym("*") {
+            return Ok(Item::All(Some(name)));
+        }
+        let column = p
+            .name()
+            .ok_or_else(|| SqlError::syntax(format!("`{name}.` wants a column or `*`")))?;
+        return Ok(Item::Column(
+            Name {
+                table: Some(name),
+                column,
+            },
+            alias(p),
+        ));
+    }
     if p.eat_sym("(") {
-        // The three zero-argument functions a client asks before it trusts a connection, plus the
-        // only aggregate this subset has.
+        // The three zero-argument functions a client asks before it trusts a connection, and the
+        // four aggregates. Every one of the four is a plan operator rather than a loop here:
+        // `count` is the join's own tally and the other three are [`crate::plan::Op::GroupBy`]'s
+        // (docs/99 §99.9 item 6).
         let f = match name.as_str() {
             "count" => {
                 if !p.eat_sym("*") {
                     return Err(SqlError::unsupported(
-                        "`count` counts rows here: `count(*)` is the only form",
+                        "`count` counts rows here: `count(*)` is the only form, and `count(c)` \
+                         would be a count of the rows whose `c` is not null",
                     ));
                 }
                 Item::Count(None)
+            }
+            "min" | "max" | "sum" => {
+                let agg = match name.as_str() {
+                    "min" => Agg::Min,
+                    "max" => Agg::Max,
+                    _ => Agg::Sum,
+                };
+                let column = column_name(p).ok_or_else(|| {
+                    SqlError::unsupported(format!(
+                        "`{name}` takes a column here: `{name}(c)`, and no expression"
+                    ))
+                })?;
+                Item::Aggregate(agg, column, None)
             }
             "version" => Item::Literal(Datum::Text(version()), None),
             "current_database" | "current_schema" | "current_catalog" => {
@@ -1473,11 +1895,12 @@ fn item(p: &mut P) -> Result<Item, SqlError> {
         let a = alias(p);
         return Ok(match f {
             Item::Count(_) => Item::Count(a),
+            Item::Aggregate(agg, c, _) => Item::Aggregate(agg, c, a),
             Item::Literal(d, _) => Item::Literal(d, a.or(Some(name))),
             other => other,
         });
     }
-    Ok(Item::Column(name.clone(), alias(p)))
+    Ok(Item::Column(Name::bare(name), alias(p)))
 }
 
 fn alias(p: &mut P) -> Option<String> {
@@ -1486,8 +1909,8 @@ fn alias(p: &mut P) -> Option<String> {
     }
     // A bare alias, but not one of the words that ends a select item.
     match p.keyword().as_deref() {
-        Some("from") | Some("where") | Some("order") | Some("limit") | Some("offset")
-        | Some("as") | None => None,
+        Some("from") | Some("where") | Some("group") | Some("having") | Some("order")
+        | Some("limit") | Some("offset") | Some("as") | None => None,
         Some(_) => p.name(),
     }
 }
@@ -1520,9 +1943,7 @@ fn cond(p: &mut P) -> Result<Cond, SqlError> {
             "a parenthesised condition is not in this SQL subset",
         ));
     }
-    let column = p
-        .name()
-        .ok_or_else(|| SqlError::syntax("`where` wants a column"))?;
+    let column = column_name(p).ok_or_else(|| SqlError::syntax("`where` wants a column"))?;
     let op = if p.eat_keyword("is") {
         if p.eat_keyword("not") {
             CmpOp::IsNot
@@ -1579,11 +2000,11 @@ mod tests {
     #[test]
     fn a_select_is_case_folded_and_a_quoted_name_is_not() {
         let s = ok("SELECT Text FROM Todos");
-        assert_eq!(s.from.as_deref(), Some("todos"));
-        assert!(matches!(&s.items[0], Item::Column(c, _) if c == "text"));
+        assert_eq!(s.from[0].table, "todos");
+        assert!(matches!(&s.items[0], Item::Column(c, _) if c.column == "text"));
         let s = ok(r#"select "Text" from "Todos""#);
-        assert_eq!(s.from.as_deref(), Some("Todos"));
-        assert!(matches!(&s.items[0], Item::Column(c, _) if c == "Text"));
+        assert_eq!(s.from[0].table, "Todos");
+        assert!(matches!(&s.items[0], Item::Column(c, _) if c.column == "Text"));
     }
 
     #[test]
@@ -1615,9 +2036,13 @@ mod tests {
     }
 
     #[test]
-    fn count_beside_a_column_is_refused_rather_than_answered() {
+    fn an_aggregate_beside_a_column_needs_a_group_by() {
         let e = parse("select id, count(*) from todos").expect_err("refused");
         assert!(e.message.contains("group by"), "{}", e.message);
+        // And with one, it is an ordinary query rather than a refusal.
+        let s = ok("select id, count(*) from todos group by id");
+        assert_eq!(s.group.len(), 1);
+        assert!(crate::query::relational(&s));
     }
 
     #[test]
@@ -1628,18 +2053,106 @@ mod tests {
     #[test]
     fn nulls_sort_last_and_compare_as_unknown() {
         let c = Cond {
-            column: "x".into(),
+            column: Name::bare("x"),
             op: CmpOp::Eq,
             value: Some(Datum::Bigint(1)),
         };
-        assert!(!matches_one(&None, &c));
+        assert!(!matches(&None, &c));
         let is_null = Cond {
-            column: "x".into(),
+            column: Name::bare("x"),
             op: CmpOp::Is,
             value: None,
         };
-        assert!(matches_one(&None, &is_null));
-        assert!(!matches_one(&Some(Datum::Bigint(1)), &is_null));
+        assert!(matches(&None, &is_null));
+        assert!(!matches(&Some(Datum::Bigint(1)), &is_null));
         assert!(compare(&None, &Some(Datum::Bigint(1))).is_gt());
+    }
+
+    #[test]
+    fn a_join_carries_its_tables_its_names_and_its_equality() {
+        let s = ok(
+            "select o.id, i.name from orders o join items as i on o.item = i.id \
+             where i.stocked = true order by o.id limit 5",
+        );
+        assert_eq!(s.from.len(), 2);
+        assert_eq!(
+            (s.from[0].table.as_str(), s.from[0].alias.as_str()),
+            ("orders", "o")
+        );
+        assert_eq!(
+            (s.from[1].table.as_str(), s.from[1].alias.as_str()),
+            ("items", "i")
+        );
+        assert_eq!(s.from[1].on.len(), 1);
+        assert_eq!(s.from[1].on[0].0.to_string(), "o.item");
+        assert_eq!(s.from[1].on[0].1.to_string(), "i.id");
+        // The clauses after the join still parse: an alias must not swallow `where`.
+        assert_eq!(s.filter.len(), 1);
+        assert_eq!(
+            s.order.as_ref().map(|(n, _)| n.to_string()).as_deref(),
+            Some("o.id")
+        );
+        assert_eq!(s.limit, Some(5));
+        assert!(crate::query::relational(&s));
+    }
+
+    #[test]
+    fn a_bare_from_takes_the_tables_own_name_and_no_clause_becomes_an_alias() {
+        for sql in [
+            "select * from todos where done = true",
+            "select * from todos order by text",
+            "select count(*) from todos group by owner",
+            "select * from todos limit 1",
+        ] {
+            let s = ok(sql);
+            assert_eq!(s.from[0].alias, "todos", "{sql}");
+        }
+    }
+
+    #[test]
+    fn an_outer_join_is_refused_by_name_rather_than_read_as_an_inner_one() {
+        for sql in [
+            "select * from a left join b on a.k = b.k",
+            "select * from a full outer join b on a.k = b.k",
+            "select * from a cross join b",
+        ] {
+            let e = parse(sql).expect_err("refused");
+            assert_eq!(e.code, "0A000", "{sql}");
+        }
+        // A join on something that is not an equality says so rather than parsing as a filter.
+        let e = parse("select * from a join b on a.k < b.k").expect_err("refused");
+        assert!(e.message.contains("equality"), "{}", e.message);
+    }
+
+    #[test]
+    fn a_having_is_refused_and_says_what_a_where_does_instead() {
+        let e = parse("select owner, count(*) from t group by owner having count(*) > 1")
+            .expect_err("refused");
+        assert!(
+            e.message.contains("before they are grouped"),
+            "{}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn only_a_query_that_relates_groups_or_deduplicates_needs_the_plan() {
+        // The scan answers these, `count(*)` included: an arrangement already knows its size.
+        for sql in [
+            "select * from todos",
+            "select count(*) from todos",
+            "select count(*) from todos where done = false",
+            "select 1",
+        ] {
+            assert!(!crate::query::relational(&ok(sql)), "{sql}");
+        }
+        for sql in [
+            "select distinct owner from todos",
+            "select owner, count(*) from todos group by owner",
+            "select sum(amount) from postings",
+            "select * from a join b on a.k = b.k",
+        ] {
+            assert!(crate::query::relational(&ok(sql)), "{sql}");
+        }
     }
 }

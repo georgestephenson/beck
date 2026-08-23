@@ -63,7 +63,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::check::Program;
+use crate::check::Def;
 use crate::core::{Core, CoreKind, Prim, VarId};
 use crate::signal::{signal_elem, Graph, Op as SigOp, SigId};
 use crate::split::{Placed, StateRole};
@@ -720,6 +720,90 @@ impl Plan {
         crate::fuse::fuse(Plan::unfused_with(placed, relate)).0
     }
 
+    /// A plan for one expression over collections the caller supplies — the read model's SQL,
+    /// compiled into the operators a program's view compiles to
+    /// ([`docs/99`](../../../../../docs/99-the-data-tier-means-of-combination.md) §99.9 item 9).
+    ///
+    /// `tables` names the fields of the record the engine is handed as its **state**: the `i`th of
+    /// them holds the `i`th table's rows, and the expression reads it as `Var(i)`. That is the whole
+    /// of the arrangement — a query has no session, no presence and no accumulator of its own, so
+    /// the one source a view already has is the one a query uses too, and no operator here is new.
+    ///
+    /// The expression is *built* rather than written, so it carries no [`CoreKind::Global`] and
+    /// there is nothing for a definition table to answer; the decomposition is given an empty table. The
+    /// consequence worth stating is that a query is held to exactly the recognitions a program is:
+    /// [`crate::relate`] reads the loop and emits the [`Op::Join`], the [`Op::ArrangeBy`] and the
+    /// [`Op::GroupBy`], so a `join` in SQL and a `for` loop that looks something up are the same
+    /// operators with the same delta rules and not two implementations that agree.
+    pub fn of_query(tables: &[Arc<str>], body: &Core) -> Plan {
+        Plan::of_query_with(tables, body, Relate::default())
+    }
+
+    /// The same, with [`Relate`] said out loud — which is what lets a gate measure both settings.
+    pub fn of_query_with(tables: &[Arc<str>], body: &Core, relate: Relate) -> Plan {
+        let defs = BTreeMap::new();
+        let mut b = Builder {
+            defs: &defs,
+            relate,
+            nodes: Vec::new(),
+            constants: BTreeMap::new(),
+            cse: BTreeMap::new(),
+            inlining: Vec::new(),
+            states: &[],
+            state: 0,
+            session: 0,
+            presence: 0,
+            awareness: 0,
+            vertices: BTreeMap::new(),
+        };
+        b.state = b.push(Op::State, Vec::new(), None);
+        b.session = b.push(Op::Session, Vec::new(), None);
+        b.presence = b.push(Op::Presence, Vec::new(), None);
+        b.awareness = b.push(Op::Awareness, Vec::new(), None);
+
+        let state = b.state;
+        let mut scope = Scope::new();
+        for (i, name) in tables.iter().enumerate() {
+            let code = lam(
+                vec![0],
+                Core {
+                    kind: CoreKind::Field {
+                        base: Box::new(var(0, Ty::unit(), beck_diag::Span::NONE)),
+                        name: name.clone(),
+                    },
+                    ty: Ty::unit(),
+                    tier: Tier::Any,
+                    span: beck_diag::Span::NONE,
+                    last_use: false,
+                    order: crate::fields::UNORDERED,
+                    locals: 0,
+                },
+            );
+            let id = b.shared(
+                format!("field/{name}/{state}"),
+                Op::Pointwise { code },
+                vec![state],
+                None,
+            );
+            scope.insert(i as VarId, id);
+        }
+        let root = b.expr(body, &scope);
+
+        let mut plan = Plan {
+            nodes: b.nodes,
+            constants: b.constants,
+            root,
+            state: b.state,
+            session: b.session,
+            presence: b.presence,
+            awareness: b.awareness,
+            signals: Vec::new(),
+        };
+        plan.finish();
+        plan.prune();
+        crate::fuse::fuse(plan).0
+    }
+
     /// The plan as the decomposition produced it, before [`crate::fuse`] rewrites it.
     ///
     /// Works from the *graph* rather than from [`crate::split::Roles::view`], for the reason
@@ -734,7 +818,7 @@ impl Plan {
     pub fn unfused_with(placed: &Placed, relate: Relate) -> Plan {
         let graph = &placed.graph;
         let mut b = Builder {
-            program: &placed.program,
+            defs: &placed.program.defs,
             relate,
             nodes: Vec::new(),
             constants: BTreeMap::new(),
@@ -923,6 +1007,14 @@ impl Plan {
 /// this prints it — including the two things a developer cannot see any other way: which operator
 /// **orders** the output, and which side of §5.3's session cut each one is on.
 pub fn query_report(plan: &Plan) -> String {
+    query_report_of(plan, "the page")
+}
+
+/// The same report over a plan whose root is not a page.
+///
+/// A `select` compiles to a plan too ([`crate::query`]), and its root is a table of rows rather
+/// than a rendering — which is the one sentence of this report that would otherwise be false.
+pub fn query_report_of(plan: &Plan, root: &str) -> String {
     use std::fmt::Write;
     let mut out = String::new();
     let _ = writeln!(
@@ -973,7 +1065,7 @@ pub fn query_report(plan: &Plan) -> String {
     let arrangements = plan.nodes.iter().filter(|n| n.op.is_arrangement()).count();
     let _ = writeln!(
         out,
-        "\n  #{} is the root — the page.\n\
+        "\n  #{} is the root — {root}.\n\
          \x20 {maintained} maintained, {recomputed} recomputed, {arrangements} of them holding an \
          arrangement.",
         plan.root
@@ -1346,7 +1438,10 @@ pub fn cost_report(plan: &Plan) -> String {
 }
 
 struct Builder<'a> {
-    program: &'a Program,
+    /// The definitions a call may be inlined from. The whole `Program` was never read for
+    /// anything else, and a query compiled by [`Plan::of_query`] has none — its expression was
+    /// built rather than written, so it carries no [`CoreKind::Global`] to resolve.
+    defs: &'a BTreeMap<Arc<str>, Def>,
     relate: Relate,
     nodes: Vec<Node>,
     constants: BTreeMap<OpId, Core>,
@@ -1628,7 +1723,7 @@ impl Builder<'_> {
         match &f.kind {
             CoreKind::Lam { params, body } => Some((params.to_vec(), (**body).clone())),
             CoreKind::Global(name) if !self.inlining.contains(name) => {
-                let def = self.program.defs.get(name)?;
+                let def = self.defs.get(name)?;
                 match &def.body.kind {
                     CoreKind::Lam { params, body } => Some((params.to_vec(), (**body).clone())),
                     _ => None,
@@ -1683,7 +1778,7 @@ impl Builder<'_> {
                  between arms",
             ),
             CoreKind::Lam { .. } => self.opaque(c, scope, "a function used as a value"),
-            CoreKind::Global(name) => match self.program.defs.get(name) {
+            CoreKind::Global(name) => match self.defs.get(name) {
                 Some(def) if !matches!(def.body.kind, CoreKind::Lam { .. }) => {
                     let body = def.body.clone();
                     self.expr(&body, &Scope::new())
@@ -1971,7 +2066,7 @@ impl Builder<'_> {
     /// pays for it; `Err(None)` is the ordinary case of a loop that relates nothing.
     fn joined(&mut self, xs: OpId, f: &Core, scope: &Scope) -> Result<OpId, Option<String>> {
         let known: BTreeSet<VarId> = scope.keys().copied().collect();
-        let found = match crate::relate::recognise(f, &self.program.defs, &known) {
+        let found = match crate::relate::recognise(f, self.defs, &known) {
             Ok(found) => found,
             Err(crate::relate::Refusal::NoLookup) => return Err(None),
             Err(why) => return Err(Some(why.because())),
@@ -2098,7 +2193,7 @@ impl Builder<'_> {
     /// carries.
     fn restricted(&mut self, xs: OpId, f: &Core, scope: &Scope) -> Result<OpId, Option<String>> {
         let known: BTreeSet<VarId> = scope.keys().copied().collect();
-        let found = match crate::relate::restriction(f, &self.program.defs, &known) {
+        let found = match crate::relate::restriction(f, self.defs, &known) {
             Ok(found) => found,
             // The ordinary case: a filter that relates nothing, which is most of them.
             Err(crate::relate::Refusal::NoMembership) => return Err(None),

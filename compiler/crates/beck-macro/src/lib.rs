@@ -120,12 +120,37 @@ pub fn expand_module(module: &Node, diags: &mut Diagnostics) -> Node {
     expand_module_measured(module, diags).0
 }
 
+/// The same, with the macros of the modules this one **imports** in scope.
+///
+/// [`docs/02`](../../../../docs/02-syntax.md) §2.4: a macro is a declaration like any other, and
+/// a module that imports another gets its declarations. Until this existed a macro was usable in
+/// the file that declared it and nowhere else — not refused, simply absent — which is what kept
+/// §2.4's `derive` and §2.5's `sql"…"` out of `lib/` and made every macro an example rather than a
+/// facility.
+///
+/// `imported` are the **parsed** modules, in any order: a macro body is compile-time callable as it
+/// was *written*, before expansion, so what a macro needs from
+/// another module is its source and not its interface. That is also the limit — an import that is
+/// an interface and no implementation publishes signatures, and a macro has none.
+///
+/// Names are merged flat, which is the language's own model rather than a shortcut here: Beck links
+/// modules into one namespace with no qualified reference (`B0601`), so a macro imported from one
+/// module and a macro declared in this one collide exactly as two `def`s of one name do, and
+/// `B0200` is what says so.
+pub fn expand_module_with(module: &Node, imported: &[&Node], diags: &mut Diagnostics) -> Node {
+    expand_module_inner(module, imported, diags).0
+}
+
 /// Expand a module, and say how much of the interpreter's step budget is left.
 ///
 /// The second half is what makes [`interp::MAX_STEPS`]'s doc comment a measurement rather than an
 /// assertion: `macro_interp.rs` expands the most expensive macro body here and prints what it
 /// cost. Nothing in the compiler reads it.
 pub fn expand_module_measured(module: &Node, diags: &mut Diagnostics) -> (Node, u64) {
+    expand_module_inner(module, &[], diags)
+}
+
+fn expand_module_inner(module: &Node, imported: &[&Node], diags: &mut Diagnostics) -> (Node, u64) {
     let mut ex = Expander {
         macros: HashMap::new(),
         defs: HashMap::new(),
@@ -137,7 +162,13 @@ pub fn expand_module_measured(module: &Node, diags: &mut Diagnostics) -> (Node, 
         nesting: Nesting::new(),
         diags,
     };
-    ex.collect_macros(module);
+    // The imports first, so a macro this module declares shadows nothing silently: `B0200` fires on
+    // the second definition of a name, and the second one is this module's.
+    let brings_macros = imported.iter().any(|m| declares_a_macro(m));
+    for m in imported {
+        ex.collect_macros_from(m, brings_macros);
+    }
+    ex.collect_macros_from(module, brings_macros);
 
     let mut items = Vec::with_capacity(module.args.len());
     for (i, item) in module.args.iter().enumerate() {
@@ -153,11 +184,11 @@ pub fn expand_module_measured(module: &Node, diags: &mut Diagnostics) -> (Node, 
         let expanded = ex.expand(item, 0);
         // `splice([…])` at the top of a module is several items where one was written — §2.4's
         // `derive` returns the definition it decorated *and* the impls it generated.
-        if expanded.is_form(sym::DO) {
-            items.extend(expanded.args.iter().cloned());
-            continue;
-        }
-        items.push(expanded);
+        //
+        // Flattened all the way down rather than one level: `derive` is handed a **block**, which
+        // is already a `do`, and returns it beside what it generated — so the answer is a `do`
+        // holding a `do`, and stopping at the first would leave a block where an item belongs.
+        flatten_into(&expanded, &mut items);
     }
     let steps_left = ex.steps;
     (
@@ -173,12 +204,36 @@ pub fn expand_module_measured(module: &Node, diags: &mut Diagnostics) -> (Node, 
     )
 }
 
+/// Whether a parsed module declares a macro at all — the one question worth asking before copying
+/// anything out of it.
+fn declares_a_macro(module: &Node) -> bool {
+    module.args.iter().any(|i| i.is_form(sym::MACRO))
+}
+
+/// Every item a macro's answer stands for, with the `do`s it is wrapped in taken off.
+///
+/// One `do` is `splice([…])`; two is `splice([do, impl])` where `do` is the block the macro was
+/// given, which is what §2.4's `derive` returns. Neither is a construct a program wrote at module
+/// level, so both are unwrapped, and a `do` that a *program* wrote there was already refused as an
+/// unsupported top-level item.
+fn flatten_into(node: &Node, out: &mut Vec<Node>) {
+    match node.is_form(sym::DO) {
+        true => node.args.iter().for_each(|a| flatten_into(a, out)),
+        false => out.push(node.clone()),
+    }
+}
+
 impl<'a> Expander<'a> {
-    fn collect_macros(&mut self, module: &Node) {
-        // A module with no macros in it pays nothing for the interpreter: collecting the `def`s
-        // copies a body each, which is proportional to the whole module, and the overwhelming
-        // majority of modules have nothing that could ever call one.
-        let has_macros = module.args.iter().any(|i| i.is_form(sym::MACRO));
+    /// The macros and compile-time-callable `def`s of one module.
+    ///
+    /// `elsewhere` says whether some *other* module in scope declares a macro. A module with no
+    /// macros of its own pays nothing for the interpreter — collecting the `def`s copies a body
+    /// each, which is proportional to the whole module, and the overwhelming majority of modules
+    /// have nothing that could ever call one. That guard has to widen by exactly one word once
+    /// macros are importable: a module with no macros that *imports* one still has to hand over its
+    /// definitions, because the imported macro's body may call them.
+    fn collect_macros_from(&mut self, module: &Node, elsewhere: bool) {
+        let has_macros = elsewhere || module.args.iter().any(|i| i.is_form(sym::MACRO));
 
         for item in &module.args {
             // A `def` is callable from a macro body, as the definition was *written*: expansion

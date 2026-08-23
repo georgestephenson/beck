@@ -85,7 +85,11 @@ impl Repr {
             Value::Int(i) => Repr::Int(*i),
             Value::Float(bits) => Repr::Float(*bits),
             Value::Str(s) => Repr::Str(s.to_string()),
-            Value::List(xs) => Repr::List(xs.iter().map(Repr::of).collect::<Result<_, _>>()?),
+            Value::List(xs) => {
+                let mut out = Vec::with_capacity(xs.len());
+                xs.try_for_each(|x| Repr::of(x).map(|r| out.push(r)))?;
+                Repr::List(out)
+            }
             Value::Map(m) => {
                 let mut pairs = Vec::with_capacity(m.len());
                 for (k, val) in m.iter() {
@@ -116,7 +120,7 @@ impl Repr {
             Repr::Int(i) => Value::Int(*i),
             Repr::Float(bits) => Value::Float(*bits),
             Repr::Str(s) => Value::str_(s),
-            Repr::List(xs) => Value::List(Arc::new(xs.iter().map(Repr::to_value).collect())),
+            Repr::List(xs) => Value::list(xs.iter().map(Repr::to_value).collect()),
             Repr::Map(pairs) => {
                 let mut m = PMap::new();
                 for (k, v) in pairs {
@@ -172,7 +176,7 @@ mod tests {
                 (Arc::from("f"), Value::Float(f64::to_bits(1.5))),
                 (
                     Arc::from("xs"),
-                    Value::List(Arc::new(vec![Value::Unit, Value::Int(2)])),
+                    Value::list(vec![Value::Unit, Value::Int(2)]),
                 ),
                 (Arc::from("m"), Value::Map(m)),
             ]),
@@ -214,7 +218,7 @@ mod tests {
         assert_eq!(to_bytes(&html).unwrap_err().kind, "view");
 
         // …and a value that merely *contains* one is refused too, because the walk is total.
-        let nested = Value::List(Arc::new(vec![Value::Int(1), html]));
+        let nested = Value::list(vec![Value::Int(1), html]);
         assert!(to_bytes(&nested).is_err());
     }
 

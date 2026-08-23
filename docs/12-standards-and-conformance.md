@@ -126,8 +126,8 @@ The positions ([`08`](08-roadmap.md) §8.5.4's standards ledger, then Phase 4):
 
 | Standard | Status | Where it stands |
 |---|---|---|
-| **PostgreSQL wire protocol (pgwire)** | **Verified, partly conformed to — and the scope is stated** ([`23`](23-incremental-views-report.md)) | The startup exchange, the simple query and the parameterless extended query in both text and binary format, verified in CI against `tokio-postgres` (`beck-cli/tests/read_models.rs`) — a real driver, not a client written beside the server ([`adr/0020`](adr/0020-the-read-model-speaks-pgwire-by-hand.md)). `psql`'s backslash commands are **not** supported, because they query `pg_catalog` and this SQL has no joins; JDBC and BI drivers are untried. §23.19 is the row-by-row list |
-| **Apache Arrow + Parquet** | **Chartered** | No dependency and no artefact. Conditioned on the data tier's means of combination ([`99`](99-the-data-tier-means-of-combination.md)) and the analytics substrate — the second of which now has a position, [`08`](08-roadmap.md) §8.5.4's G item, rather than the standing condition this row used to name; official interop test files enter with the first reader or writer |
+| **PostgreSQL wire protocol (pgwire)** | **Verified, partly conformed to — and the scope is stated** ([`23`](23-incremental-views-report.md)) | The startup exchange, the simple query and the parameterless extended query in both text and binary format, verified in CI against `tokio-postgres` (`beck-cli/tests/read_models.rs`) — a real driver, not a client written beside the server ([`adr/0020`](adr/0020-the-read-model-speaks-pgwire-by-hand.md)). **The SQL has joins now** — an inner equi-join, a `group by` with `count`/`min`/`max`/`sum`, and `distinct`, none of them interpreted in this surface: they are compiled into the view plan and run by the same operators a program's page uses ([`99`](99-the-data-tier-means-of-combination.md) §99.9 item 9). `psql`'s backslash commands are still **not** supported, and the reason is now only the second half of what this row used to say: they query `pg_catalog`, and those relations do not exist here. JDBC and BI drivers are untried. §23.19 is the row-by-row list |
+| **Apache Arrow + Parquet** | **Chartered — and its predecessor has landed** | Still no dependency and no artefact. Both conditions this row named are discharged: the data tier's means of combination is complete ([`99`](99-the-data-tier-means-of-combination.md) §99.9) and the analytics substrate has a position ([`08`](08-roadmap.md) §8.5.4's G item). What now exists to hand Arrow is the **value**: a list of `Float` is a dense `f64` run ([`beck-core/src/seq.rs`](../compiler/crates/beck-core/src/seq.rs)), which is what a `Float64Array`'s buffer is. The encoder waits on a **foreign reader** rather than on time — nothing here reads Arrow, so one written now would be checked by its own writer; official interop test files enter with it |
 | **SQL** (PostgreSQL dialect, documented subset) | **Partial** | We conform to Postgres-as-spec rather than abstract SQL:2023, and say so honestly. Generated SQL runs in CI against **one pinned major** (`postgres:17`), not the "pinned majors" previously claimed; a supported-majors matrix is chartered with the operator's version policy (Phase 4) |
 
 ## 12.6 Containers, supply chain, and the "prove the build" story
@@ -262,9 +262,13 @@ A macro body now runs Beck ([`102`](102-the-macro-interpreter-report.md)) and ca
 inspect and return a `Node`, so *programs that compute programs* is backed rather than gestured
 at. What is still not backed is the **run-time** half of code-as-data: a `quote` that survives
 expansion is error `B0332`, so a `Node` is a compile-time value and not yet a value a running
-program holds, and `derive`'s `.as_model()` and typed macros want the checker's answers, which
-this interpreter runs before. So "a Python-shaped surface carries Lisp's power" is backed for the
-notation, the special forms and compile-time metaprogramming, and **not for run-time reflection**.
+program holds, and typed macros want the checker's answers, which this interpreter runs before.
+**`derive` is now on the backed side**: a macro takes a `model`, reads its fields out of the
+declaration and emits an `impl` per field (`examples/derive.beck`), which is the shape §2.4's
+sketch has and which needed no reflection at all — a model's fields are in its syntax. So "a
+Python-shaped surface carries Lisp's power" is backed for the notation, the special forms,
+compile-time metaprogramming **and generating code from a declaration**, and **not for run-time
+reflection**.
 [`08`](08-roadmap.md) §8.5.4 carries what is left.
 
 The counting protocol (§25.5) is part of the standard, because lines of code is a real metric and

@@ -506,19 +506,32 @@ impl Py {
                 self.line(&format!("{keyword}{target} = {rendered}:"));
                 self.body(&block);
             }
-            // `x = try:` and `x = parallel:` — a block form bound to a name. Neither is a call, so
-            // `split_block_call` above cannot see it, and printing `x = try((do …))` would not
-            // re-parse. Both are expressions (`docs/27` §27.7), so both can appear here.
+            // `x = try:`, `x = parallel:` and `x = quote:` — a block form bound to a name. None is
+            // a call, so `split_block_call` above cannot see it, and printing `x = try((do …))`
+            // would not re-parse. All three are expressions (`docs/27` §27.7, §2.4), so all three
+            // can appear here — and a macro that builds syntax by folding into a binding, which is
+            // how `examples/derive.beck` builds a record field by field, writes the third.
             Some(sym::LET) | Some(sym::VAR)
                 if n.args.len() == 2
-                    && (n.args[1].is_form(sym::TRY) || n.args[1].is_form(sym::PARALLEL))
+                    && (n.args[1].is_form(sym::TRY)
+                        || n.args[1].is_form(sym::PARALLEL)
+                        || n.args[1].is_form(sym::QUOTE))
                     && n.args[1].args.len() == 1 =>
             {
                 let keyword = if n.is_form(sym::VAR) { "var " } else { "" };
                 let target = self.expr(&n.args[0]);
                 let head = n.args[1].head_name().unwrap_or(sym::TRY);
                 self.line(&format!("{keyword}{target} = {head}:"));
-                self.body(&n.args[1].args[0]);
+                let body = &n.args[1].args[0];
+                // A `quote:` of one expression is not a `do`, and `body` would print its argument
+                // list rather than a block.
+                if body.is_form(sym::DO) {
+                    self.body(body);
+                } else {
+                    self.indent += 1;
+                    self.stmt(body);
+                    self.indent -= 1;
+                }
             }
             Some(sym::LET) if n.args.len() == 2 => {
                 let t = &n.args[0];

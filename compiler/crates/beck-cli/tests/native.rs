@@ -962,13 +962,7 @@ fn the_two_backends_agree_on_lists() {
     compared += both.agree(
         "walked",
         &xs.iter()
-            .map(|v| {
-                vec![
-                    v.clone(),
-                    Value::Int(0),
-                    Value::List(std::sync::Arc::new(Vec::new())),
-                ]
-            })
+            .map(|v| vec![v.clone(), Value::Int(0), Value::list(Vec::new())])
             .collect::<Vec<_>>(),
     );
 
@@ -1409,7 +1403,7 @@ fn a_loop_costs_its_answer_and_one_closure() {
     let _ = toolchain!();
     let both = Both::over("closures.beck", CLOSURES);
     for n in [200usize, 1600] {
-        let xs = Value::List(Arc::new((0..n as i64).map(Value::Int).collect()));
+        let xs = Value::list((0..n as i64).map(Value::Int).collect());
         // The arguments' own graph is on the wire before anything is allocated, so the arena a call
         // leaves is measured against what the call was given.
         let given = arguments(&both, "counted", std::slice::from_ref(&xs));
@@ -1450,7 +1444,7 @@ fn a_sort_costs_four_runs_and_a_concatenation_costs_its_answer() {
     let _ = toolchain!();
     let both = Both::over("closures.beck", CLOSURES);
     for n in [200usize, 1600] {
-        let xs = Value::List(Arc::new((0..n as i64).map(Value::Int).collect()));
+        let xs = Value::list((0..n as i64).map(Value::Int).collect());
         let given = arguments(&both, "ascending", std::slice::from_ref(&xs));
         let (_, bytes) = both
             .native
@@ -1466,11 +1460,11 @@ fn a_sort_costs_four_runs_and_a_concatenation_costs_its_answer() {
 
         // `n` inner lists of one element each, so the answer is `n` elements and the outer list is
         // what the call was given.
-        let xss = Value::List(Arc::new(
+        let xss = Value::list(
             (0..n as i64)
-                .map(|i| Value::List(Arc::new(vec![Value::Int(i)])))
+                .map(|i| Value::list(vec![Value::Int(i)]))
                 .collect(),
-        ));
+        );
         let given = arguments(&both, "flattened", std::slice::from_ref(&xss));
         let (_, bytes) = both
             .native
@@ -2110,10 +2104,8 @@ fn a_list_slice_costs_its_answer_and_not_the_list_it_came_from() {
     const PER_ELEMENT: usize = 40;
     let mut sizes = Vec::new();
     for n in [200usize, 1600] {
-        let xs = Value::List(std::sync::Arc::new(
-            (0..n as i64).map(Value::Int).collect::<Vec<_>>(),
-        ));
-        let empty = Value::List(std::sync::Arc::new(Vec::new()));
+        let xs = Value::list((0..n as i64).map(Value::Int).collect::<Vec<_>>());
+        let empty = Value::list(Vec::new());
         let args = [xs, Value::Int(0), empty];
         let arguments = both
             .native
@@ -2571,14 +2563,14 @@ fn what_is_not_compiled_falls_back_and_says_so() {
     assert!(!native.compiled(refused));
 
     let f = beck_eval::on_the_evaluator_stack(|| native.function(refused).expect("prepares"));
-    let xss = Value::List(Arc::new(vec![
-        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)])),
-        Value::List(Arc::new(vec![Value::Int(4)])),
-    ]));
+    let xss = Value::list(vec![
+        Value::list(vec![Value::Int(2), Value::Int(3)]),
+        Value::list(vec![Value::Int(4)]),
+    ]);
     let got = beck_eval::on_the_evaluator_stack(|| f(vec![xss]).expect("the fallback answers"));
     assert_eq!(
         got,
-        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))
+        Value::list(vec![Value::Int(2), Value::Int(3), Value::Int(4)])
     );
 }
 
@@ -3125,11 +3117,11 @@ fn a_page_of_keys_and_handlers_costs_equal_bytes_for_equal_rows() {
     let both = Both::over("page.beck", viewfix::PAGE);
     let mut sizes = Vec::new();
     for n in [200usize, 400, 600] {
-        let todos = Value::List(Arc::new(
+        let todos = Value::list(
             (0..n)
                 .map(|i| viewfix::todo(&format!("{i:04}"), "something to do", i % 2 == 0))
                 .collect(),
-        ));
+        );
         let (_, bytes) = both
             .native
             .call_sized("page", &[todos, Value::Int(0)])
@@ -3264,9 +3256,7 @@ fn an_appended_accumulator_is_linear() {
     let both = Both::over("lists.beck", LISTS);
     let mut sizes = Vec::new();
     for n in [500usize, 2000] {
-        let xs = Value::List(std::sync::Arc::new(
-            (0..n as i64).map(Value::Int).collect::<Vec<_>>(),
-        ));
+        let xs = Value::list((0..n as i64).map(Value::Int).collect::<Vec<_>>());
         let arguments = both
             .native
             .module()
@@ -3531,7 +3521,7 @@ fn the_two_backends_agree_on_list_patterns() {
         ("described", vec![9], "one:9"),
         ("described", vec![1, 2, 3], "many:1:2"),
     ] {
-        let list = Value::List(Arc::new(arg.into_iter().map(Value::Int).collect()));
+        let list = Value::list(arg.into_iter().map(Value::Int).collect());
         let (walked, compiled) = both.call(name, &[list]);
         assert_eq!(walked, compiled);
         assert_eq!(walked.expect("answers"), Value::str_(want));

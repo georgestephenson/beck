@@ -172,10 +172,6 @@ pub fn texts() -> Vec<Vec<Value>> {
 pub fn lists() -> Vec<Vec<Value>> {
     [vec![], vec![1], vec![1, 2, 3], vec![0], vec![101, 1]]
         .into_iter()
-        .map(|xs| {
-            vec![Value::List(std::sync::Arc::new(
-                xs.into_iter().map(Value::Int).collect(),
-            ))]
-        })
+        .map(|xs| vec![Value::list(xs.into_iter().map(Value::Int).collect())])
         .collect()
 }

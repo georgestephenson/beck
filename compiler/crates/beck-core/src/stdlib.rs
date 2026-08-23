@@ -35,6 +35,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("documents", include_str!("../../../lib/documents.beck")),
     ("format", include_str!("../../../lib/format.beck")),
     ("http", include_str!("../../../lib/http.beck")),
+    ("json", include_str!("../../../lib/json.beck")),
     ("money", include_str!("../../../lib/money.beck")),
     ("text", include_str!("../../../lib/text.beck")),
 ];

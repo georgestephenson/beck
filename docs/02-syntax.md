@@ -101,6 +101,11 @@ trivially. In Python, `with transaction():` is a *fixed statement* — you canno
 > or on the right of a binding — followed by an indented block, desugars to
 > `f(args, do=<block as quoted Node>)`. If the callee is a macro, it receives the AST. If it is a
 > function, it receives a thunk.
+>
+> **What the block may hold depends on where the call is.** Written as a module item it holds
+> declarations — which is what §2.4's `derive` is, a macro whose block is a `model`. Written
+> anywhere else it holds statements, because a `model` inside a function body is not a thing this
+> language has and reading one there would turn a mistake into a mystery.
 
 The "in final position" clause is part of the rule, not a caveat on it, and Phase 1 found out why
 ([`19`](19-phase-1-report.md) §19.4 item 2): applied to *every* `:`, the rule reads `for t in todos:`
@@ -185,12 +190,42 @@ caller's code and `$(n * 2)` is a literal. The environment is capability-restric
 demands, and `macro_sandbox.rs` is what says so: a whitelist, the effectful primitives refused by
 name (`B0207`), and an enumeration over the prelude that fails when a new one appears.
 
+**And a macro can decorate a declaration**, which is what the `derive` sketch above is: a block
+passed to a macro *in item position* holds declarations, a `quote:` holds them too, `$` unquotes
+where a **type** and where a **field name** go, and a `do` at module level is flattened all the way
+down — so a macro takes a `model`, reads its fields out of the syntax, and emits an `impl` that
+names each one. `examples/derive.beck` is the program, and it closes the row
+[`46`](46-standard-library-report.md) §46.16 and `prelude.rs` have both carried since the standard
+library was written: turning a `model` into a `Json` is generated rather than written, with **no
+reflection in the running program**. The `$`-in-a-type rule is what hygiene makes necessary rather
+than convenient — a type name *written* in a template gets a fresh scope and refers to nothing, so
+the generated `impl` has to unquote the caller's own name.
+
 Not built: **the half that wants the checker's answers, and the half that wants a run time** —
-typed macros, `derive`'s `.as_model()`, `inject`/`unsafe_macro`, Salsa-memoised expansion, nested
-quoting's `(quote depth node)`, and §2.5's typed literal macros. The `derive` sketch above is also
-written with a list comprehension, which is **not in the language** — `for` inside `[…]` does not
-parse, in a macro body or anywhere else, and a `for` loop that appends is how that is written
-today. The `ui:` block is still a
+typed macros, `derive`'s `.as_model()` sugar, `inject`/`unsafe_macro`, Salsa-memoised expansion,
+nested quoting's `(quote depth node)`, and §2.5's typed literal macros. The `derive` sketch above is
+written in two spellings the language does not have: a list comprehension (`for` inside `[…]` does
+not parse, in a macro body or anywhere else — a `for` loop that appends is how that is written) and
+`*traits`, since a parameter list has no rest form. `.as_model()` is a third: `node_args` reads the
+declaration, which is the same information with more punctuation.
+
+**And a macro crosses a module boundary**, so a library can ship one — which is what turns every
+mechanism above into a facility. `lib/json.beck` is the first: `import json` and `derive_json:` over
+a `model` generates its JSON encoder, closing [`46`](46-standard-library-report.md) §46.16's
+`@derive` row. Two things about the crossing are worth knowing before using it:
+
+- **A macro is published by a module's *source*, not by its interface.** A macro has no signature,
+  so there is nothing for a `.becki` to carry; an import that resolves to an interface alone does
+  not bring one, and `B0307`'s note says so where somebody will hit it.
+- **The namespace is flat here as everywhere.** Two macros of one name cannot both be in scope,
+  wherever they came from, and `B0200` — which has always refused a module that declared one twice
+  — is what refuses that too. The crossing added no second rule about names.
+
+Until this, expansion ran per module *before* any import was resolved, so a macro was usable in the
+file that declared it and nowhere else. Nothing refused it — the name simply was not there — which
+is why it went unwritten in this section for as long as it did.
+
+The `ui:` block is still a
 compiler-provided macro standing in for a user-written one (D22), and a `quote` that survives
 expansion is still `B0332` — a `Node` is a compile-time value, not one a running program holds.
 [`08`](08-roadmap.md) §8.5.4 carries what is left and

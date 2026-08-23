@@ -584,7 +584,24 @@ enum Explain {
     /// Nothing executes this DDL. There is no table to create — a read model is the collection the
     /// fold already holds and the arrangement the view engine already maintains, projected — so
     /// this is the shape of the relations `beck run --pgwire` serves rather than a migration.
-    Sql { file: PathBuf },
+    Sql {
+        file: PathBuf,
+        /// A `select` to compile, instead of the schema to print.
+        ///
+        /// A join, a `group by` and a `distinct` are compiled into the view plan rather than
+        /// interpreted, so what this prints is the same operator report `beck explain query`
+        /// prints for a page — the index a join builds, whether a group is built at all, and what
+        /// the `where` was pushed into (`docs/99` §99.9 item 9).
+        #[arg(long)]
+        query: Option<String>,
+        /// Leave the loop a join compiles to as the nested loop it literally is, rather than
+        /// reading it as an equi-join and indexing what it reads (§99.6).
+        ///
+        /// The off switch, on this surface too: printing a query's plan both ways is how to see
+        /// what the operator is worth on your data.
+        #[arg(long)]
+        no_join: bool,
+    },
     /// Every class the program's pages can carry, and every place one is built rather than named
     /// (`docs/104` §104.4).
     ///
@@ -616,6 +633,16 @@ fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer().with_target(false))
         .with(capture::Capture)
         .init();
+
+    // The columnar layout's off switch for a process that is not a served application
+    // (`beck_rt::AppConfig::columns` is that one). `BECK_COLUMNS=0` makes every list the boxed
+    // layout it was, which changes no answer — the order, the equality, the digest and the wire
+    // bytes are the same either way (`beck_core::seq`) — and is what a measurement compares
+    // against. An environment variable rather than a flag because it belongs to no one subcommand:
+    // a list is built by `run`, `test`, `bench` and `build` alike.
+    if std::env::var("BECK_COLUMNS").is_ok_and(|v| v == "0" || v == "false") {
+        beck_core::seq::set_columns(false);
+    }
 
     let cli = Cli::parse();
     // Every command below may end up evaluating Beck code, and the evaluator spends host stack on
@@ -1719,11 +1746,19 @@ fn explain(what: Explain) -> Result<()> {
             print!("{}", beck_core::plan::cost_report(&plan));
             Ok(())
         }
-        Explain::Sql { file } => {
+        Explain::Sql {
+            file,
+            query,
+            no_join,
+        } => {
             let placed = compiled(&file)?;
             let plan = beck_core::plan::Plan::compile(&placed);
             let schema = beck_core::read::Schema::of(&placed, &plan);
-            print!("{}", schema.ddl());
+            let Some(sql) = query else {
+                print!("{}", schema.ddl());
+                return Ok(());
+            };
+            print!("{}", explain_query(&schema, &sql, relate(no_join))?);
             Ok(())
         }
         Explain::Style { file } => {
@@ -1741,6 +1776,65 @@ fn explain(what: Explain) -> Result<()> {
         }
         Explain::Error { code } => docs::explain_error(&code),
     }
+}
+
+/// What `beck explain sql --query` prints: the operators one `select` compiles to.
+///
+/// The point of printing it at all is [`docs/08`](../../../../docs/08-roadmap.md) §8.3 item 9 — a
+/// choice the system makes unbidden is one somebody will have to debug. Whether a join is indexed,
+/// whether a group is built, and which table a `where` was pushed into are all decided here and
+/// visible nowhere else.
+fn explain_query(
+    schema: &beck_core::read::Schema,
+    sql: &str,
+    relate: beck_core::plan::Relate,
+) -> Result<String> {
+    use std::fmt::Write;
+    let select = match beck_core::read::parse(sql).map_err(|e| anyhow!("{e}"))? {
+        beck_core::read::Stmt::Select(s) => s,
+        beck_core::read::Stmt::Ignored(tag) => {
+            return Ok(format!(
+                "`{tag}` is acknowledged and ignored: there is nothing to plan.\n"
+            ))
+        }
+    };
+    if !beck_core::query::relational(&select) {
+        return Ok(
+            "this query is a scan, so it compiles to no plan: it reads one table's rows \
+                   and applies its `where`, `order by` and `limit` to them.\n\nWhat would compile \
+                   into the plan is a join, a `group by` or a `distinct` — those are the three the \
+                   view engine has operators for (docs/99 §99.9 item 9).\n"
+                .to_string(),
+        );
+    }
+    let compiled =
+        beck_core::query::compile_with(schema, &select, relate).map_err(|e| anyhow!("{e}"))?;
+    let mut out = beck_core::plan::query_report_of(compiled.plan(), "the rows this query answers");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "  the rows it answers with: {}",
+        compiled
+            .fields
+            .iter()
+            .map(|f| match &f.of {
+                Some(t) => format!("{t}.{}", f.column.name),
+                None => f.column.name.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let _ = writeln!(
+        out,
+        "  {}",
+        match (select.filter.is_empty(), compiled.residual.is_empty()) {
+            (true, _) => "there is no `where` to place",
+            (false, true) => "every `where` was pushed into the scan of the table it narrows",
+            (false, false) =>
+                "part of the `where` spans two tables, so it is applied to the joined rows instead",
+        }
+    );
+    Ok(out)
 }
 
 /// What `beck explain style` prints.

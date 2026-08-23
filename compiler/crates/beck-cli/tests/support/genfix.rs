@@ -197,33 +197,21 @@ pub fn ints() -> Vec<Vec<Value>> {
         vec![-1, i64::MAX],
     ]
     .into_iter()
-    .map(|xs| {
-        vec![Value::List(std::sync::Arc::new(
-            xs.into_iter().map(Value::Int).collect(),
-        ))]
-    })
+    .map(|xs| vec![Value::list(xs.into_iter().map(Value::Int).collect())])
     .collect()
 }
 
 pub fn bools() -> Vec<Vec<Value>> {
     [vec![], vec![true], vec![false], vec![true, false]]
         .into_iter()
-        .map(|xs| {
-            vec![Value::List(std::sync::Arc::new(
-                xs.into_iter().map(Value::Bool).collect(),
-            ))]
-        })
+        .map(|xs| vec![Value::list(xs.into_iter().map(Value::Bool).collect())])
         .collect()
 }
 
 pub fn texts() -> Vec<Vec<Value>> {
     [vec![], vec!["a"], vec!["beck", "é"], vec![""]]
         .into_iter()
-        .map(|xs| {
-            vec![Value::List(std::sync::Arc::new(
-                xs.into_iter().map(Value::str_).collect(),
-            ))]
-        })
+        .map(|xs| vec![Value::list(xs.into_iter().map(Value::str_).collect())])
         .collect()
 }
 
@@ -231,7 +219,7 @@ pub fn lists() -> Vec<Vec<Value>> {
     [vec![], vec![vec![]], vec![vec![1, 2], vec![3]]]
         .into_iter()
         .map(|xss| {
-            vec![Value::List(std::sync::Arc::new(
+            vec![Value::list(
                 xss.into_iter()
                     .map(|xs| {
                         Value::List(std::sync::Arc::new(
@@ -239,26 +227,21 @@ pub fn lists() -> Vec<Vec<Value>> {
                         ))
                     })
                     .collect(),
-            ))]
+            )]
         })
         .collect()
 }
 
 pub fn nested() -> Vec<Vec<Value>> {
-    let inner = |xs: Vec<i64>| {
-        Value::List(std::sync::Arc::new(
-            xs.into_iter().map(Value::Int).collect(),
-        ))
-    };
-    let middle =
-        |xss: Vec<Vec<i64>>| Value::List(std::sync::Arc::new(xss.into_iter().map(inner).collect()));
+    let inner = |xs: Vec<i64>| Value::list(xs.into_iter().map(Value::Int).collect());
+    let middle = |xss: Vec<Vec<i64>>| Value::list(xss.into_iter().map(inner).collect());
     vec![
-        vec![Value::List(std::sync::Arc::new(vec![]))],
-        vec![Value::List(std::sync::Arc::new(vec![middle(vec![])]))],
-        vec![Value::List(std::sync::Arc::new(vec![
+        vec![Value::list(vec![])],
+        vec![Value::list(vec![middle(vec![])])],
+        vec![Value::list(vec![
             middle(vec![vec![1], vec![2, 3]]),
             middle(vec![]),
-        ]))],
+        ])],
     ]
 }
 
@@ -271,12 +254,9 @@ pub fn records() -> Vec<Vec<Value>> {
         )
     };
     vec![
-        vec![Value::List(std::sync::Arc::new(vec![]))],
-        vec![Value::List(std::sync::Arc::new(vec![one("a", 1)]))],
-        vec![Value::List(std::sync::Arc::new(vec![
-            one("é", -1),
-            one("b", 2),
-        ]))],
+        vec![Value::list(vec![])],
+        vec![Value::list(vec![one("a", 1)])],
+        vec![Value::list(vec![one("é", -1), one("b", 2)])],
     ]
 }
 
@@ -284,9 +264,9 @@ pub fn unions() -> Vec<Vec<Value>> {
     let word = |s: &str| Value::record("Tagged", Some("Word"), [("text", Value::str_(s))]);
     let number = |n: i64| Value::record("Tagged", Some("Number"), [("n", Value::Int(n))]);
     vec![
-        vec![Value::List(std::sync::Arc::new(vec![]))],
-        vec![Value::List(std::sync::Arc::new(vec![word("beck")]))],
-        vec![Value::List(std::sync::Arc::new(vec![number(7), word("x")]))],
+        vec![Value::list(vec![])],
+        vec![Value::list(vec![word("beck")])],
+        vec![Value::list(vec![number(7), word("x")])],
     ]
 }
 

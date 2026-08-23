@@ -72,9 +72,7 @@ pub fn nested() -> Vec<Value> {
                 .map(|(k, xs)| {
                     (
                         Value::str_(k),
-                        Value::List(std::sync::Arc::new(
-                            xs.iter().map(|n| Value::Int(*n)).collect::<Vec<_>>(),
-                        )),
+                        Value::list(xs.iter().map(|n| Value::Int(*n)).collect::<Vec<_>>()),
                     )
                 })
                 .collect(),

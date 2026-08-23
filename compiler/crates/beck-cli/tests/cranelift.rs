@@ -870,13 +870,7 @@ fn the_three_backends_agree_on_lists() {
     compared += all.agree(
         "walked",
         &xs.iter()
-            .map(|v| {
-                vec![
-                    v.clone(),
-                    Value::Int(0),
-                    Value::List(std::sync::Arc::new(Vec::new())),
-                ]
-            })
+            .map(|v| vec![v.clone(), Value::Int(0), Value::list(Vec::new())])
             .collect::<Vec<_>>(),
     );
 
@@ -1356,13 +1350,13 @@ fn the_seam_runs_the_compiled_half_and_falls_back_for_the_rest() {
     assert_eq!(f(vec![Value::Int(21)]).expect("runs"), Value::Int(42));
     // …and the refused one still answers, from the tree-walker behind the seam.
     let g = dev.function(listy).expect("prepares");
-    let xss = Value::List(Arc::new(vec![
-        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)])),
-        Value::List(Arc::new(vec![Value::Int(4)])),
-    ]));
+    let xss = Value::list(vec![
+        Value::list(vec![Value::Int(2), Value::Int(3)]),
+        Value::list(vec![Value::Int(4)]),
+    ]);
     assert_eq!(
         g(vec![xss]).expect("runs"),
-        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))
+        Value::list(vec![Value::Int(2), Value::Int(3), Value::Int(4)])
     );
 }
 

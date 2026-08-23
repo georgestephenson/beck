@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **991<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **995<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -96,7 +96,7 @@ ask in order:
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for four questions about that group, and you write all of them as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that asks `list_len`, `list_min`, `list_max` or `list_sum` of that filter is answered without the group being built at all — the count from a tally the join keeps, the two ends from a `group_by` holding one multiset per group, and the total from one holding a running sum. All are maintained from both sides and `beck explain query` shows them. **And for a membership test**: a `filter_list` whose predicate asks another collection whether it holds a key is the difference, or the intersection without the `not`, and `list_unique` is the values in use — so every row of §99.4's basis is built. What `beck explain cost` still says so on is a predicate that asks a membership question *and something else*, which is a rewrite rather than a reading (§99.10) |
-| "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation |
+| "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation — **and they can join, group and deduplicate them**, because a `select` compiles into the same operators the page's view does rather than into a second interpreter ([`99`](99-the-data-tier-means-of-combination.md) §99.9 item 9). What they still cannot do is `\d`: there is no `pg_catalog` to join |
 | "How do I make it look like anything?" | **With Tailwind's names and no Tailwind**, which is the row that moved. `beck build` writes `styles.css` and a running program serves the same bytes: one rule per class your pages can carry, worked out from the program rather than scanned for, with the theme tokens those rules read and nothing else ([`104`](104-styling-and-the-component-library.md) §104.4a). **3,474 of the 3,625 names Tailwind emits a rule for are rendered identically here**, held byte for byte against Tailwind's own compiler; the sketch's sheet is 2.3 KB and `beck-rt/src/css.rs` is deleted. What is still missing is a way to write a rule of *your own* — `css:` has no parser — so a class the compiler did not define gets no rule, and `beck explain style` says which of yours are which. What the compiler *will* say is that `rounded-ful` is one edit from `rounded-full` (`B0222`), and your editor completes and explains a utility from the same table |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
 | "How do I get the compiler?" | One command ([`92`](92-supply-chain-and-release-report.md)) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 says in that order |
@@ -176,10 +176,10 @@ read it.**
   per §101.9, and the rest of §101.7's edge ledger — idempotency, `seq`-derived ETags, the response
   vocabulary, deprecation headers — arriving with the forms that need them.
 - **What is left of the data tier's means of combination**
-  ([`99`](99-the-data-tier-means-of-combination.md)): `distinct` and difference, fusion for the new
-  operators, and the read-model SQL compiling into the plan rather than growing a second
-  interpreter. The join, both of its indexes and **all four aggregates** have landed and are
-  §8.5.4's row; what remains is §99.9 items 7, 8 and 9. `sum` was the surface decision this bullet
+  ([`99`](99-the-data-tier-means-of-combination.md)): **fusion for the new operators, and nothing
+  else.** The join, both of its indexes, **all four aggregates**, the difference, `distinct` and the
+  read-model SQL compiling into the plan rather than growing a second interpreter have landed and
+  are §8.5.4's row; what remains is §99.9 item 8. `sum` was the surface decision this bullet
   named, and it was taken rather than deferred: **a sum is its answer and not the order it was added
   in**, so `list_sum` is exact over `Int` and raises only on a total no `Int` holds, and `Float` has
   none — there the same definition would disagree with the `+` the language already has rather than
@@ -490,22 +490,71 @@ rows.
   failed to come due four times**: a join inferred from a loop has the loop's order to preserve,
   which fixes which side is the left before any cost is consulted. An inferred surface postpones the
   solver, and §99.8's ladder says so now rather than predicting otherwise.
-- **A columnar value, and Arrow** (F, after the aggregates): the second representation
-  [`105`](105-the-ecosystem-answer.md) §105.10 argues for — `Value::List(Arc<Vec<Value>>)` is 16
-  boxed bytes an element, which is right for a keyed arrangement and wrong for a million doubles.
-  One change discharges four commitments: [`07`](07-dependencies.md) §7.4's DataFusion choice,
-  §8.5.4's own Parquet-archival G item below (Parquet is Arrow written down), the numeric-interop
-  gap, and the aggregates' own representation. It is listed **after** the aggregates because an
-  aggregate is what makes a column worth having, and **before** the G item because that item cannot
-  start without it.
+- **A columnar value, and Arrow** (F, after the aggregates). **The value is built and Arrow is
+  not**, which is the item splitting rather than shrinking — §8.5.5's "a wave item can split", for a
+  reason that is a *gate* rather than an effort. `Value::List(Arc<Vec<Value>>)` was 16 boxed bytes an
+  element, right for a keyed arrangement and wrong for a million doubles;
+  [`beck-core/src/seq.rs`](../compiler/crates/beck-core/src/seq.rs) is the second representation
+  [`105`](105-the-ecosystem-answer.md) §105.10 argues for — a list of `Int` or of `Float` held as a
+  dense buffer, **8,000 bytes against 16,000** for a thousand integers and 64,000 against 128,000 for
+  eight thousand, and a `&[f64]` a kernel or an Arrow `Float64Array` can be pointed at, which is what
+  did not exist. `Value` is still 16 bytes, because the layout sits behind the `Arc`.
+  **A second representation is a correctness problem before it is a performance one**, and the whole
+  of the work was the four mechanisms that must not notice it: order and equality (written by hand,
+  because a derived `Ord` compares the layout's tag and would sort every column before every list),
+  the state digest, and the wire format. `beck-cli/tests/columns.rs` folds every corpus program's log
+  with the layout switched on and again with it off and holds the two to the same digests and the
+  same pages, which is also §8.3 item 8's off switch proved rather than promised
+  (`AppConfig::columns`). What that sweep reports is the other finding: **6 of 40 programs build a
+  column while folding and rendering, 462 columns in all** — and the first instrument said zero,
+  because it walked the accumulator and `corpus/26-sensors.beck` builds its `list[Float]` inside its
+  *view*.
+  What it costs is measured with the switch as the control, and the shape of the answer is that it
+  moves numeric work and leaves everything else alone: a 200,000-element workload — built by
+  accumulation, then mapped, filtered, summed and counted — takes **202–212 ms against 218–242**,
+  while Are We Fast Yet shows **no measurable change** (`havlak` 2,519 ms against 2,556, `richards`
+  1,387 against 1,396 — the only two long enough to read over process startup, and `awfy/list.beck`
+  says in its own header that it deliberately holds no `list[Int]`).
+  **What is left is Arrow**, and it waits on a **foreign reader**: nothing in this workspace reads
+  Arrow, so an encoder written here would be a writer checked by its own reader — the objection
+  [`07`](07-dependencies.md) §7.4 makes about hand-written formats and the reason
+  [`adr/0030`](adr/0030-the-webassembly-emitter-writes-its-own-bytes.md) made the WebAssembly
+  emitter wait for a JavaScript engine. The `arrow` dependency therefore belongs with the reader
+  that needs it, which is the G item below; three of the four commitments this item was listed for
+  ([`07`](07-dependencies.md) §7.4's DataFusion choice, Parquet archival, the numeric-interop gap)
+  land there and with §105.8's kernels, and the fourth — the aggregates' own representation — is
+  taken: `list_min`, `list_max` and `list_sum` read the dense buffer.
 - **What the macro interpreter unblocked** (F — the interpreter itself is **built**,
   [`102`](102-the-macro-interpreter-report.md), with its G-class sandbox gate beside it). A macro
   body is ordinary Beck now, so the successors this item existed to free are the item:
-  - **`derive` and `.as_model()`** (Lane A, and the largest): a `typed macro` receives the AST
-    *with inferred types attached* ([`02`](02-syntax.md) §2.4), which the untyped interpreter runs
-    before. This is the piece that needs the checker's answers to reach a macro body, and it is
-    what retires the compiler-provided `ui:` special case standing in for a user-written macro
-    (D22).
+  - **`derive` is built, and it was not Lane A** — the third time this section's lane rule has been
+    got wrong, and the first time the *item* was: this row said `derive` needed a `typed macro`, and
+    it did not. A model's fields are in its declaration, so `node_args` reads what `.as_model()` was
+    going to, and the work was four rules made uniform in the **parser** — a block passed to a macro
+    *in item position* holds declarations, a `quote:` holds them too, `$` unquotes where a type and
+    where a field name go, and a `do` at module level flattens all the way down. Not one line of
+    `check/` or `ty.rs`. `examples/derive.beck` generates a JSON encoder from a model's fields with
+    no reflection in the running program, closing the row [`46`](46-standard-library-report.md)
+    §46.16 and `prelude.rs` have both carried since the standard library was written.
+  - **A macro crosses a module boundary. Done**, and it is what turned every item in this list from
+    a mechanism into a *facility*. Expansion ran per module, on the parsed file, before any import
+    was resolved — so a macro was usable where it was declared and nowhere else, and neither
+    [`02`](02-syntax.md) §2.4 nor [`102`](102-the-macro-interpreter-report.md) said so, because
+    nothing refused it: the name was simply not there, which is the kind of absence §8.5.6 exists to
+    find. What crosses is the **source**, for the reason §102.2 already gave about a `def` — a macro
+    body is compile-time callable as it was written — and a macro has no signature for a `.becki` to
+    publish, so an import that resolves to an interface alone does not carry one and `B0307`'s note
+    says so. Two rules were already the right ones and stayed: the flat namespace decides a
+    collision (`B0200`), and a macro is visible where its module is imported directly.
+    **`lib/json.beck` is the first library file to ship a macro** — `import json`, then
+    `derive_json:` over a `model` — which closes [`46`](46-standard-library-report.md) §46.16's
+    `@derive` row.
+  - **Typed macros** (Lane A, and now the whole of what `derive` was standing in front of): a
+    `typed macro` receives the AST *with inferred types attached* ([`02`](02-syntax.md) §2.4),
+    which the untyped interpreter runs before. This is the piece that needs the checker's answers
+    to reach a macro body, and it is what retires the compiler-provided `ui:` special case standing
+    in for a user-written macro (D22). `.as_model()` is its spelling half, and so is the `*traits`
+    a parameter list has no rest form for.
   - **§2.5's typed literal macros** (`sql"…"`, `html"…"`, `regex"…"`) — the DSL escape hatch, and
     the mechanism the security suite already points at for SQL and HTML. Sugar over a macro call
     (§2.3's table) plus a parse at compile time, so this one is free of Lane A.
@@ -742,6 +791,10 @@ rows.
   Beck value can be a column. The **retention** half is separable and S — a
   language surface and a store policy, with no benchmark waiting on it — and it is the half D3 makes
   optional, since `retain=forever` is the default and tiering is what keeps that affordable.
+  **Its predecessor has landed** — the columnar value above — so what this item now carries that it
+  did not is the `arrow` dependency itself, which belongs here because this is where the reader
+  lives: a Parquet writer and DataFusion are what make an Arrow encoder something other than a
+  writer checked by its own reader.
 
 Behind those, the Phase 4 gates arranged before Phase 4 rather than during it: **DST proper** on the
 seams §8.5.2 names, then the TLA+ gate above, the operator, the replay tooling and the choreography.
@@ -781,7 +834,14 @@ they are what the next ordering should assume:
   been answered as two by four phases of implementation; errors and structured concurrency were one
   row with different successors. The classification is about *cost over time*, and it is silent
   about whether an item is one item.
-- **A wave item can be in the wrong lane**, and it has now happened twice. `Set` and dates were
+- **A wave item can be in the wrong lane**, and it has now happened three times — the third being
+  the first where the *item itself* was misread rather than its lane. `derive` was filed under
+  Lane A on the reasoning that §2.4 lists it beside `typed macro`, and the reasoning was the
+  document's rather than the tree's: a model's fields are in its declaration, so what `derive` needs
+  is a **parser** that lets a macro's block hold one. Four rules in `beck-syntax`, not one line of
+  `check/` or `ty.rs`. The lesson is the one below with a sharper edge — ask which files an item
+  touches, and be most suspicious when the answer comes from a design document rather than from the
+  code. `Set` and dates were
   filed under Lane A on the assumption that a standard-library item is a language item; they
   turned out to be two files of Beck and no compiler change at all. **The macro interpreter** was
   filed there too, on the stronger-sounding reasoning that it "changes what reaches the checker" —
@@ -939,7 +999,7 @@ picking the interesting ones is how the silence happens.
 |---|---|
 | .NET (25.2%), .NET Framework (16.4%) | decline as a *framework* — this is the application framework Beck replaces rather than interoperates with. Reaching its **libraries** is the C ABI FFI bullet; being consumed *by* a .NET estate is `@public(rest)`/`@public(grpc)` |
 | **NumPy (21.2%)** — most-used library in the survey | **adopt**, split in two: the *notation* (broadcasting, slicing) is a language feature and queues behind the macro interpreter; the *kernels* are linked and never reimplemented ([`105`](105-the-ecosystem-answer.md) §102.8). Nothing is built |
-| **pandas (20.7%)** | **adopt** — not a library here at all but [`99`](99-the-data-tier-means-of-combination.md)'s missing algebra, §8.5.4's Lane B item |
+| **pandas (20.7%)** | **adopt, and taken** — not a library here at all but [`99`](99-the-data-tier-means-of-combination.md)'s algebra, which is now built: join, both indexes, all four aggregates, difference, intersection and `distinct`, reachable from a Beck loop and from the read model's SQL alike |
 | Spring Framework (11.1%) | decline — DI, ORM and web framework, all three dissolved ([`105`](105-the-ecosystem-answer.md) §102.6) |
 | RabbitMQ (10.9%), Apache Kafka (9.4%) | **adopt** as *ingress and egress* — [`101`](101-the-public-surface.md) §101.6's `@public(events)` and [`30`](30-bounded-contexts-and-microservices.md) §30.4's `ingest`, Phase 5. A broker subscription is a merge point, which is a thing this language already has a word for |
 | scikit-learn (10.6%), Torch/PyTorch (10.6%), TensorFlow (10.1%), Keras (4.3%), Hugging Face (4.5%), JAX (1.0%), mlflow (1.2%) | **supported through the bridge**, merge points only — the capability half, and the concession [`01`](01-vision-and-premise.md) §1.7 actually made |
@@ -950,7 +1010,7 @@ picking the interesting ones is how the silence happens.
 | **Electron (6.5%), Ionic (2.5%), Tauri (2.4%), Capacitor (1.8%), Cordova (2.2%)** — **15.4% together** | **watch, and the shape is closer than it looks.** These wrap a web UI as an installable app; Beck emits a web client *and* a statically linked native binary, which is Tauri's architecture with the parts already built. Nothing is claimed and nothing is scheduled — the trigger is somebody executing it, per the rule that an artefact nobody has run is a design document. Recorded because it was invisible |
 | Apache Spark (4.4%), Hadoop (2.3%) | decline as a *substrate* — the analytical half is DataFusion over Parquet (§8.5.4's G item), the single-node answer [`07`](07-dependencies.md) §7.4 sized for |
 | **Ruff (3.0%)** | **dissolved** — the formatter and the linter are the compiler (`beck fmt`, the LSP, [`65`](65-the-editor-report.md)). Worth a second look rather than a tick: Ruff's adoption is developers switching formatter for *speed alone*, which is the clearest external evidence that [`64`](64-compile-speed-report.md)'s budgets are a product feature and not hygiene |
-| **Tidyverse (1.7%)** | **adopt** — the same verdict as pandas, and the reason it is listed separately: R's `dplyr` is a **fourth** independent convergence on the same dozen verbs (with pandas, polars and LINQ), which is what makes [`99`](99-the-data-tier-means-of-combination.md)'s gap a missing algebra rather than one library's taste |
+| **Tidyverse (1.7%)** | **adopt, and taken** — the same verdict as pandas, and the reason it is listed separately: R's `dplyr` is a **fourth** independent convergence on the same dozen verbs (with pandas, polars and LINQ), which is what makes [`99`](99-the-data-tier-means-of-combination.md)'s gap a missing algebra rather than one library's taste |
 | Roslyn (1.7%) | **dissolved into tooling** — compiler-as-a-service is the LSP plus `beck explain` ([`65`](65-the-editor-report.md)), and the half that is genuinely missing is compile-time evaluation, which is §8.5.4's macro interpreter |
 | Quarkus (1.3%), Ktor (1.2%) | decline — JVM/Kotlin service frameworks, replaced rather than interoperated with |
 | **Charting** — matplotlib, Chart.js, D3. *Not in the survey's list*, and universal in practice | **adopt** — an `svg:` vocabulary, §8.5.4, blocked on one `createElement` call ([`105`](105-the-ecosystem-answer.md) §102.9). Listed here because the rule's failure mode is silence, and a category the survey happens not to itemise is the easiest silence of all |

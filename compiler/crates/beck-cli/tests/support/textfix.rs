@@ -241,7 +241,7 @@ pub fn joins(seps: &[Value]) -> Vec<Vec<Value>> {
         vec!["héllo", "日本語", "a\0b"],
     ]
     .iter()
-    .map(|p| Value::List(std::sync::Arc::new(p.iter().map(Value::str_).collect())))
+    .map(|p| Value::list(p.iter().map(Value::str_).collect()))
     .collect();
     let mut out = Vec::new();
     for xs in &parts {

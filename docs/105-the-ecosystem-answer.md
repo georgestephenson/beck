@@ -1,6 +1,9 @@
 # 105 — The ecosystem answer
 
-> **Design, not a report. Nothing here is built.** [`09`](09-risks-and-open-questions.md) §9.2 calls
+> **Design, not a report. Nothing here is built except the algebra and the columnar value** —
+> [`99`](99-the-data-tier-means-of-combination.md) finished the first and §105.10 says what landed
+> of the second, which is the representation and not Arrow. §105.13 says which claims that moves.
+> [`09`](09-risks-and-open-questions.md) §9.2 calls
 > ecosystem access "the strategically important one" and [`01`](01-vision-and-premise.md) §1.5 item 7
 > states it harder — "a language that cannot call the Python and npm ecosystems is a research
 > project". Both are correct instinct with no artefact behind them, and neither answers the question
@@ -441,6 +444,37 @@ notes that **five documents commit to this and not one gave it a position in an 
 `arrow`, `parquet` or `datafusion` dependency exists in the workspace — which this document
 re-verified.
 
+**The columnar value is built** ([`beck-core/src/seq.rs`](../compiler/crates/beck-core/src/seq.rs)),
+and Arrow is not. What landed is the representation this section says stands in the way of both
+halves: a list of `Int` or of `Float` is a dense buffer rather than boxed `Value`s — half the bytes,
+and a `&[f64]` a kernel or an `Arrow` `Float64Array` can be pointed at, which is the thing that did
+not exist. Three findings are worth carrying out of it:
+
+- **It is not a second kind of list, and that was the whole cost.** One order, one equality, one
+  digest, one wire format — all written by hand over the *logical sequence*, because a derived `Ord`
+  compares the layout's discriminant first and would sort every column before every list. `Value` is
+  still 16 bytes: the layout enum sits behind the `Arc`, so nothing that is not a list pays for it.
+- **A column has to be *born* somewhere, and the accumulator idiom is where.** `go(i + 1,
+  list_append(done, x))` starts from `[]`, so a layout chosen only when a list is finished would
+  never reach the way `lib/`, the corpus and both SICP chapters build one; an empty list promotes on
+  its first element instead. Measured over the corpus: **6 of 40 programs build a column while
+  folding and rendering, 462 columns in all** — and the first instrument said zero, because it
+  walked the accumulator and `corpus/26-sensors.beck` builds its `list[Float]` *inside its view*.
+- **What it is worth today is memory, exactly**: 8,000 bytes against 16,000 for a thousand integers
+  and 64,000 against 128,000 for eight thousand. Time says the rest: a 200,000-element numeric
+  workload runs in **202–212 ms against 218–242** with the layout switched off, and Are We Fast Yet
+  shows **no measurable change** — which is the right answer, because `awfy/list.beck` says in its
+  own header that it deliberately holds no `list[Int]`. The rest of the value is the four
+  commitments below, and every one of them is still ahead of it.
+
+**Arrow itself is not built and the reason is a gate rather than an effort.** Nothing in this
+workspace reads Arrow, so an encoder written here would be a writer checked by its own reader — the
+objection [`07`](07-dependencies.md) §7.4 makes about hand-written formats, and the reason
+[`adr/0030`](adr/0030-the-webassembly-emitter-writes-its-own-bytes.md) made the WebAssembly emitter
+wait for a JavaScript engine. The `arrow` dependency belongs with the reader that needs it, which is
+the Parquet archive and DataFusion — [`08`](08-roadmap.md) §8.5.4's G item, whose named predecessor
+this was.
+
 One columnar value type discharges all of it:
 
 | Commitment | Discharged by the same change |
@@ -467,7 +501,7 @@ everything in this section is at zero.
 |---|---|---|
 | **Charting / `svg:`** (§105.9) | **S**, small, most users per unit of effort | **Scheduled** — [`08`](08-roadmap.md) §8.5.4's styling cluster item 1, and `DEFECTS.md::svg-namespace`. [`104`](104-styling-and-the-component-library.md) owns it; this document supplied the ranking, not the fix |
 | **The data tier's algebra** (§105.7) | **F** — §99.7 lists five written-down items it closes | §8.5.4, in Lane B, and now the **largest item left** — it contends with nothing in Lane A, so it runs beside the macro interpreter's successors |
-| **A columnar value and Arrow** (§105.10) | **F** | §8.5.4, after the algebra — an aggregate is what makes a column worth having |
+| **A columnar value and Arrow** (§105.10) | **F** | §8.5.4, after the algebra. **The value is built** and Arrow is not: nothing here reads Arrow, so the encoder waits for the reader that needs it (the Parquet archive, §8.5.4's G item) |
 | **The array notation and BLAS** (§105.8) | **S** for the kernels, **Lane A** for the notation | Phase 4, after Arrow. **The prerequisite has landed**: the macro interpreter is built ([`102`](102-the-macro-interpreter-report.md)), so the notation half is unblocked rather than queued — though a *typed* macro, which is what an array notation wants, is itself the first of §8.5.4's successor list |
 | **Cloud SDKs** (boto3, and the same shape in three other ecosystems) | **S** | Phase 4, beside the managed-cloud path. `external store` and `net.out` already type it; what is missing is that nobody wants to hand-write S3's signature algorithm |
 | **Image handling** (Pillow, sharp, ImageSharp) | **S** | Phase 4. A capability, so linking is the whole answer |
@@ -501,7 +535,13 @@ diagnostic naming the merge point as the alternative.
 
 ## 105.13 What this document does not claim
 
-- **Nothing here is built.** Not the algebra, not a column, not a chart, not the sidecar. The four
+- **Nothing here is built, with two exceptions that have since landed.** Not a chart, not the
+  sidecar, not Arrow — but the **algebra** is ([`99`](99-the-data-tier-means-of-combination.md)
+  §99.9 closed every row of its basis, and the read model's SQL reaches it, so the pandas row of
+  §105.6 is answered rather than argued), and so is the **columnar value** §105.10 asks for. What
+  §105.10 still claims and has not shown is the other side of that boundary: no Arrow array has been
+  emitted, nothing has read one, and "zero-copy to NumPy, Polars, DuckDB and R" is an argument about
+  a memory layout rather than a thing anybody has run. The four
   code facts asserted — `place.rs:760`, `core.rs:790`, `html.rs`'s open vocabulary,
   `beck-patch.js:10` — were read from the tree on 2026-08-16 and are the only claims about the
   implementation this document makes.

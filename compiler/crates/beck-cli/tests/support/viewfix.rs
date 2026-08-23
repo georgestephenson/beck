@@ -41,8 +41,6 @@
 
 #![allow(dead_code)] // each suite uses the half of this it needs
 
-use std::sync::Arc;
-
 use beck_core::Value;
 
 /// Views built out of the five primitives directly, so that what is being compared is the
@@ -231,7 +229,7 @@ pub fn cards() -> Vec<Value> {
 }
 
 pub fn ints(xs: &[i64]) -> Value {
-    Value::List(Arc::new(xs.iter().map(|n| Value::Int(*n)).collect()))
+    Value::list(xs.iter().map(|n| Value::Int(*n)).collect())
 }
 
 pub fn lists() -> Vec<Value> {
@@ -253,12 +251,9 @@ pub fn todo(id: &str, text: &str, done: bool) -> Value {
 /// The todo lists the `ui:` page is rendered from.
 pub fn todos() -> Vec<Value> {
     vec![
-        Value::List(Arc::new(vec![])),
-        Value::List(Arc::new(vec![todo("a", "milk", false)])),
-        Value::List(Arc::new(vec![
-            todo("a", "milk", true),
-            todo("b", "<eggs>", false),
-        ])),
+        Value::list(vec![]),
+        Value::list(vec![todo("a", "milk", false)]),
+        Value::list(vec![todo("a", "milk", true), todo("b", "<eggs>", false)]),
     ]
 }
 

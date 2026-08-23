@@ -1293,7 +1293,7 @@ impl Heap {
                 words.push(xs.len() as u64);
                 words.push(xs.len() as u64);
                 for x in xs.iter() {
-                    words.push(self.encode(x, element, blob)?);
+                    words.push(self.encode(&x, element, blob)?);
                 }
                 let data = self.write_words(words, blob);
                 Ok(self.write_words(vec![xs.len() as u64, data], blob))
@@ -1927,18 +1927,18 @@ impl Frame {
                         done.first().unwrap_or(&Value::Unit),
                     )))),
                     _ => {
-                        let empty: &[Value] = &[];
                         let (tag, attrs, children) = (
                             done.first().cloned().unwrap_or(Value::Unit),
                             done.get(1).cloned().unwrap_or(Value::Unit),
                             done.pop().unwrap_or(Value::Unit),
                         );
-                        beck_core::html::element(
-                            &tag,
-                            attrs.as_list().map(|v| v.as_slice()).unwrap_or(empty),
-                            children.as_list().map(|v| v.as_slice()).unwrap_or(empty),
-                        )
-                        .map(|h| Value::Html(Arc::new(h)))
+                        let attrs = attrs.as_list().map(|v| v.as_values()).unwrap_or_default();
+                        let children = children
+                            .as_list()
+                            .map(|v| v.as_values())
+                            .unwrap_or_default();
+                        beck_core::html::element(&tag, &attrs, &children)
+                            .map(|h| Value::Html(Arc::new(h)))
                     }
                 }
             }
@@ -1957,7 +1957,7 @@ impl Frame {
                     _ => AttrValue::Key(Arc::from(at(0).display())),
                 }))
             }
-            Frame::List { done, .. } => Value::List(Arc::new(done)),
+            Frame::List { done, .. } => Value::list(done),
             // Pairs, in the order they were asked for.
             Frame::Map { done, .. } => Value::Map(
                 done.chunks_exact(2)

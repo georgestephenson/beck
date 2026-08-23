@@ -1439,7 +1439,21 @@ impl<'a> Checker<'a> {
                 // `collect_traits` and an `impl` was expanded into the `def`s this loop is
                 // checking, so neither has anything left to do here.
             } else {
-                self.error("B0307", "unsupported top-level item", inner.span());
+                // A call that survived expansion is the shape a *macro* call has, and the reason it
+                // survived is almost always that no module in scope declares one by that name. A
+                // macro is a declaration like any other and crosses an import like one
+                // ([`beck_macro::expand_module_with`]), so the fix is a missing `import` far more
+                // often than it is a misplaced statement — and until macros crossed at all the
+                // answer was "they do not", which is no longer the thing to tell somebody.
+                let mut d = Diagnostic::error("B0307", "unsupported top-level item", inner.span());
+                if let Some(name) = inner.head_sym().filter(|_| inner.applied) {
+                    d = d.with_note(format!(
+                        "if `{name}` is a macro, this module has to declare it or import one that \
+                         does; a macro is published by a module's source, so an import \
+                         that resolved to an interface alone does not carry one"
+                    ));
+                }
+                self.diags.push(d);
             }
         }
 

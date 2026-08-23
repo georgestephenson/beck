@@ -143,6 +143,8 @@ Nothing executes this DDL. There is no table to create — a read model is the c
 | Argument | | |
 |---|---|---|
 | `<FILE>` | FILE |  |
+| `--query` | QUERY | A `select` to compile, instead of the schema to print.  A join, a `group by` and a `distinct` are compiled into the view plan rather than interpreted, so what this prints is the same operator report `beck explain query` prints for a page — the index a join builds, whether a group is built at all, and what the `where` was pushed into (`docs/99` §99.9 item 9). |
+| `--no-join` | true \| false | Leave the loop a join compiles to as the nested loop it literally is, rather than reading it as an equi-join and indexing what it reads (§99.6).  The off switch, on this surface too: printing a query's plan both ways is how to see what the operator is worth on your data. |
 
 
 ## `beck explain style`
