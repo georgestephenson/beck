@@ -564,11 +564,7 @@ def windows(xs: list[Int], i: Int, acc: Int) -> Int:
         "benchmark", "size", "evaluator", "native", "ratio"
     );
 
-    let long = |n: usize| {
-        Value::List(std::sync::Arc::new(
-            (0..n as i64).map(Value::Int).collect::<Vec<_>>(),
-        ))
-    };
+    let long = |n: usize| Value::list((0..n as i64).map(Value::Int).collect::<Vec<_>>());
     let benches: [(&str, [usize; 2]); 3] = [
         ("walk", [2_000, 16_000]),
         ("hunt", [500, 4_000]),
@@ -675,11 +671,7 @@ def joined_up(xss: list[list[Int]]) -> Int:
         "benchmark", "size", "evaluator", "native", "ratio"
     );
 
-    let long = |n: usize| {
-        Value::List(std::sync::Arc::new(
-            (0..n as i64).map(Value::Int).collect::<Vec<_>>(),
-        ))
-    };
+    let long = |n: usize| Value::list((0..n as i64).map(Value::Int).collect::<Vec<_>>());
     // The last column is whether the *compiled* side is expected to win, and one row says no. See
     // the assertions below, which are per row rather than one threshold for all of them.
     let benches: [(&str, [usize; 2], bool); 5] = [
@@ -698,11 +690,11 @@ def joined_up(xss: list[list[Int]]) -> Int:
                 "mapped" => vec![long(*size), Value::Int(3)],
                 // `n` inner lists of one element, so the answer is `n` and the outer list is the
                 // input: a concatenation's cost is its answer's size either way.
-                "joined_up" => vec![Value::List(std::sync::Arc::new(
+                "joined_up" => vec![Value::list(
                     (0..*size as i64)
-                        .map(|i| Value::List(std::sync::Arc::new(vec![Value::Int(i)])))
+                        .map(|i| Value::list(vec![Value::Int(i)]))
                         .collect::<Vec<_>>(),
-                ))],
+                )],
                 _ => vec![long(*size)],
             };
             let runs = if i == 0 { 7 } else { 3 };
@@ -1079,7 +1071,7 @@ def plain(rows: list[Row]) -> Html:
     );
 
     let rows = |n: usize| {
-        Value::List(Arc::new(
+        Value::list(
             (0..n)
                 .map(|i| {
                     Value::record(
@@ -1093,7 +1085,7 @@ def plain(rows: list[Row]) -> Html:
                     )
                 })
                 .collect::<Vec<_>>(),
-        ))
+        )
     };
     for name in ["page", "plain"] {
         for (i, size) in [200usize, 1_600].iter().enumerate() {
@@ -1297,7 +1289,7 @@ def add_from(xs: list[Int], i: Int, acc: Int) -> Int:
         "{:<14} {:>10} {:>14} {:>14} {:>9} {:>9}",
         "benchmark", "elements", "evaluator", "native", "ratio", "ns/elem"
     );
-    let long = |n: usize| Value::List(Arc::new((0..n as i64).map(Value::Int).collect::<Vec<_>>()));
+    let long = |n: usize| Value::list((0..n as i64).map(Value::Int).collect::<Vec<_>>());
     // Per-element compiled nanoseconds at each size, which is what is asserted on.
     let mut seen: Vec<(&str, f64, f64)> = Vec::new();
     for name in ["doubled", "summed"] {

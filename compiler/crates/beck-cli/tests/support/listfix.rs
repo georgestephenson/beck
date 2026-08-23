@@ -20,12 +20,10 @@
 
 #![allow(dead_code)] // each suite uses the half of this it needs
 
-use std::sync::Arc;
-
 use beck_core::Value;
 
 fn list(xs: &[i64]) -> Value {
-    Value::List(Arc::new(xs.iter().map(|n| Value::Int(*n)).collect()))
+    Value::list(xs.iter().map(|n| Value::Int(*n)).collect())
 }
 
 /// The lists every definition below is exercised over.
@@ -52,7 +50,7 @@ pub fn texts() -> Vec<Value> {
         vec![""],
     ]
     .iter()
-    .map(|xs| Value::List(Arc::new(xs.iter().map(Value::str_).collect())))
+    .map(|xs| Value::list(xs.iter().map(Value::str_).collect()))
     .collect()
 }
 
@@ -65,7 +63,7 @@ pub fn nested() -> Vec<Value> {
         vec![vec![1, 2]],
     ]
     .iter()
-    .map(|xss| Value::List(Arc::new(xss.iter().map(|xs| list(xs)).collect())))
+    .map(|xss| Value::list(xss.iter().map(|xs| list(xs)).collect()))
     .collect()
 }
 

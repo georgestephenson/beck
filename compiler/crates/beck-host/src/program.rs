@@ -162,7 +162,7 @@ impl Runtime {
             (self.validate)(vec![state.clone(), proposal.clone()]).map_err(|e| e.to_string())?;
         match out.variant() {
             Some("Ok") => match out.field("value").and_then(|v| v.as_list()) {
-                Some(events) => Ok(events.clone()),
+                Some(events) => Ok(events.to_vec()),
                 None => Err("validate returned Ok without a list of events".into()),
             },
             Some("Err") => Err(out

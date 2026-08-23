@@ -634,6 +634,16 @@ fn main() -> Result<()> {
         .with(capture::Capture)
         .init();
 
+    // The columnar layout's off switch for a process that is not a served application
+    // (`beck_rt::AppConfig::columns` is that one). `BECK_COLUMNS=0` makes every list the boxed
+    // layout it was, which changes no answer — the order, the equality, the digest and the wire
+    // bytes are the same either way (`beck_core::seq`) — and is what a measurement compares
+    // against. An environment variable rather than a flag because it belongs to no one subcommand:
+    // a list is built by `run`, `test`, `bench` and `build` alike.
+    if std::env::var("BECK_COLUMNS").is_ok_and(|v| v == "0" || v == "false") {
+        beck_core::seq::set_columns(false);
+    }
+
     let cli = Cli::parse();
     // Every command below may end up evaluating Beck code, and the evaluator spends host stack on
     // recursion that is not in tail position. It says how much it needs; this is where a `beck`

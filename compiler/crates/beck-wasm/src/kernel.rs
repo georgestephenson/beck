@@ -762,7 +762,7 @@ impl Client {
         match out.variant() {
             Some("Ok") => out
                 .field("value")
-                .and_then(|v| v.as_list().cloned())
+                .and_then(|v| v.as_list().map(|xs| xs.to_vec()))
                 .ok_or_else(|| "validate returned Ok without a list of events".to_string()),
             Some("Err") => Err(out
                 .field("error")

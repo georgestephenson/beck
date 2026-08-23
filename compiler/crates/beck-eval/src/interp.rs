@@ -32,6 +32,7 @@ use beck_core::core::{
     Closure, Const, Core, CoreKind, Env, Fields, Pattern, Prim, Record, Value, VarId,
 };
 use beck_core::digest;
+use beck_core::seq::Seq;
 use beck_core::PMap;
 
 /// The three "this primitive wanted a `T`" conversions, so twenty-odd library primitives do not
@@ -163,7 +164,7 @@ fn as_int(v: &Value, who: &str, span: Span) -> Result<i64, EvalError> {
         .ok_or_else(|| EvalError::new(format!("`{who}` expects an Int"), span))
 }
 
-fn as_list<'a>(v: &'a Value, who: &str, span: Span) -> Result<&'a Vec<Value>, EvalError> {
+fn as_list<'a>(v: &'a Value, who: &str, span: Span) -> Result<&'a Seq, EvalError> {
     v.as_list()
         .ok_or_else(|| EvalError::new(format!("`{who}` expects a list"), span))
 }
@@ -197,7 +198,7 @@ fn json_to_value(j: &serde_json::Value) -> Value {
         serde_json::Value::Array(xs) => json_node(
             "JsonList",
             "items",
-            Value::List(Arc::new(xs.iter().map(json_to_value).collect())),
+            Value::list(xs.iter().map(json_to_value).collect()),
         ),
         serde_json::Value::Object(fields) => {
             let mut m = beck_core::PMap::new();
@@ -237,7 +238,7 @@ fn value_to_json(v: &Value, span: Span) -> Result<serde_json::Value, EvalError> 
                 .ok_or_else(|| EvalError::new("`json_render` expects a list of Json", span))?;
             Ok(serde_json::Value::Array(
                 xs.iter()
-                    .map(|x| value_to_json(x, span))
+                    .map(|x| value_to_json(&x, span))
                     .collect::<Result<_, _>>()?,
             ))
         }
@@ -1311,7 +1312,7 @@ impl<'h> Interp<'h> {
         for i in items {
             out.push(self.operand(i, env)?);
         }
-        Ok(Value::List(Arc::new(out)))
+        Ok(Value::list(out))
     }
 
     #[cfg_attr(debug_assertions, inline(never))]
@@ -1642,7 +1643,7 @@ impl<'h> Interp<'h> {
                 } else {
                     s.split(sep.as_str()).map(Value::str_).collect()
                 };
-                Ok(Value::List(Arc::new(parts)))
+                Ok(Value::list(parts))
             }
             Prim::StrJoin => {
                 want(2)?;
@@ -1723,9 +1724,9 @@ impl<'h> Interp<'h> {
                 want(1)?;
                 let v = args.pop().expect("arity checked");
                 let s = as_str(&v, "str_chars", span)?;
-                Ok(Value::List(Arc::new(
+                Ok(Value::list(
                     s.chars().map(|c| Value::str_(c.to_string())).collect(),
-                )))
+                ))
             }
             // ---- collections
             Prim::ListGet => {
@@ -1755,27 +1756,25 @@ impl<'h> Interp<'h> {
                 };
                 let xs = args.pop().expect("arity checked");
                 let xs = as_list(&xs, op.name(), span)?;
-                let out: Vec<Value> = xs
-                    .iter()
-                    .skip(start.max(0) as usize)
-                    .take(len.max(0) as usize)
-                    .cloned()
-                    .collect();
-                Ok(Value::List(Arc::new(out)))
+                // A slice of a column is a column: the range is copied out of the dense buffer
+                // rather than materialised into `Value`s and read back.
+                let from = start.max(0) as usize;
+                let to = from.saturating_add(len.max(0) as usize);
+                Ok(Value::of_seq(xs.slice(from, to)))
             }
             Prim::ListReverse => {
                 want(1)?;
                 let xs = args.pop().expect("arity checked");
                 let mut out = as_list(&xs, "list_reverse", span)?.to_vec();
                 out.reverse();
-                Ok(Value::List(Arc::new(out)))
+                Ok(Value::list(out))
             }
             Prim::ListContains | Prim::ListIndexOf => {
                 want(2)?;
                 let needle = args.pop().expect("arity checked");
                 let xs = args.pop().expect("arity checked");
                 let xs = as_list(&xs, op.name(), span)?;
-                let found = xs.iter().position(|x| *x == needle);
+                let found = xs.iter().position(|x| x == needle);
                 Ok(match op {
                     Prim::ListContains => Value::Bool(found.is_some()),
                     _ => match found {
@@ -1797,15 +1796,18 @@ impl<'h> Interp<'h> {
                         Err(shared) => {
                             // Ditto: a push costs nothing and a copy costs its length.
                             self.burn_work(shared.len(), span)?;
-                            shared.to_vec()
+                            (*shared).clone()
                         }
                     };
+                    // The layout is kept rather than re-chosen, which is what makes the accumulator
+                    // idiom a column: `Seq::push` promotes an empty list once and pushes into the
+                    // dense buffer thereafter.
                     out.push(x);
-                    return Ok(Value::List(Arc::new(out)));
+                    return Ok(Value::of_seq(out));
                 }
-                let mut out = as_list(&xs, "list_append", span)?.to_vec();
+                let mut out = as_list(&xs, "list_append", span)?.clone();
                 out.push(x);
-                Ok(Value::List(Arc::new(out)))
+                Ok(Value::of_seq(out))
             }
             Prim::ListFold => {
                 want(3)?;
@@ -1842,9 +1844,9 @@ impl<'h> Interp<'h> {
                 let mut out = Vec::new();
                 for x in xs {
                     let ys = self.apply(&f, vec![x], span)?;
-                    out.extend(as_list(&ys, "list_flat_map", span)?.iter().cloned());
+                    out.extend(as_list(&ys, "list_flat_map", span)?.iter());
                 }
-                Ok(Value::List(Arc::new(out)))
+                Ok(Value::list(out))
             }
             Prim::ListZip => {
                 want(3)?;
@@ -1857,7 +1859,7 @@ impl<'h> Interp<'h> {
                 for (x, y) in xs.into_iter().zip(ys) {
                     out.push(self.apply(&f, vec![x, y], span)?);
                 }
-                Ok(Value::List(Arc::new(out)))
+                Ok(Value::list(out))
             }
             Prim::MapKeys => {
                 want(1)?;
@@ -1865,7 +1867,7 @@ impl<'h> Interp<'h> {
                 let m = m
                     .as_map()
                     .ok_or_else(|| EvalError::new("`map_keys` expects a Map", span))?;
-                Ok(Value::List(Arc::new(m.keys().cloned().collect())))
+                Ok(Value::list(m.keys().cloned().collect()))
             }
             Prim::MapMerge => {
                 want(2)?;
@@ -2001,10 +2003,10 @@ impl<'h> Interp<'h> {
                 // not pay for the other n-1 being put in order.
                 self.burn_work(xs.len(), span)?;
                 let found = match op {
-                    Prim::ListMin => xs.iter().min(),
-                    _ => xs.iter().max(),
+                    Prim::ListMin => xs.min(),
+                    _ => xs.max(),
                 };
-                Ok(found.cloned().map(Value::some).unwrap_or_else(Value::none))
+                Ok(found.map(Value::some).unwrap_or_else(Value::none))
             }
             // The exact sum, which is a different function from folding `+` over the list and is
             // meant to be: `+` raises on a partial total that does not fit even when the answer
@@ -2017,11 +2019,24 @@ impl<'h> Interp<'h> {
                 let xs = as_list(&v, op.name(), span)?;
                 self.burn_work(xs.len(), span)?;
                 let mut total: i128 = 0;
-                for x in xs.iter() {
-                    let n = as_int(x, op.name(), span)?;
-                    total = total
-                        .checked_add(i128::from(n))
-                        .ok_or_else(|| EvalError::new("`list_sum` overflowed", span))?;
+                // A column is summed over its own buffer: the same arithmetic, without a `Value`
+                // built per element to take an integer back out of.
+                match xs.ints() {
+                    Some(ns) => {
+                        for n in ns {
+                            total = total
+                                .checked_add(i128::from(*n))
+                                .ok_or_else(|| EvalError::new("`list_sum` overflowed", span))?;
+                        }
+                    }
+                    None => {
+                        for x in xs.iter() {
+                            let n = as_int(&x, op.name(), span)?;
+                            total = total
+                                .checked_add(i128::from(n))
+                                .ok_or_else(|| EvalError::new("`list_sum` overflowed", span))?;
+                        }
+                    }
                 }
                 i64::try_from(total)
                     .map(Value::Int)
@@ -2045,7 +2060,7 @@ impl<'h> Interp<'h> {
                         out.push(x.clone());
                     }
                 }
-                Ok(Value::List(Arc::new(out)))
+                Ok(Value::list(out))
             }
             Prim::ListIsEmpty => {
                 want(1)?;
@@ -2061,11 +2076,15 @@ impl<'h> Interp<'h> {
                 let xs = xs
                     .as_list()
                     .ok_or_else(|| EvalError::new("`map_list` expects a list", span))?;
-                let mut out = Vec::with_capacity(xs.len());
+                // Built straight into a `Seq` rather than into a `Vec<Value>` that is then packed:
+                // the layout is decided on the first element and the rest go into the dense buffer,
+                // so a mapped list of numbers costs one allocation and one pass rather than two of
+                // each.
+                let mut out = Seq::default();
                 for x in xs {
                     out.push(self.apply(&f, vec![x.clone()], span)?);
                 }
-                Ok(Value::List(Arc::new(out)))
+                Ok(Value::of_seq(out))
             }
             Prim::FilterList => {
                 want(2)?;
@@ -2074,13 +2093,13 @@ impl<'h> Interp<'h> {
                 let xs = xs
                     .as_list()
                     .ok_or_else(|| EvalError::new("`filter_list` expects a list", span))?;
-                let mut out = Vec::new();
+                let mut out = Seq::default();
                 for x in xs {
                     if self.apply(&f, vec![x.clone()], span)?.as_bool() == Some(true) {
                         out.push(x.clone());
                     }
                 }
-                Ok(Value::List(Arc::new(out)))
+                Ok(Value::of_seq(out))
             }
             Prim::ConcatLists => {
                 want(1)?;
@@ -2088,14 +2107,16 @@ impl<'h> Interp<'h> {
                 let outer = v.as_list().ok_or_else(|| {
                     EvalError::new("`concat_lists` expects a list of lists", span)
                 })?;
-                let mut out = Vec::new();
+                let mut out = Seq::default();
                 for inner in outer {
                     match inner.as_list() {
-                        Some(xs) => out.extend(xs.iter().cloned()),
+                        // Column to column where both are: `extend` copies the dense buffers rather
+                        // than taking a `Value` apart and putting it back together per element.
+                        Some(xs) => out.extend(xs),
                         None => return Err(EvalError::new("`concat_lists` expects lists", span)),
                     }
                 }
-                Ok(Value::List(Arc::new(out)))
+                Ok(Value::of_seq(out))
             }
             Prim::SortBy => {
                 want(2)?;
@@ -2112,9 +2133,7 @@ impl<'h> Interp<'h> {
                     keyed.push((self.apply(&key, vec![x.clone()], span)?, x.clone()));
                 }
                 keyed.sort_by(|a, b| a.0.cmp(&b.0));
-                Ok(Value::List(Arc::new(
-                    keyed.into_iter().map(|(_, v)| v).collect(),
-                )))
+                Ok(Value::list(keyed.into_iter().map(|(_, v)| v).collect()))
             }
             Prim::MapGet => {
                 want(2)?;
@@ -2156,7 +2175,7 @@ impl<'h> Interp<'h> {
                 let m = m
                     .as_map()
                     .ok_or_else(|| EvalError::new("`map_values` expects a Map", span))?;
-                Ok(Value::List(Arc::new(m.values().cloned().collect())))
+                Ok(Value::list(m.values().cloned().collect()))
             }
             Prim::MapContains => {
                 want(2)?;
@@ -2236,12 +2255,16 @@ impl<'h> Interp<'h> {
                 // `beck_core::html::element` and not a loop here: a compiled `view` answers with
                 // these same three arguments and the host builds the tree out of them, so the
                 // rules about a dropped attribute, a handler's JSON and a key are written once.
-                let el = beck_core::html::element(
-                    &tag,
-                    attrs.as_list().map(|v| v.as_slice()).unwrap_or(&[]),
-                    children.as_list().map(|v| v.as_slice()).unwrap_or(&[]),
-                )
-                .map_err(|why| EvalError::new(why, span))?;
+                // Borrowed rather than copied: an `Attr` and an `Html` never fit a column, so
+                // these are always the boxed layout and the `Cow` never allocates — which matters,
+                // because this is the per-element path `docs/23` §23.8 is about.
+                let attrs = attrs.as_list().map(|v| v.as_values()).unwrap_or_default();
+                let children = children
+                    .as_list()
+                    .map(|v| v.as_values())
+                    .unwrap_or_default();
+                let el = beck_core::html::element(&tag, &attrs, &children)
+                    .map_err(|why| EvalError::new(why, span))?;
                 Ok(Value::Html(Arc::new(el)))
             }
             Prim::NewUuid => {
@@ -2391,13 +2414,13 @@ fn match_pattern(p: &Pattern, v: &Value) -> Option<Vec<(u32, Value)>> {
             }
             let mut out = Vec::with_capacity(items.len() + 1);
             for (sub, x) in items.iter().zip(xs.iter()) {
-                out.extend(match_pattern(sub, x)?);
+                out.extend(match_pattern(sub, &x)?);
             }
             if let Some(Some(id)) = rest {
                 // The tail is a fresh list. `Arc<Vec<_>>` cannot share a suffix, so this is `O(n)`
                 // per step and a fold written over it is `O(n²)` — stated in `docs/27` §27.3
                 // rather than discovered on a long list.
-                out.push((*id, Value::List(Arc::new(xs[items.len()..].to_vec()))));
+                out.push((*id, Value::of_seq(xs.slice(items.len(), xs.len()))));
             }
             Some(out)
         }
@@ -2544,8 +2567,7 @@ mod tests {
             )
         };
         let unique = |ss: &[&str]| run(&prim(Prim::ListUnique, vec![list(ss)]));
-        let strs =
-            |ss: &[&str]| Value::List(Arc::new(ss.iter().map(|s| Value::str_(*s)).collect()));
+        let strs = |ss: &[&str]| Value::list(ss.iter().map(|s| Value::str_(*s)).collect());
 
         assert_eq!(
             unique(&["pear", "fig", "pear"]).unwrap(),
@@ -2603,7 +2625,7 @@ mod tests {
     fn sort_by_is_stable_so_ties_replay_identically() {
         let host = NoHost;
         let interp = Interp::new(&host);
-        let xs = Value::List(Arc::new(vec![
+        let xs = Value::list(vec![
             Value::data(
                 Arc::from("T"),
                 None,
@@ -2620,7 +2642,7 @@ mod tests {
                     (Arc::from("n"), Value::Int(2)),
                 ]),
             ),
-        ]));
+        ]);
         let key = Value::Closure(Arc::new(Closure {
             params: vec![0].into(),
             body: Arc::new(Core::new(
@@ -2921,9 +2943,9 @@ mod tests {
 
     #[test]
     fn the_digest_is_a_function_of_structure() {
-        let a = Value::List(Arc::new(vec![Value::Int(1), Value::str_("x")]));
-        let b = Value::List(Arc::new(vec![Value::Int(1), Value::str_("x")]));
-        let c = Value::List(Arc::new(vec![Value::Int(1), Value::str_("y")]));
+        let a = Value::list(vec![Value::Int(1), Value::str_("x")]);
+        let b = Value::list(vec![Value::Int(1), Value::str_("x")]);
+        let c = Value::list(vec![Value::Int(1), Value::str_("y")]);
         assert_eq!(digest(&a), digest(&b));
         assert_ne!(digest(&a), digest(&c));
     }

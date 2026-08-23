@@ -168,8 +168,11 @@ fn walk(path: &mut Path, old: &Value, new: &Value, ops: &mut Vec<Op>) {
                 .min(b.len() - common);
             // Exactly one element differs and the rest match: describe *it* rather than the pair.
             if a.len() == b.len() && common + tail + 1 == a.len() {
+                let (Some(x), Some(y)) = (a.get(common), b.get(common)) else {
+                    return set(path, new, ops);
+                };
                 path.push(Step::Index(common as u32));
-                walk(path, &a[common], &b[common], ops);
+                walk(path, &x, &y, ops);
                 path.pop();
                 return;
             }
@@ -180,8 +183,8 @@ fn walk(path: &mut Path, old: &Value, new: &Value, ops: &mut Vec<Op>) {
                     index: i as u32,
                 });
             }
-            for (offset, v) in b[common..b.len() - tail].iter().enumerate() {
-                let Ok(value) = Repr::of(v) else {
+            for (offset, v) in b.slice(common, b.len() - tail).iter().enumerate() {
+                let Ok(value) = Repr::of(&v) else {
                     return set(path, new, ops);
                 };
                 ops.push(Op::Insert {
@@ -289,10 +292,12 @@ fn edit_at(state: &Value, path: &[Step], edit: &Edit) -> Result<Value, BadPatch>
             let old = xs
                 .get(i)
                 .ok_or_else(|| bad(format!("this list has no element {i}")))?;
-            let next = edit_at(old, rest, edit)?;
-            let mut items = xs.as_ref().clone();
-            items[i] = next;
-            Ok(Value::List(std::sync::Arc::new(items)))
+            let next = edit_at(&old, rest, edit)?;
+            // Through `Seq::set` rather than a `Vec`, so a column that a patch edits one element of
+            // stays a column instead of being taken apart and put back together.
+            let mut items = (**xs).clone();
+            items.set(i, next);
+            Ok(Value::of_seq(items))
         }
         (Step::Key(k), Value::Map(m)) => {
             let key = k.to_value();
@@ -326,9 +331,9 @@ fn here(state: &Value, edit: &Edit) -> Result<Value, BadPatch> {
                     xs.len()
                 )));
             }
-            let mut items = xs.as_ref().clone();
+            let mut items = xs.to_vec();
             items.insert(i, v.clone());
-            Ok(Value::List(std::sync::Arc::new(items)))
+            Ok(Value::list(items))
         }
         Edit::Remove(i) => {
             let Value::List(xs) = state else {
@@ -338,9 +343,9 @@ fn here(state: &Value, edit: &Edit) -> Result<Value, BadPatch> {
             if i >= xs.len() {
                 return Err(bad(format!("this list has no element {i}")));
             }
-            let mut items = xs.as_ref().clone();
+            let mut items = xs.to_vec();
             items.remove(i);
-            Ok(Value::List(std::sync::Arc::new(items)))
+            Ok(Value::list(items))
         }
         Edit::Put(k, v) => {
             let Value::Map(m) = state else {
@@ -441,7 +446,7 @@ mod tests {
 
     #[test]
     fn a_list_appends_removes_and_replaces() {
-        let list = |xs: &[i64]| Value::List(Arc::new(xs.iter().copied().map(Value::Int).collect()));
+        let list = |xs: &[i64]| Value::list(xs.iter().copied().map(Value::Int).collect());
 
         let ops = round_trip(&list(&[1, 2, 3]), &list(&[1, 2, 3, 4]));
         assert!(

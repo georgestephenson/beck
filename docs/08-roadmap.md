@@ -490,14 +490,40 @@ rows.
   failed to come due four times**: a join inferred from a loop has the loop's order to preserve,
   which fixes which side is the left before any cost is consulted. An inferred surface postpones the
   solver, and §99.8's ladder says so now rather than predicting otherwise.
-- **A columnar value, and Arrow** (F, after the aggregates): the second representation
-  [`105`](105-the-ecosystem-answer.md) §105.10 argues for — `Value::List(Arc<Vec<Value>>)` is 16
-  boxed bytes an element, which is right for a keyed arrangement and wrong for a million doubles.
-  One change discharges four commitments: [`07`](07-dependencies.md) §7.4's DataFusion choice,
-  §8.5.4's own Parquet-archival G item below (Parquet is Arrow written down), the numeric-interop
-  gap, and the aggregates' own representation. It is listed **after** the aggregates because an
-  aggregate is what makes a column worth having, and **before** the G item because that item cannot
-  start without it.
+- **A columnar value, and Arrow** (F, after the aggregates). **The value is built and Arrow is
+  not**, which is the item splitting rather than shrinking — §8.5.5's "a wave item can split", for a
+  reason that is a *gate* rather than an effort. `Value::List(Arc<Vec<Value>>)` was 16 boxed bytes an
+  element, right for a keyed arrangement and wrong for a million doubles;
+  [`beck-core/src/seq.rs`](../compiler/crates/beck-core/src/seq.rs) is the second representation
+  [`105`](105-the-ecosystem-answer.md) §105.10 argues for — a list of `Int` or of `Float` held as a
+  dense buffer, **8,000 bytes against 16,000** for a thousand integers and 64,000 against 128,000 for
+  eight thousand, and a `&[f64]` a kernel or an Arrow `Float64Array` can be pointed at, which is what
+  did not exist. `Value` is still 16 bytes, because the layout sits behind the `Arc`.
+  **A second representation is a correctness problem before it is a performance one**, and the whole
+  of the work was the four mechanisms that must not notice it: order and equality (written by hand,
+  because a derived `Ord` compares the layout's tag and would sort every column before every list),
+  the state digest, and the wire format. `beck-cli/tests/columns.rs` folds every corpus program's log
+  with the layout switched on and again with it off and holds the two to the same digests and the
+  same pages, which is also §8.3 item 8's off switch proved rather than promised
+  (`AppConfig::columns`). What that sweep reports is the other finding: **6 of 40 programs build a
+  column while folding and rendering, 462 columns in all** — and the first instrument said zero,
+  because it walked the accumulator and `corpus/26-sensors.beck` builds its `list[Float]` inside its
+  *view*.
+  What it costs is measured with the switch as the control, and the shape of the answer is that it
+  moves numeric work and leaves everything else alone: a 200,000-element workload — built by
+  accumulation, then mapped, filtered, summed and counted — takes **202–212 ms against 218–242**,
+  while Are We Fast Yet shows **no measurable change** (`havlak` 2,519 ms against 2,556, `richards`
+  1,387 against 1,396 — the only two long enough to read over process startup, and `awfy/list.beck`
+  says in its own header that it deliberately holds no `list[Int]`).
+  **What is left is Arrow**, and it waits on a **foreign reader**: nothing in this workspace reads
+  Arrow, so an encoder written here would be a writer checked by its own reader — the objection
+  [`07`](07-dependencies.md) §7.4 makes about hand-written formats and the reason
+  [`adr/0030`](adr/0030-the-webassembly-emitter-writes-its-own-bytes.md) made the WebAssembly
+  emitter wait for a JavaScript engine. The `arrow` dependency therefore belongs with the reader
+  that needs it, which is the G item below; three of the four commitments this item was listed for
+  ([`07`](07-dependencies.md) §7.4's DataFusion choice, Parquet archival, the numeric-interop gap)
+  land there and with §105.8's kernels, and the fourth — the aggregates' own representation — is
+  taken: `list_min`, `list_max` and `list_sum` read the dense buffer.
 - **What the macro interpreter unblocked** (F — the interpreter itself is **built**,
   [`102`](102-the-macro-interpreter-report.md), with its G-class sandbox gate beside it). A macro
   body is ordinary Beck now, so the successors this item existed to free are the item:
@@ -742,6 +768,10 @@ rows.
   Beck value can be a column. The **retention** half is separable and S — a
   language surface and a store policy, with no benchmark waiting on it — and it is the half D3 makes
   optional, since `retain=forever` is the default and tiering is what keeps that affordable.
+  **Its predecessor has landed** — the columnar value above — so what this item now carries that it
+  did not is the `arrow` dependency itself, which belongs here because this is where the reader
+  lives: a Parquet writer and DataFusion are what make an Arrow encoder something other than a
+  writer checked by its own reader.
 
 Behind those, the Phase 4 gates arranged before Phase 4 rather than during it: **DST proper** on the
 seams §8.5.2 names, then the TLA+ gate above, the operator, the replay tooling and the choreography.

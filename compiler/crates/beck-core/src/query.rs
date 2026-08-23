@@ -147,7 +147,7 @@ impl Compiled {
                 }
                 out.push(normalise(table, v, input.base));
             }
-            state.insert(Arc::from(table_field(i)), Value::List(Arc::new(out)));
+            state.insert(Arc::from(table_field(i)), Value::list(out));
         }
         let state = Value::data("Query", None, state);
 
@@ -159,7 +159,7 @@ impl Compiled {
 
         let values: Vec<Value> = match (&out, self.single) {
             (_, true) => vec![out.clone()],
-            (Value::List(xs), false) => xs.as_ref().clone(),
+            (Value::List(xs), false) => xs.to_vec(),
             (Value::Map(m), false) => m.iter().map(|(_, v)| v.clone()).collect(),
             (other, false) => vec![(*other).clone()],
         };

@@ -185,7 +185,7 @@ fn build(
             for i in 0..n {
                 out.push(build(&elem, types, reborrow(&mut rng), depth + 1 + i)?);
             }
-            return Ok(Value::List(Arc::new(out)));
+            return Ok(Value::list(out));
         }
         Ty::MAP => {
             let k = args.first().cloned().unwrap_or_else(Ty::unit);
@@ -307,18 +307,18 @@ pub fn shrink(v: &Value) -> Vec<Value> {
             }
         }
         Value::List(xs) if !xs.is_empty() => {
-            out.push(Value::List(Arc::new(Vec::new())));
+            out.push(Value::list(Vec::new()));
             if xs.len() > 1 {
-                out.push(Value::List(Arc::new(xs[..xs.len() / 2].to_vec())));
-                out.push(Value::List(Arc::new(xs[1..].to_vec())));
+                out.push(Value::list(xs.slice(0, xs.len() / 2).to_vec()));
+                out.push(Value::list(xs.slice(1, xs.len()).to_vec()));
             }
             // …then one element at a time, so a failure caused by a *value* rather than by a
             // length still shrinks.
             for (i, x) in xs.iter().enumerate() {
-                for smaller in shrink(x) {
-                    let mut copy = xs.as_ref().clone();
+                for smaller in shrink(&x) {
+                    let mut copy = xs.to_vec();
                     copy[i] = smaller;
-                    out.push(Value::List(Arc::new(copy)));
+                    out.push(Value::list(copy));
                 }
             }
         }
@@ -352,7 +352,11 @@ pub fn size(v: &Value) -> u64 {
         Value::Int(n) => n.unsigned_abs(),
         Value::Float(_) => v.as_f64().map(|f| f.abs() as u64).unwrap_or(0),
         Value::Str(s) => s.len() as u64,
-        Value::List(xs) => 1 + xs.iter().map(size).sum::<u64>(),
+        Value::List(xs) => {
+            let mut n = 1;
+            xs.for_each(|x| n += size(x));
+            n
+        }
         Value::Map(m) => 1 + m.iter().map(|(k, val)| size(k) + size(val)).sum::<u64>(),
         Value::Data(d) => d.fields.values().map(size).sum::<u64>(),
         Value::Html(_) | Value::Attr(_) | Value::Closure(_) => 1,
@@ -406,7 +410,7 @@ mod tests {
         assert_eq!(canonical(&Ty::bool_(), &t).unwrap(), Value::Bool(false));
         assert_eq!(
             canonical(&Ty::list(Ty::con("Event")), &t).unwrap(),
-            Value::List(Arc::new(Vec::new()))
+            Value::list(Vec::new())
         );
         // First variant, and a newtype is transparent to the generator but not to the type system.
         let e = canonical(&Ty::con("Event"), &t).unwrap();
@@ -490,7 +494,7 @@ mod tests {
             }
         }
         assert!(shrink(&Value::Int(0)).is_empty());
-        assert!(shrink(&Value::List(Arc::new(Vec::new()))).is_empty());
+        assert!(shrink(&Value::list(Vec::new())).is_empty());
     }
 
     #[test]

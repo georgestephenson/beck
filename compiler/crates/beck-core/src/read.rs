@@ -729,7 +729,7 @@ fn model_fields(ty: &Ty, types: &BTreeMap<Arc<str>, TyDecl>) -> Option<Vec<(Arc<
 /// The elements of a collection value, in the order it holds them.
 pub fn elements(v: &Value) -> Vec<Value> {
     match v {
-        Value::List(xs) => xs.as_ref().clone(),
+        Value::List(xs) => xs.to_vec(),
         Value::Map(m) => m.iter().map(|(_, v)| v.clone()).collect(),
         other => vec![other.clone()],
     }

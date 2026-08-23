@@ -758,7 +758,7 @@ fn execute(
         .initial_state()
         .map_err(|e| format!("evaluating the initial state: {e}"))?;
     let mut events: Vec<Value> = Vec::new();
-    let mut result = Value::ok(Value::List(Arc::new(Vec::new())));
+    let mut result = Value::ok(Value::list(Vec::new()));
     let mut seq: u64 = 0;
     let mut actor: Arc<str> = Arc::from(DEFAULT_ACTOR);
 
@@ -773,7 +773,7 @@ fn execute(
                 let log = eval(runtime, t, code, &state, &events, &result, inputs)?;
                 let log = log
                     .as_list()
-                    .cloned()
+                    .map(|xs| xs.to_vec())
                     .ok_or_else(|| "`given` did not produce a list of events".to_string())?;
                 for e in log {
                     seq += 1;
@@ -802,7 +802,7 @@ fn execute(
                         let produced = out
                             .field("value")
                             .and_then(|v| v.as_list())
-                            .cloned()
+                            .map(|xs| xs.to_vec())
                             .unwrap_or_default();
                         for e in produced {
                             events.push(e.clone());
@@ -1079,11 +1079,7 @@ fn eval(
     let f = runtime
         .prepare(&lam)
         .map_err(|e| format!("preparing an expectation: {e}"))?;
-    let mut args = vec![
-        state.clone(),
-        Value::List(Arc::new(events.to_vec())),
-        result.clone(),
-    ];
+    let mut args = vec![state.clone(), Value::list(events.to_vec()), result.clone()];
     args.extend(inputs.iter().cloned());
     f(args).map_err(|e| e.to_string())
 }

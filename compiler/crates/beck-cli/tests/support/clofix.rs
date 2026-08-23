@@ -32,7 +32,7 @@ use std::sync::Arc;
 use beck_core::Value;
 
 pub fn ints(xs: &[i64]) -> Value {
-    Value::List(Arc::new(xs.iter().map(|n| Value::Int(*n)).collect()))
+    Value::list(xs.iter().map(|n| Value::Int(*n)).collect())
 }
 
 /// The lists of `Int` every loop is exercised over.
@@ -60,7 +60,7 @@ pub fn texts() -> Vec<Value> {
         vec!["é", "aa"],
     ]
     .iter()
-    .map(|xs| Value::List(Arc::new(xs.iter().map(Value::str_).collect())))
+    .map(|xs| Value::list(xs.iter().map(Value::str_).collect()))
     .collect()
 }
 
@@ -75,7 +75,7 @@ pub fn reals() -> Vec<Value> {
         vec![f64::NAN, 0.0],
     ]
     .iter()
-    .map(|xs| Value::List(Arc::new(xs.iter().map(|f| Value::float(*f)).collect())))
+    .map(|xs| Value::list(xs.iter().map(|f| Value::float(*f)).collect()))
     .collect()
 }
 
@@ -135,7 +135,7 @@ pub fn nested() -> Vec<Value> {
         vec![vec![-1], vec![0], vec![1]],
     ]
     .iter()
-    .map(|xss| Value::List(Arc::new(xss.iter().map(|xs| ints(xs)).collect())))
+    .map(|xss| Value::list(xss.iter().map(|xs| ints(xs)).collect()))
     .collect()
 }
 
@@ -150,11 +150,11 @@ pub fn nested_texts() -> Vec<Value> {
     ]
     .iter()
     .map(|xss| {
-        Value::List(Arc::new(
+        Value::list(
             xss.iter()
-                .map(|xs| Value::List(Arc::new(xs.iter().map(Value::str_).collect())))
+                .map(|xs| Value::list(xs.iter().map(Value::str_).collect()))
                 .collect(),
-        ))
+        )
     })
     .collect()
 }
@@ -188,7 +188,7 @@ pub fn notes() -> Vec<Value> {
         ],
     ]
     .iter()
-    .map(|xs| Value::List(Arc::new(xs.clone())))
+    .map(|xs| Value::list(xs.clone()))
     .collect()
 }
 

@@ -49,6 +49,7 @@ pub mod render;
 pub mod repr;
 pub mod row;
 pub mod secure;
+pub mod seq;
 pub mod signal;
 pub mod split;
 pub mod stdlib;

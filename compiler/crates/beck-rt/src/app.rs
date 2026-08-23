@@ -70,6 +70,22 @@ pub struct AppConfig {
     ///
     /// Ignored when `maintain_views` is off: there are no arrangements to share.
     pub share_arrangements: bool,
+    /// Whether a list of numbers is held as a **column** rather than as boxed values
+    /// ([`beck_core::seq`], [`docs/105`](../../../../../docs/105-the-ecosystem-answer.md) §105.10).
+    ///
+    /// On by default, because it halves what a list of numbers occupies and is the only thing in
+    /// this language a kernel or an Arrow reader can be handed a pointer to. It is a *switch*
+    /// rather than a fact for the reason every switch here is one: nothing observable changes — the
+    /// order, the equality, the digest and the wire bytes are the same either way — so the only
+    /// thing it can be wrong about is a trade, and a deployment that has measured its own trade
+    /// should be able to say so without recompiling.
+    ///
+    /// **Process-wide**, unlike every other field here: a list is built in a hundred places that
+    /// have no configuration in scope, so [`App::start`] applies this to
+    /// [`beck_core::seq::set_columns`] rather than carrying it. Two applications in one process
+    /// therefore share one setting, and the last one started wins — which is stated because it is
+    /// the one way this field differs from its neighbours.
+    pub columns: bool,
     /// How long the shared dataflow keeps what a subscriber might still ask for.
     ///
     /// The default releases the arrangements when the last subscription ends and keeps at most 64
@@ -122,6 +138,7 @@ impl Default for AppConfig {
             styles: true,
             maintain_views: true,
             share_arrangements: true,
+            columns: true,
             retention: beck_core::engine::Retention::default(),
             clock: Arc::new(beck_core::clock::SystemClock),
             identity: Arc::new(crate::identity::DevIdentity),
@@ -201,6 +218,9 @@ impl App {
         store: Arc<dyn LogStore>,
         config: AppConfig,
     ) -> Result<Arc<App>> {
+        // Process-wide, and applied before anything folds: the layout a list gets is decided where
+        // the list is built, and the first thing this does is build the accumulator.
+        beck_core::seq::set_columns(config.columns);
         let runtime = Arc::new(runtime);
         let head = store.head().await?;
         let (state, at) = replay_to(&runtime, store.as_ref(), head).await?;

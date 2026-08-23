@@ -554,7 +554,7 @@ fn a_contribution_is_bounded_by_what_it_renders_to() {
     assert!(ana.recorded());
 
     // One field. A bound counting fields, or depth, or list length would let this through.
-    let big = Value::List(Arc::new(vec![Value::str_("x".repeat(64)); 64]));
+    let big = Value::list(vec![Value::str_("x".repeat(64)); 64]);
     assert!(
         !ana.publish(big),
         "a contribution past the size bound must be refused"
