@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **991<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **998<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -527,11 +527,29 @@ rows.
 - **What the macro interpreter unblocked** (F — the interpreter itself is **built**,
   [`102`](102-the-macro-interpreter-report.md), with its G-class sandbox gate beside it). A macro
   body is ordinary Beck now, so the successors this item existed to free are the item:
-  - **`derive` and `.as_model()`** (Lane A, and the largest): a `typed macro` receives the AST
-    *with inferred types attached* ([`02`](02-syntax.md) §2.4), which the untyped interpreter runs
-    before. This is the piece that needs the checker's answers to reach a macro body, and it is
-    what retires the compiler-provided `ui:` special case standing in for a user-written macro
-    (D22).
+  - **`derive` is built, and it was not Lane A** — the third time this section's lane rule has been
+    got wrong, and the first time the *item* was: this row said `derive` needed a `typed macro`, and
+    it did not. A model's fields are in its declaration, so `node_args` reads what `.as_model()` was
+    going to, and the work was four rules made uniform in the **parser** — a block passed to a macro
+    *in item position* holds declarations, a `quote:` holds them too, `$` unquotes where a type and
+    where a field name go, and a `do` at module level flattens all the way down. Not one line of
+    `check/` or `ty.rs`. `examples/derive.beck` generates a JSON encoder from a model's fields with
+    no reflection in the running program, closing the row [`46`](46-standard-library-report.md)
+    §46.16 and `prelude.rs` have both carried since the standard library was written.
+  - **A macro that crosses a module boundary** (F, and it is what stands between every item in this
+    list and a *facility*). Expansion runs per module, on the parsed file, before any import is
+    resolved — so a macro is usable where it is declared and nowhere else, and neither
+    [`02`](02-syntax.md) §2.4 nor [`102`](102-the-macro-interpreter-report.md) said so. That is why
+    `derive` is an example rather than a `lib/` function and why `sql"…"` would be one too: every
+    successor here delivers a mechanism a program can use and a library cannot ship. Nothing
+    refuses it, because there is nothing to refuse — the name is simply not there, which is the
+    kind of absence §8.5.6 exists to find.
+  - **Typed macros** (Lane A, and now the whole of what `derive` was standing in front of): a
+    `typed macro` receives the AST *with inferred types attached* ([`02`](02-syntax.md) §2.4),
+    which the untyped interpreter runs before. This is the piece that needs the checker's answers
+    to reach a macro body, and it is what retires the compiler-provided `ui:` special case standing
+    in for a user-written macro (D22). `.as_model()` is its spelling half, and so is the `*traits`
+    a parameter list has no rest form for.
   - **§2.5's typed literal macros** (`sql"…"`, `html"…"`, `regex"…"`) — the DSL escape hatch, and
     the mechanism the security suite already points at for SQL and HTML. Sugar over a macro call
     (§2.3's table) plus a parse at compile time, so this one is free of Lane A.
@@ -811,7 +829,14 @@ they are what the next ordering should assume:
   been answered as two by four phases of implementation; errors and structured concurrency were one
   row with different successors. The classification is about *cost over time*, and it is silent
   about whether an item is one item.
-- **A wave item can be in the wrong lane**, and it has now happened twice. `Set` and dates were
+- **A wave item can be in the wrong lane**, and it has now happened three times — the third being
+  the first where the *item itself* was misread rather than its lane. `derive` was filed under
+  Lane A on the reasoning that §2.4 lists it beside `typed macro`, and the reasoning was the
+  document's rather than the tree's: a model's fields are in its declaration, so what `derive` needs
+  is a **parser** that lets a macro's block hold one. Four rules in `beck-syntax`, not one line of
+  `check/` or `ty.rs`. The lesson is the one below with a sharper edge — ask which files an item
+  touches, and be most suspicious when the answer comes from a design document rather than from the
+  code. `Set` and dates were
   filed under Lane A on the assumption that a standard-library item is a language item; they
   turned out to be two files of Beck and no compiler change at all. **The macro interpreter** was
   filed there too, on the stronger-sounding reasoning that it "changes what reaches the checker" —

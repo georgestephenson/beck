@@ -153,11 +153,11 @@ pub fn expand_module_measured(module: &Node, diags: &mut Diagnostics) -> (Node, 
         let expanded = ex.expand(item, 0);
         // `splice([…])` at the top of a module is several items where one was written — §2.4's
         // `derive` returns the definition it decorated *and* the impls it generated.
-        if expanded.is_form(sym::DO) {
-            items.extend(expanded.args.iter().cloned());
-            continue;
-        }
-        items.push(expanded);
+        //
+        // Flattened all the way down rather than one level: `derive` is handed a **block**, which
+        // is already a `do`, and returns it beside what it generated — so the answer is a `do`
+        // holding a `do`, and stopping at the first would leave a block where an item belongs.
+        flatten_into(&expanded, &mut items);
     }
     let steps_left = ex.steps;
     (
@@ -171,6 +171,19 @@ pub fn expand_module_measured(module: &Node, diags: &mut Diagnostics) -> (Node, 
         ),
         steps_left,
     )
+}
+
+/// Every item a macro's answer stands for, with the `do`s it is wrapped in taken off.
+///
+/// One `do` is `splice([…])`; two is `splice([do, impl])` where `do` is the block the macro was
+/// given, which is what §2.4's `derive` returns. Neither is a construct a program wrote at module
+/// level, so both are unwrapped, and a `do` that a *program* wrote there was already refused as an
+/// unsupported top-level item.
+fn flatten_into(node: &Node, out: &mut Vec<Node>) {
+    match node.is_form(sym::DO) {
+        true => node.args.iter().for_each(|a| flatten_into(a, out)),
+        false => out.push(node.clone()),
+    }
 }
 
 impl<'a> Expander<'a> {

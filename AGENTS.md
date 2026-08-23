@@ -112,8 +112,11 @@ So:
 - **`compiler/corpus/`**: a program added there has to place itself — no annotations. **It also
   moves every corpus-wide count the documents quote** — what the native backends compile and
   refuse, what the WebAssembly emitter is measured against, where the corpus places, how many
-  of its names rename. Each of those is marked where it is written, with an HTML comment
-  naming the quantity (`991<!--c:native-compiled-->`), and
+  of its names rename. **So does a program added to [`compiler/examples/`](compiler/examples/), or
+  to `awfy/`, `clbg/`, `sicp/` or `lib/`**: what the native backends compile is swept over all six
+  directories, so the gate fires for a file added to any of them and not only to this one. Each of
+  those quantities is marked where it is written, with an HTML comment
+  naming it (`998<!--c:native-compiled-->`), and
   `docs.rs::every_corpus_wide_count_quoted_in_prose_is_the_one_the_tree_has` derives them all
   and fails until every marked number agrees. Run it with `--nocapture` and it prints the
   table; a quantity it derives and nobody quotes fails too, so a figure cannot leave the

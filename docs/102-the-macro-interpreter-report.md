@@ -6,9 +6,15 @@ environment, with `quote:` the one form whose value is syntax. This closes the i
 plan, and it lands with the gate [`12`](12-standards-and-conformance.md) §12.7 said must land
 *with* it rather than after it.
 
+**And `derive` is built on it.** That is a correction to what this report first said: it listed
+`derive` beside typed macros as wanting the checker's answers, and it does not, because a model's
+fields are in its declaration. What it wanted was four parsing rules made uniform, and
+`examples/derive.beck` is the program.
+
 What it does **not** establish: a `Node` that a *running* program can hold (a `quote` that survives
-expansion is still `B0332`), typed macros, or `derive`. Those want the checker's answers or a run
-time, and §102.8 says why each waits.
+expansion is still `B0332`) or typed macros. Those want the checker's answers or a run time, and
+§102.8 says why each waits — and §102.8 also names the constraint that keeps every macro out of a
+library, which neither this report nor [`02`](02-syntax.md) §2.4 had written down.
 
 ## 102.1 What was there, and what the sentence in §2.4 actually asked for
 
@@ -171,9 +177,24 @@ and an argument about consequences is not an answer to it. §8.5.5 now says so w
 
 ## 102.8 What this does not establish
 
-- **Typed macros and `derive`.** §2.4's second flavour receives the AST *with inferred types
-  attached*, which is the checker's output, and this interpreter runs before the checker. That is
-  the genuinely Lane A piece, and it is what retires the compiler-provided `ui:` block (D22).
+- **Typed macros.** §2.4's second flavour receives the AST *with inferred types attached*, which is
+  the checker's output, and this interpreter runs before the checker. That is the genuinely Lane A
+  piece, and it is what retires the compiler-provided `ui:` block (D22).
+- **`derive` is built, and it did not need them** — which is the correction this list owes, because
+  it said the two were one item. §2.4's sketch reads a `model`'s fields and emits code per field,
+  and a model's fields are *in the declaration*: `(model Point (typarams) (field x Int) …)` is
+  syntax, so `node_args` answers what `.as_model()` was going to. What it needed instead was four
+  rules made uniform — a block passed to a macro **in item position** holds declarations, a
+  `quote:` holds them too, `$` unquotes where a **type** and where a **field name** go, and a `do`
+  at module level flattens all the way down. `examples/derive.beck` is the program and it generates
+  a JSON encoder, closing the row [`46`](46-standard-library-report.md) §46.16 and `prelude.rs`
+  both carried. What is still owed is the *spelling*: `.as_model()`, and the `*traits` a parameter
+  list has no rest form for.
+- **A macro does not cross a module boundary**, and this list did not say so. `expand_module` takes
+  one parsed file and runs before any import is resolved, so a macro is usable where it is declared
+  and nowhere else — which is why `derive` is an example rather than a library function, and why
+  §2.5's `sql"…"` would be too. Nothing refuses it; the name is simply not there. It is the largest
+  thing between the interpreter and a *facility*, and [`08`](08-roadmap.md) §8.5.4 now carries it.
 - **A `Node` at run time.** `B0332` still refuses a `quote` that survives expansion, so code-as-data
   is a compile-time property. §12.10 records which half of D9 that leaves open.
 - **Typed literal macros** (§2.5's `sql"…"`, `html"…"`, `regex"…"`). The block rule already

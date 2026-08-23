@@ -393,3 +393,169 @@ fn steps_spent(src: &str) -> u64 {
     assert!(!diags.has_errors(), "{}", diags.render(&map));
     beck_macro::MAX_STEPS - left
 }
+
+// -------------------------------------------------------------------------------------------
+// A macro that decorates a declaration — docs/02 §2.4's `derive`
+// -------------------------------------------------------------------------------------------
+//
+// §2.4's sketch takes a `model`, reads what is in it, and emits code per field. Four things had to
+// become true for that to parse, and each is one rule made uniform rather than a case added for
+// `derive`: a block passed to a macro **in item position** holds declarations; a `quote:` holds
+// them too; `$` unquotes where a type and where a field name go; and a `do` at module level is
+// flattened all the way down, because `derive` returns the block it was given beside what it
+// generated and that is a `do` inside a `do`.
+//
+// `examples/derive.beck` is the program. These are the rules on their own, and — the half that
+// matters more — the places they deliberately do not reach.
+
+/// **A macro's block may declare things, and the macro may emit more of them.**
+///
+/// The whole of `derive`'s shape in eight lines: a `model` goes in, the model and an `impl` for it
+/// come out, and the `impl` names the type by unquoting the model's own name rather than writing
+/// it — which is what hygiene makes necessary, since a name written in the template would carry a
+/// fresh scope and refer to nothing.
+#[test]
+fn a_macro_takes_a_declaration_and_emits_declarations() {
+    all_pass(
+        "derive.beck",
+        r#"
+trait Named:
+    def label(self) -> Str
+
+macro tagged(do):
+    decl = node_args(do)[0]
+    name = node_args(decl)[0]
+    return quote:
+        $do
+
+        impl Named for $name:
+            def label(self):
+                return "a shape"
+
+tagged:
+    model Point:
+        x: Int
+
+test "the model and the impl both arrived":
+    expect Point(x=1).label() == "a shape"
+"#,
+    );
+}
+
+/// **`$` where a field name goes**, which is what lets generated code read a field it was handed.
+#[test]
+fn a_macro_reads_a_field_whose_name_it_was_given() {
+    all_pass(
+        "field.beck",
+        r#"
+macro sum_of(do):
+    decl = node_args(do)[0]
+    parts = node_args(decl)
+    name = parts[0]
+    total = quote:
+        0
+    i = 2
+    while i < list_len(parts):
+        f = node_args(parts[i])[0]
+        total = quote:
+            $total + it.$f
+        i = i + 1
+    return quote:
+        $do
+
+        def total(it: $name) -> Int:
+            return $total
+
+sum_of:
+    model Q:
+        a: Int
+        b: Int
+
+test "every field was read, and only the ones the model has":
+    expect total(Q(a=3, b=4)) == 7
+"#,
+    );
+}
+
+/// **A declaration inside a *value* block is still refused**, and this is the half that would be
+/// forgotten.
+///
+/// The rule is about position, not about macros: `tagged:` written as a module item takes a
+/// `model`, and the same call inside a `def` takes statements — because a `model` in a function
+/// body is not a thing this language has, and reading one there would turn a mistake into a
+/// mystery. Without this the change would have been "declarations parse anywhere", which is a
+/// different and much larger claim.
+#[test]
+fn a_declaration_inside_a_function_body_is_still_not_an_item() {
+    let src = r#"
+macro tagged(do):
+    return quote:
+        $do
+
+def f() -> Int:
+    tagged:
+        model Inner:
+            x: Int
+    return 1
+"#;
+    let codes = codes("inner.beck", src);
+    assert!(
+        !codes.is_empty(),
+        "a `model` inside a `def` body compiled, so the block rule is not about position"
+    );
+}
+
+/// A `quote:` may hold a declaration, because a `quote` builds syntax and what may be written in
+/// one is what may be written in a program. Whether the result belongs where the macro was called
+/// stays the checker's question — asked about the expansion, not about the template.
+#[test]
+fn a_quote_may_hold_a_declaration_the_caller_could_have_written() {
+    all_pass(
+        "quoted.beck",
+        r#"
+macro pair():
+    return quote:
+        model Made:
+            n: Int
+
+        def made() -> Made:
+            return Made(n=7)
+
+pair()
+
+test "a model and a def came out of one quote":
+    expect made().n == 7
+"#,
+    );
+}
+
+/// **`examples/derive.beck` is the program**, and it is here rather than beside the rules above
+/// because §2.4's sketch is the thing being cashed: a macro that takes a declaration, reads the
+/// fields out of it and emits code per field.
+///
+/// It closes the row [`docs/46`](../../../../docs/46-standard-library-report.md) §46.16 and
+/// `prelude.rs` have both carried since the standard library was written — "turning a `model` into
+/// a `Json` is a function somebody writes, which is what `@derive` is for when it exists" — and it
+/// does so with **no reflection in the running program**: the macro reads syntax at compile time,
+/// and what executes is a `to_json` that names each field as though somebody had typed it.
+#[test]
+fn the_derive_example_generates_an_encoder_from_a_models_fields() {
+    let src = include_str!("../../../examples/derive.beck");
+    all_pass("examples/derive.beck", src);
+
+    // And what it generated is *per model* rather than one shape written twice: the two derived
+    // encoders name different fields, so a macro that ignored its argument would fail here.
+    let placed = compile("examples/derive.beck", src);
+    let names: Vec<&str> = placed
+        .program
+        .def_order
+        .iter()
+        .map(|n| n.as_ref())
+        .filter(|n| n.contains("to_json"))
+        .collect();
+    assert!(
+        names.len() >= 6,
+        "only {} `to_json` definitions reached the program: {names:?}",
+        names.len()
+    );
+}

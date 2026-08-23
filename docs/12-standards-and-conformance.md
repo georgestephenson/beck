@@ -262,9 +262,13 @@ A macro body now runs Beck ([`102`](102-the-macro-interpreter-report.md)) and ca
 inspect and return a `Node`, so *programs that compute programs* is backed rather than gestured
 at. What is still not backed is the **run-time** half of code-as-data: a `quote` that survives
 expansion is error `B0332`, so a `Node` is a compile-time value and not yet a value a running
-program holds, and `derive`'s `.as_model()` and typed macros want the checker's answers, which
-this interpreter runs before. So "a Python-shaped surface carries Lisp's power" is backed for the
-notation, the special forms and compile-time metaprogramming, and **not for run-time reflection**.
+program holds, and typed macros want the checker's answers, which this interpreter runs before.
+**`derive` is now on the backed side**: a macro takes a `model`, reads its fields out of the
+declaration and emits an `impl` per field (`examples/derive.beck`), which is the shape §2.4's
+sketch has and which needed no reflection at all — a model's fields are in its syntax. So "a
+Python-shaped surface carries Lisp's power" is backed for the notation, the special forms,
+compile-time metaprogramming **and generating code from a declaration**, and **not for run-time
+reflection**.
 [`08`](08-roadmap.md) §8.5.4 carries what is left.
 
 The counting protocol (§25.5) is part of the standard, because lines of code is a real metric and
