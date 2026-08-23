@@ -26,36 +26,6 @@ that meets the admission rule above belongs here, whether or not you are the one
 
 ---
 
-## `the-gesture-measurement-asserts-on-a-clock` — a gate that can fail for a reason it is not about
-
-**What is wrong.** `measure_mode_b.rs::what_a_gesture_costs_against_a_command` measures how long a
-gesture takes against a command, at 100 cards and at 1,000, and **asserts** that the ratio is at
-least 1.0 — a gesture must not cost more than a command. The measurement is a wall clock, the
-margin is the 1.18–1.21× [`CHANGELOG.md`](CHANGELOG.md) records, and on a loaded runner it goes the
-other way: observed at **0.87× at 100 cards** in a `cargo test --workspace` run, passing on the same
-tree when run alone.
-
-**Why it is a defect rather than a flaky test to re-run.** [`docs/13`](docs/13-testing.md) §13.7 is
-this project's own rule — "a timing gate on a shared runner cannot be held honestly, and a gate that
-flakes gets deleted" — and every other measurement suite obeys it by *printing* rather than
-asserting. This one asserts, so it is the one place a red build says nothing about the tree. That is
-the misleading direction: a person who sees it fail has to decide whether the routing regressed or
-the runner was busy, and the honest answer is usually the second, which is how a gate stops being
-read at all.
-
-**Why the bound is thin rather than generous.** 1.0× is the right *shape* — a gesture that cost more
-than a command would falsify D30's design — but the measured margin over it is 18%, which is inside
-the noise of a debug build on a shared machine. Widening the bound would make it weaker without
-making it deterministic.
-
-**The gate a fix owes.** The instrument, not the threshold: what separates a gesture from a command
-is that the local path skips `validate` and the state derivation, and that is **countable** —
-`beck_core::engine::Work` and the evaluator's step budget both see it, and neither has a clock in
-it. So the fix is the same one `scaling.rs` uses everywhere else, and its gate is that the assertion
-survives being run under load. The negative half, which is the one that would be forgotten: with the
-local routing removed so a gesture goes through the chokepoint, the gate must still go **red** — a
-counter-based version that measured the wrong two things would pass either way.
-
 ## `a-bounded-impl-parameter-is-refused-by-the-compiler-that-suggests-it`
 
 **What is wrong.** `impl[T: ToJson] ToJson for list[T]` — an impl whose type parameter carries a
@@ -93,6 +63,8 @@ with a call at a concrete element type. Negative, and this is the half that woul
 same program with the bound removed still reports `B0386` and still suggests the bound — because a
 "fix" that silently made an unbounded parameter satisfy every trait would pass the first half and
 delete the check.
+
+---
 
 ## `union-merge-is-local-only` — every pull request that touches `CHANGELOG.md` reads as conflicting
 

@@ -1,0 +1,103 @@
+# Turning a value into a `Json`, and generating that for a `model`.
+#
+# `Json` is a union like any other (`prelude.rs`): a program reads a document with `match` and
+# builds one with ordinary constructors. What it has never had is the other direction for a
+# *program's own* types — a `Todo` is not a `Json` and never becomes one by itself, so somebody
+# writes the conversion by hand, field by field, and writes it again every time the model changes.
+#
+# `docs/46` §46.16 carried that as "`@derive` for JSON: not built. Turning a `model` into a `Json`
+# is a function somebody writes, and reflection is not being added for it", and `prelude.rs` says
+# the same thing beside the `Json` declaration: "which is what `@derive` is for when it exists".
+#
+# Reflection is still not being added. `derive_json` is a **macro**: it reads the model's fields out
+# of the declaration at compile time and writes the conversion that somebody would otherwise have
+# written, so what runs is ordinary code and the program has no reflection in it. `docs/02` §2.4 is
+# the design and `docs/102` is the interpreter that makes a macro body ordinary Beck.
+#
+#     import json
+#
+#     derive_json:
+#         model Point:
+#             x: Int
+#             y: Int
+#
+#     def shown() -> Str:
+#         return json_render(Point(x=1, y=2).to_json())
+#
+# The base cases below are written by hand on purpose: a macro should generate the part that is
+# per-field drudgery and nothing else, and what `Int` means as JSON is a decision rather than
+# drudgery. `Json` has one number type and it is a `Float`, because JSON's own grammar has one — so
+# an `Int` round-trips as `1.0`, and that is JSON's decision showing through rather than this file's.
+
+## Anything that can be written as a JSON document.
+##
+## One method, and a `model` gets its implementation from `derive_json` rather than by hand.
+trait ToJson:
+    def to_json(self) -> Json
+
+impl ToJson for Int:
+    def to_json(self):
+        return JsonNumber(value=float(self))
+
+impl ToJson for Float:
+    def to_json(self):
+        return JsonNumber(value=self)
+
+impl ToJson for Str:
+    def to_json(self):
+        return JsonStr(value=self)
+
+impl ToJson for Bool:
+    def to_json(self):
+        return JsonBool(value=self)
+
+## Emit the declaration this was given, and an `impl ToJson` that names each of its fields.
+##
+## The block rule (`docs/02` §2.3) passes the `model` as syntax, so `do` is a `do` node holding one
+## declaration and `node_args` opens both. A model parses to `(model Name (typarams) (field x Int)
+## …)`, which is why the name is the first argument and the fields are everything past the second:
+## the fields are *in the declaration*, so no type information is needed and none is asked for.
+##
+## The object is folded rather than spliced. `$*` splices a list of forms where one form is
+## expected, and a map's entries are pairs — so `map_insert` over an empty map, once per field, is
+## what a person would write and is what this writes.
+##
+## `$name` and `$f` are unquotes rather than names written in the template, and that is hygiene
+## rather than style: a `Point` written here would carry this file's scope and refer to nothing in
+## the caller's.
+macro derive_json(do):
+    decl = node_args(do)[0]
+    parts = node_args(decl)
+    name = parts[0]
+    fields = quote:
+        {}
+    i = 2
+    while i < list_len(parts):
+        f = node_args(parts[i])[0]
+        key = node_head(f)
+        fields = quote:
+            map_insert($fields, $key, self.$f.to_json())
+        i = i + 1
+    return quote:
+        $do
+
+        impl ToJson for $name:
+            def to_json(self):
+                return JsonObject(fields=$fields)
+
+# The library deliberately derives nothing for itself. A `model` declared here would be a name every
+# program that imports this file could not use — the flat namespace's cost (`README.md`) — and a
+# test fixture is the last thing worth spending it on. What `derive_json` does is asserted from
+# *outside*, in `beck-cli/tests/macro_interp.rs`, which is also where the import it crosses is
+# asserted; these are the base cases, which are this file's own.
+
+test "the base cases are what a derived encoder goes through":
+    expect json_render(true.to_json()) == "true"
+    expect json_render("x".to_json()) == "\"x\""
+    expect json_render(2.5.to_json()) == "2.5"
+
+## `Json` has one number type and it is a `Float`, so an `Int` round-trips as `1.0`. That is JSON's
+## grammar showing through rather than a choice this file made, and it is asserted so that somebody
+## surprised by it finds the reason next to the evidence.
+test "an Int is a JSON number, which is a float":
+    expect json_render(1.to_json()) == "1.0"

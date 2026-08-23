@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **998<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **995<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -536,14 +536,19 @@ rows.
     `check/` or `ty.rs`. `examples/derive.beck` generates a JSON encoder from a model's fields with
     no reflection in the running program, closing the row [`46`](46-standard-library-report.md)
     §46.16 and `prelude.rs` have both carried since the standard library was written.
-  - **A macro that crosses a module boundary** (F, and it is what stands between every item in this
-    list and a *facility*). Expansion runs per module, on the parsed file, before any import is
-    resolved — so a macro is usable where it is declared and nowhere else, and neither
-    [`02`](02-syntax.md) §2.4 nor [`102`](102-the-macro-interpreter-report.md) said so. That is why
-    `derive` is an example rather than a `lib/` function and why `sql"…"` would be one too: every
-    successor here delivers a mechanism a program can use and a library cannot ship. Nothing
-    refuses it, because there is nothing to refuse — the name is simply not there, which is the
-    kind of absence §8.5.6 exists to find.
+  - **A macro crosses a module boundary. Done**, and it is what turned every item in this list from
+    a mechanism into a *facility*. Expansion ran per module, on the parsed file, before any import
+    was resolved — so a macro was usable where it was declared and nowhere else, and neither
+    [`02`](02-syntax.md) §2.4 nor [`102`](102-the-macro-interpreter-report.md) said so, because
+    nothing refused it: the name was simply not there, which is the kind of absence §8.5.6 exists to
+    find. What crosses is the **source**, for the reason §102.2 already gave about a `def` — a macro
+    body is compile-time callable as it was written — and a macro has no signature for a `.becki` to
+    publish, so an import that resolves to an interface alone does not carry one and `B0307`'s note
+    says so. Two rules were already the right ones and stayed: the flat namespace decides a
+    collision (`B0200`), and a macro is visible where its module is imported directly.
+    **`lib/json.beck` is the first library file to ship a macro** — `import json`, then
+    `derive_json:` over a `model` — which closes [`46`](46-standard-library-report.md) §46.16's
+    `@derive` row.
   - **Typed macros** (Lane A, and now the whole of what `derive` was standing in front of): a
     `typed macro` receives the AST *with inferred types attached* ([`02`](02-syntax.md) §2.4),
     which the untyped interpreter runs before. This is the piece that needs the checker's answers

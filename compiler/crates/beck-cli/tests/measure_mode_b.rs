@@ -410,11 +410,12 @@ fn what_a_gesture_costs_against_a_command() {
 
     println!("\n-- a gesture against a command, in the kernel the browser runs --");
     println!(
-        "  {:>7}  {:>14}  {:>14}  {:>9}",
-        "cards", "command (µs)", "gesture (µs)", "ratio"
+        "  {:>7}  {:>14}  {:>14}  {:>9}  {:>10}  {:>10}",
+        "cards", "command (µs)", "gesture (µs)", "ratio", "cmd steps", "gst steps"
     );
 
     let mut ratios = Vec::new();
+    let mut charged: Vec<(usize, u64, u64)> = Vec::new();
     for n in [100usize, 1000] {
         let placed = example("interface.beck");
         let rt =
@@ -447,20 +448,28 @@ fn what_a_gesture_costs_against_a_command() {
 
         let mut command = Duration::ZERO;
         let mut gesture = Duration::ZERO;
+        // The steps each path charged the backend, which is what the assertion below reads. The
+        // clock is printed and the counter is asserted — `docs/13` §13.7's rule, obeyed here rather
+        // than in the comment only.
+        let (mut command_steps, mut gesture_steps) = (0u64, 0u64);
         for run in 0..(warmup + runs) {
             let mut c = prepared();
+            let before = c.steps();
             let start = Instant::now();
             let out = c.propose("i0", &finish, 1_700_000_000_000);
             let a = start.elapsed();
+            let charged_command = c.steps() - before;
             assert!(
                 matches!(out, Proposed::Accepted { .. }),
                 "the board accepts finishing a card"
             );
 
             let mut g = prepared();
+            let before = g.steps();
             let start = Instant::now();
             let out = g.propose("i1", &inspect, 1_700_000_000_000);
             let b = start.elapsed();
+            let charged_gesture = g.steps() - before;
             // The routing is the measurement's premise: if this came back `Accepted` the gesture
             // went up the command path and the number below would be comparing one thing.
             assert!(
@@ -471,29 +480,46 @@ fn what_a_gesture_costs_against_a_command() {
             if run >= warmup {
                 command += a;
                 gesture += b;
+                // The same on every repetition — the paths are deterministic — so the last one is
+                // the number, and taking it inside the loop keeps the two halves side by side.
+                command_steps = charged_command;
+                gesture_steps = charged_gesture;
             }
         }
         let us = |d: Duration| d.as_secs_f64() * 1e6 / runs as f64;
         let ratio = command.as_secs_f64() / gesture.as_secs_f64();
         println!(
-            "  {n:>7}  {:>14.1}  {:>14.1}  {:>8.2}×",
+            "  {n:>7}  {:>14.1}  {:>14.1}  {:>8.2}×  {command_steps:>10}  {gesture_steps:>10}",
             us(command),
             us(gesture),
             ratio
         );
         ratios.push(ratio);
+        charged.push((n, command_steps, gesture_steps));
     }
 
-    // The shape, not the rate — `docs/64`'s pattern. A gesture must not cost *more* than a command
-    // at either size, which is the only direction that would falsify D30's design: the whole point
-    // of routing locally is that it skips work, so a gesture that cost more would mean the routing
-    // itself had become the expensive part.
-    for (n, r) in [100usize, 1000].iter().zip(&ratios) {
+    // The shape, not the rate — `docs/64`'s pattern, asserted on the **counter** rather than on the
+    // clock. A gesture must cost *strictly less* than a command at either size, which is the only
+    // direction that would falsify D30's design: the whole point of routing locally is that it
+    // skips `validate` and the derivation the fold performs, so a gesture that cost as much would
+    // mean the routing had bought nothing.
+    //
+    // Strictly less rather than "no more", and that is the half that makes this able to fail. Both
+    // paths end in the same render, so what separates them is `validate` and the fold — and a
+    // gesture that stopped being routed locally would take the command path and charge what a
+    // command charges, which `>=` would have accepted. `Proposed::Folded` above catches the same
+    // regression from the other side, and neither alone is the claim.
+    //
+    // It was a wall-clock assertion until `DEFECTS.md::the-gesture-measurement-asserts-on-a-clock`:
+    // the margin was 18% and the runner is shared, so it went red at 0.87× under load and green
+    // alone. The clock is still printed, because what a gesture *costs* is worth reading; it is no
+    // longer what a red build means.
+    for (n, cmd, gst) in &charged {
         assert!(
-            *r >= 1.0,
-            "at {n} cards a gesture cost more than a command ({r:.2}×) — the local path is \
-             supposed to skip `validate` and the state derivation, so this means the routing \
-             costs more than the work it avoids"
+            gst < cmd,
+            "at {n} cards a gesture charged {gst} steps against a command's {cmd} — the local path \
+             is supposed to skip `validate` and the state derivation, so charging as much or more \
+             means the routing costs more than the work it avoids"
         );
     }
     println!(

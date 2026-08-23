@@ -13,8 +13,9 @@ fields are in its declaration. What it wanted was four parsing rules made unifor
 
 What it does **not** establish: a `Node` that a *running* program can hold (a `quote` that survives
 expansion is still `B0332`) or typed macros. Those want the checker's answers or a run time, and
-§102.8 says why each waits — and §102.8 also names the constraint that keeps every macro out of a
-library, which neither this report nor [`02`](02-syntax.md) §2.4 had written down.
+§102.8 says why each waits — and it also records the constraint that used to keep every macro out
+of a library, which neither this report nor [`02`](02-syntax.md) §2.4 had written down until
+somebody went looking for it.
 
 ## 102.1 What was there, and what the sentence in §2.4 actually asked for
 
@@ -190,11 +191,15 @@ and an argument about consequences is not an answer to it. §8.5.5 now says so w
   a JSON encoder, closing the row [`46`](46-standard-library-report.md) §46.16 and `prelude.rs`
   both carried. What is still owed is the *spelling*: `.as_model()`, and the `*traits` a parameter
   list has no rest form for.
-- **A macro does not cross a module boundary**, and this list did not say so. `expand_module` takes
-  one parsed file and runs before any import is resolved, so a macro is usable where it is declared
-  and nowhere else — which is why `derive` is an example rather than a library function, and why
-  §2.5's `sql"…"` would be too. Nothing refuses it; the name is simply not there. It is the largest
-  thing between the interpreter and a *facility*, and [`08`](08-roadmap.md) §8.5.4 now carries it.
+- **A macro crosses a module boundary**, and it did not when this list was written. `expand_module`
+  took one parsed file and ran before any import was resolved, so a macro was usable where it was
+  declared and nowhere else — nothing refused it, the name was simply not there, which is why the
+  constraint went unwritten. `expand_module_with` takes the **parsed** modules an importer names,
+  which is the right thing for the reason §102.2 already gives about a `def`: a macro body is
+  compile-time callable as it was *written*, before expansion, so what crosses is source and not an
+  interface. That is also the limit — a macro has no signature for a `.becki` to publish — and
+  `B0307`'s note is where somebody meets it. `lib/json.beck` is the first library to ship one, which
+  is the difference between a mechanism and a facility.
 - **A `Node` at run time.** `B0332` still refuses a `quote` that survives expansion, so code-as-data
   is a compile-time property. §12.10 records which half of D9 that leaves open.
 - **Typed literal macros** (§2.5's `sql"…"`, `html"…"`, `regex"…"`). The block rule already

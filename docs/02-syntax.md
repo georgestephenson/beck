@@ -209,12 +209,21 @@ not parse, in a macro body or anywhere else — a `for` loop that appends is how
 `*traits`, since a parameter list has no rest form. `.as_model()` is a third: `node_args` reads the
 declaration, which is the same information with more punctuation.
 
-**And a macro does not cross a module boundary**, which is the constraint that keeps `derive` out of
-`lib/`. Expansion runs per module, on the parsed file, *before* any import is resolved — so a macro
-is usable in the file that declares it and nowhere else, and a standard library cannot ship one. It
-is stated here because it is invisible from anywhere else: nothing refuses an import of a macro,
-because there is nothing to refuse — the name simply is not there. [`08`](08-roadmap.md) §8.5.4
-carries it.
+**And a macro crosses a module boundary**, so a library can ship one — which is what turns every
+mechanism above into a facility. `lib/json.beck` is the first: `import json` and `derive_json:` over
+a `model` generates its JSON encoder, closing [`46`](46-standard-library-report.md) §46.16's
+`@derive` row. Two things about the crossing are worth knowing before using it:
+
+- **A macro is published by a module's *source*, not by its interface.** A macro has no signature,
+  so there is nothing for a `.becki` to carry; an import that resolves to an interface alone does
+  not bring one, and `B0307`'s note says so where somebody will hit it.
+- **The namespace is flat here as everywhere.** Two macros of one name cannot both be in scope,
+  wherever they came from, and `B0200` — which has always refused a module that declared one twice
+  — is what refuses that too. The crossing added no second rule about names.
+
+Until this, expansion ran per module *before* any import was resolved, so a macro was usable in the
+file that declared it and nowhere else. Nothing refused it — the name simply was not there — which
+is why it went unwritten in this section for as long as it did.
 
 The `ui:` block is still a
 compiler-provided macro standing in for a user-written one (D22), and a `quote` that survives

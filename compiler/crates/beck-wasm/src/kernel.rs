@@ -178,6 +178,10 @@ pub struct Client {
     /// because "it did not re-render" is a property and "it was fast" is a measurement
     /// (`docs/13` §13.7).
     renders: u64,
+    /// The backend's step counter, taken once at load: what this client has executed, for a gate
+    /// whose claim is about cost. Held rather than the backend itself, because nothing else here
+    /// needs one and a counter cannot be used to run anything.
+    steps: Option<Arc<dyn beck_core::backend::Steps>>,
     /// `gestures(step, init)`'s step, prepared — `None` when the page keeps no interface state.
     gestures: Option<Callable>,
     /// D30's client-local accumulator: what this tab's own gestures have folded to.
@@ -262,6 +266,7 @@ impl Client {
             pending: Vec::new(),
             shown: None,
             renders: 0,
+            steps: backend.steps(),
             gestures,
             interface,
         })
@@ -307,6 +312,19 @@ impl Client {
     /// How many times this client has evaluated `view`.
     pub fn renders(&self) -> u64 {
         self.renders
+    }
+
+    /// What this client's backend has executed, in the backend's own steps.
+    ///
+    /// [`renders`](Client::renders)' companion, and the counter a gate reads when the claim is
+    /// about *cost* rather than about how many pages were built. A gesture is supposed to skip
+    /// `validate` and the derivation the fold performs, and that difference is countable — where
+    /// the same claim measured with a clock is a number that depends on what else the machine is
+    /// doing ([`docs/13`](../../../../../docs/13-testing.md) §13.7).
+    ///
+    /// Zero for a backend that does not count, which is not the same as no work.
+    pub fn steps(&self) -> u64 {
+        self.steps.as_ref().map_or(0, |s| s.taken())
     }
 
     /// Adopt the current render as what the DOM already shows, without emitting a patch.

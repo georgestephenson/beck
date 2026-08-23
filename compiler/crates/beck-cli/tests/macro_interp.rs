@@ -405,8 +405,9 @@ fn steps_spent(src: &str) -> u64 {
 // flattened all the way down, because `derive` returns the block it was given beside what it
 // generated and that is a `do` inside a `do`.
 //
-// `examples/derive.beck` is the program. These are the rules on their own, and — the half that
-// matters more — the places they deliberately do not reach.
+// `lib/json.beck` is the program that ships it, and the last test in this file derives from it
+// across an import. These are the rules on their own, and — the half that matters more — the places
+// they deliberately do not reach.
 
 /// **A macro's block may declare things, and the macro may emit more of them.**
 ///
@@ -529,33 +530,184 @@ test "a model and a def came out of one quote":
     );
 }
 
-/// **`examples/derive.beck` is the program**, and it is here rather than beside the rules above
-/// because §2.4's sketch is the thing being cashed: a macro that takes a declaration, reads the
-/// fields out of it and emits code per field.
-///
-/// It closes the row [`docs/46`](../../../../docs/46-standard-library-report.md) §46.16 and
-/// `prelude.rs` have both carried since the standard library was written — "turning a `model` into
-/// a `Json` is a function somebody writes, which is what `@derive` is for when it exists" — and it
-/// does so with **no reflection in the running program**: the macro reads syntax at compile time,
-/// and what executes is a `to_json` that names each field as though somebody had typed it.
-#[test]
-fn the_derive_example_generates_an_encoder_from_a_models_fields() {
-    let src = include_str!("../../../examples/derive.beck");
-    all_pass("examples/derive.beck", src);
+// -------------------------------------------------------------------------------------------
+// A macro crosses an import — docs/02 §2.4
+// -------------------------------------------------------------------------------------------
+//
+// Until this, expansion ran per module on the parsed file, *before* any import was resolved, so a
+// macro was usable where it was declared and nowhere else. Nothing refused it — the name was simply
+// not there — which is the kind of absence a test cannot find by asking for a diagnostic. So these
+// ask the other way round: a project on disk, a macro in one module and a call in another, and the
+// binary run over it.
+//
+// It is what turns every one of §8.5.4's macro successors from a mechanism a program can use into a
+// facility a library can ship, and `lib/json.beck` is the first thing to ship one.
 
-    // And what it generated is *per model* rather than one shape written twice: the two derived
-    // encoders name different fields, so a macro that ignored its argument would fail here.
-    let placed = compile("examples/derive.beck", src);
-    let names: Vec<&str> = placed
-        .program
-        .def_order
-        .iter()
-        .map(|n| n.as_ref())
-        .filter(|n| n.contains("to_json"))
-        .collect();
+/// Run `beck` over a scratch project and return whether it succeeded and what it said.
+fn beck_in(dir: &std::path::Path, files: &[(&str, &str)], args: &[&str]) -> (bool, String) {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).expect("a scratch directory");
+    for (name, src) in files {
+        std::fs::write(dir.join(name), src).expect("a scratch file");
+    }
+    let mut argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    argv.push(dir.join(files[0].0).to_string_lossy().to_string());
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_beck"))
+        .args(&argv)
+        .output()
+        .expect("the compiler is built");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), text)
+}
+
+fn scratch(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("beck-macro-import-{name}"))
+}
+
+/// **A macro declared in one module is usable in another that imports it.**
+///
+/// The whole of the item, and the reason it is asserted on a `derive`-shaped macro rather than on
+/// something simpler: what crosses is not only the macro but the *hygiene* it was written with, and
+/// the `impl` this generates names a type it was handed by unquoting the caller's own syntax. A
+/// crossing that lost the scope would compile the macro and fail to find the type.
+#[test]
+fn a_macro_declared_in_one_module_is_usable_in_another() {
+    let dir = scratch("crosses");
+    let (ok, text) = beck_in(
+        &dir,
+        &[
+            (
+                "main.beck",
+                r#"
+import shapes
+
+name_it:
+    model Point:
+        x: Int
+
+test "the macro came from the other module":
+    expect Point(x=1).label() == "a shape"
+"#,
+            ),
+            (
+                "shapes.beck",
+                r#"
+trait Named:
+    def label(self) -> Str
+
+macro name_it(do):
+    decl = node_args(do)[0]
+    name = node_args(decl)[0]
+    return quote:
+        $do
+
+        impl Named for $name:
+            def label(self):
+                return "a shape"
+"#,
+            ),
+        ],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+}
+
+/// **And a module that does not import it does not get it**, which is the half that says the
+/// crossing follows the import rather than the directory.
+///
+/// The message matters as much as the refusal: before macros crossed at all, "this is not a
+/// top-level item" was the whole truth. Now the likeliest cause is a missing `import`, and the note
+/// says so.
+#[test]
+fn a_macro_does_not_reach_a_module_that_did_not_import_it() {
+    let dir = scratch("uncrossed");
+    let (ok, text) = beck_in(
+        &dir,
+        &[
+            ("main.beck", "name_it:\n    model Point:\n        x: Int\n"),
+            (
+                "shapes.beck",
+                "macro name_it(do):\n    return quote:\n        $do\n",
+            ),
+        ],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
     assert!(
-        names.len() >= 6,
-        "only {} `to_json` definitions reached the program: {names:?}",
-        names.len()
+        !ok,
+        "a macro reached a module that never imported it:\n{text}"
+    );
+    assert!(text.contains("B0307"), "{text}");
+    assert!(
+        text.contains("import one that does"),
+        "the refusal does not name the missing import:\n{text}"
+    );
+}
+
+/// **The flat namespace decides a collision, exactly as it does for a `def`.**
+///
+/// Beck links modules into one namespace with no qualified reference (`B0601`), so two macros of
+/// one name cannot both be in scope — and `B0200`, which has always refused a module that declared
+/// one twice, is what refuses this too. That is the behaviour worth pinning: the crossing added no
+/// second rule about names.
+#[test]
+fn two_macros_of_one_name_collide_wherever_they_came_from() {
+    let dir = scratch("collide");
+    let (ok, text) = beck_in(
+        &dir,
+        &[
+            (
+                "main.beck",
+                "import shapes\n\nmacro name_it(do):\n    return quote:\n        $do\n\ntest \"x\":\n    expect true\n",
+            ),
+            ("shapes.beck", "macro name_it(do):\n    return quote:\n        $do\n"),
+        ],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!ok, "two macros of one name were both accepted:\n{text}");
+    assert!(text.contains("B0200"), "{text}");
+}
+
+/// **`lib/json.beck` is the first library to ship a macro**, and this is the row it closes:
+/// [`docs/46`](../../../../docs/46-standard-library-report.md) §46.16's "`@derive` for JSON — not
+/// built".
+///
+/// Asserted from *outside* the library directory, because that is the claim — not "the file
+/// compiles" but "a program somewhere else imports it and derives".
+#[test]
+fn a_program_imports_the_standard_library_and_derives_a_json_encoder() {
+    let dir = scratch("json");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+derive_json:
+    model Todo:
+        id: Str
+        text: Str
+        done: Bool
+
+test "the derived encoder names every field":
+    expect json_render(Todo(id="1", text="milk", done=false).to_json()) == "{\"done\":false,\"id\":\"1\",\"text\":\"milk\"}"
+"#,
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+    // The library's own tests stay the library's, which is the rule `stdlib.rs` holds for every
+    // other module and which a macro-carrying one must not break.
+    assert!(
+        !text.contains("2 passed"),
+        "importing `json` brought the library's own tests into the program:\n{text}"
     );
 }

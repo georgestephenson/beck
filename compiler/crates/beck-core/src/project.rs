@@ -102,8 +102,27 @@ pub fn check_one_in(
     lock: Option<&place::Lock>,
     diags: &mut Diagnostics,
 ) -> Checked {
+    check_one_in_with(file, name, src, imports, &[], lock, diags)
+}
+
+/// The same, with the **parsed** modules this one imports, so their macros are in scope.
+///
+/// A macro crosses an import the way every other declaration does ([`beck_macro::expand_module_with`]),
+/// and what it needs is the imported module's *source* rather than its interface — a macro has no
+/// signature to publish. So this takes parsed modules and [`check_one_in`] passes none, which is
+/// what a caller compiling one file alone has.
+#[allow(clippy::too_many_arguments)]
+pub fn check_one_in_with(
+    file: beck_diag::FileId,
+    name: &str,
+    src: &str,
+    imports: &[(String, Interface)],
+    macros_from: &[&beck_syntax::Node],
+    lock: Option<&place::Lock>,
+    diags: &mut Diagnostics,
+) -> Checked {
     let parsed = beck_syntax::parse_file(file, name, src, diags);
-    let expanded = beck_macro::expand_module(&parsed, diags);
+    let expanded = beck_macro::expand_module_with(&parsed, macros_from, diags);
     let mut program = check_module_with(&expanded, Mode::Module, imports, diags);
     let solution = place::solve(&program, lock);
     place::apply(&mut program, &solution);
@@ -117,6 +136,33 @@ pub fn check_one_in(
     crate::style::check_classes(&program, diags);
     let interface = Interface::of(&program);
     Checked { program, interface }
+}
+
+/// A module's parse, but only if it declares a macro somebody importing it could use.
+///
+/// The text is searched before anything is parsed, and deliberately: the answer is "no" for almost
+/// every module in almost every build, and a second parse is what this exists to avoid. A false
+/// *positive* costs one wasted parse and a false negative is impossible — `macro` is a keyword, so
+/// a module that declares one contains the word.
+///
+/// Parsed a second time rather than threaded out of [`check_one_in_with`], because the alternative
+/// makes every caller of that function hold a syntax tree it has no use for; the diagnostics of
+/// this parse are dropped for the same reason they would be duplicates.
+fn parsed_if_it_declares_a_macro(
+    file: beck_diag::FileId,
+    display: &str,
+    src: &str,
+) -> Option<beck_syntax::Node> {
+    if !src.contains("macro ") {
+        return None;
+    }
+    let mut quiet = Diagnostics::new();
+    let parsed = beck_syntax::parse_file(file, display, src, &mut quiet);
+    parsed
+        .args
+        .iter()
+        .any(|i| i.is_form(beck_syntax::sym::MACRO))
+        .then_some(parsed)
 }
 
 /// The modules a source file imports, in source order.
@@ -251,6 +297,11 @@ pub fn check_project(
 
     let mut interfaces: BTreeMap<String, Interface> = BTreeMap::new();
     let mut checked: Vec<Checked> = Vec::new();
+    // Every module that declares a macro, parsed, so that a module importing it can expand what it
+    // wrote. Only the ones that declare one: a macro crosses an import the way any declaration
+    // does, and holding a parse of every module in the project to discover that most of them have
+    // nothing to give would be a cost paid by every build for the benefit of the few that do.
+    let mut macro_sources: BTreeMap<String, beck_syntax::Node> = BTreeMap::new();
 
     for name in &order {
         let Some((src, file)) = sources.get(name) else {
@@ -288,7 +339,26 @@ pub fn check_project(
             continue;
         };
 
-        let mut one = check_one_in(*file, &display, module_src, &deps, lock, diags);
+        // The parsed form of each import that has a macro in it. `deps` is the same list read for
+        // interfaces, so a macro is visible exactly where the module that declares it is imported —
+        // directly, not through somebody else's import, which is the rule a `def` already follows.
+        let macros_from: Vec<&beck_syntax::Node> = deps
+            .iter()
+            .filter_map(|(d, _)| macro_sources.get(d))
+            .collect();
+        let mut one = check_one_in_with(
+            *file,
+            &display,
+            module_src,
+            &deps,
+            &macros_from,
+            lock,
+            diags,
+        );
+        // Kept only when this module has a macro somebody downstream could use.
+        if let Some(parsed) = parsed_if_it_declares_a_macro(*file, &display, module_src) {
+            macro_sources.insert(name.clone(), parsed);
+        }
         // A standard-library module's `test` blocks are the *compiler's* tests, not this program's.
         // They are still checked — a library that stopped compiling its own tests would be broken —
         // and they are dropped before the link, so `beck test` on a program that imports `bignum`
