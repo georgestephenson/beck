@@ -3,6 +3,12 @@
 # `docs/reference/`, the markdown the drift gate compares against (docs/adr/0007).
 site/
 
+# `beck doc module <file>` with no `--out` writes here, and a test binary's working directory is its
+# crate. Nothing reads these pages — the published site is assembled into `site/` above — so they
+# are output rather than source, and were checked in for several commits before anybody noticed
+# (`beck-cli/tests/stdlib.rs::every_library_documents` passes `--stdout` now).
+compiler/crates/beck-cli/doc/
+
 # `release/build.sh`'s output: a tarball and its checksum, per target. Built by the release
 # workflow and uploaded to the release; never checked in (docs/92 §92.8).
 dist/

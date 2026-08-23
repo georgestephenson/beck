@@ -83,12 +83,23 @@ fn each_one_is_a_library_and_beck_check_says_so() {
 }
 
 /// The library documents, which is what `##` is for and what a published one would be read from.
+///
+/// `--stdout`, and that is not incidental: without it `beck doc module` writes to its default
+/// output directory, which for a test binary is `crates/beck-cli/doc/`. This test had been leaving
+/// a page per library file in the source tree since it was written, and they were checked in by
+/// whoever next ran `git add -A` — eleven files nothing reads, published from nowhere, one of them
+/// arriving with each new library. A test that writes into the tree it is testing is a test that
+/// makes every diff after it suspect.
 #[test]
 fn every_library_documents() {
     for path in lib_files() {
         let file = path.to_string_lossy().to_string();
-        let (ok, text) = beck(&["doc", "module", &file]);
+        let (ok, text) = beck(&["doc", "module", &file, "--stdout"]);
         assert!(ok, "`beck doc {file}`:\n{text}");
+        assert!(
+            !text.trim().is_empty(),
+            "`beck doc {file}` documented nothing"
+        );
     }
 }
 
