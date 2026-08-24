@@ -163,8 +163,16 @@ The controls a reader would reasonably assume exist, that do not:
   charges what each expansion **produces** against a budget of 100,000 nodes for the whole module,
   and the accounting stops when the budget does, so the cost of counting is bounded by the thing it
   is counting. The number is measured rather than declared: the largest total expansion any program
-  in this repository performs is **138 nodes**. What remains absent is a bound on the *other* half
-  of F17 — a typed-literal parser's own work — which does not exist to bound yet.
+  in this repository performs is **138 nodes**. **There are two expanders now** — the untyped one
+  and the checker's, since a `typed macro` is expanded after inference
+  ([`102`](102-the-macro-interpreter-report.md) §102.9) — and each holds its own budget of that
+  size, so a module's ceiling is two of them rather than one. That is a ceiling either way and not
+  a hole: `macro_bomb.rs` refuses a doubling macro of **each** kind, one word apart. What it did
+  catch is the report going missing rather than the charge — a budget is spent once and refused
+  once, and the checker infers a call's arguments inside a rollback, so the first version deleted
+  the only refusal there would ever be and a doubling typed macro checked clean. What remains absent
+  is a bound on the *other* half of F17 — a typed-literal parser's own work — which does not exist
+  to bound yet.
 
 None of these is a secret, and none of them is prose only:
 `compiler/crates/beck-cli/tests/pending_security.rs` asserts each one **as an absence**, in the

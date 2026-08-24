@@ -49,7 +49,11 @@ carry the order, so leave them where they land.
   that works rather than with a report about a name the template owns. Twelve gates in
   `macro_interp.rs`, one in `macro_bomb.rs`, two in `check/mod.rs`; `ty.rs` is
   untouched, which is the fourth time §8.5.5's lane rule has been got wrong and the first time the
-  argument for the wrong lane was a correct one about dependencies.
+  argument for the wrong lane was a correct one about dependencies. F17's ceiling is now **two**
+  budgets rather than one, which [`docs/42`](docs/42-security-assurance.md) §42.6 and
+  [`docs/43`](docs/43-threat-model.md) §43.4 say; §8.5.6's sweep, run over this change, also found
+  [`docs/82`](docs/82-the-edge-report.md) and `pending_security.rs`'s own header still calling that
+  fuel unbuilt, and both are corrected in place.
 
 - **2026-08-23 — A test stops writing generated pages into the source tree.**
   `beck-cli/tests/stdlib.rs::every_library_documents` ran `beck doc module` over every file in
