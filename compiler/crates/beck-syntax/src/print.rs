@@ -249,10 +249,15 @@ impl Py {
                 self.item(&n.args[1]);
             }
             Some(sym::DEF) => self.def(n),
-            Some(sym::MACRO) => {
+            Some(head @ (sym::MACRO | sym::TYPED_MACRO)) => {
                 let name = self.expr(&n.args[0]);
                 let params = self.params(&n.args[1]);
-                self.line(&format!("macro {name}({params}):"));
+                let typed = if head == sym::TYPED_MACRO {
+                    "typed "
+                } else {
+                    ""
+                };
+                self.line(&format!("{typed}macro {name}({params}):"));
                 self.body(&n.args[2]);
             }
             Some(sym::MODEL) => {
@@ -510,7 +515,7 @@ impl Py {
             // a call, so `split_block_call` above cannot see it, and printing `x = try((do …))`
             // would not re-parse. All three are expressions (`docs/27` §27.7, §2.4), so all three
             // can appear here — and a macro that builds syntax by folding into a binding, which is
-            // how `examples/derive.beck` builds a record field by field, writes the third.
+            // how `lib/json.beck`'s `derive_json` builds a record field by field, writes the third.
             Some(sym::LET) | Some(sym::VAR)
                 if n.args.len() == 2
                     && (n.args[1].is_form(sym::TRY)
@@ -612,7 +617,10 @@ impl Py {
                 self.body(&n.args[0]);
             }
             Some(sym::ROW | sym::IDENTITY) => self.item(n),
-            Some(sym::DEF | sym::MACRO | sym::MODEL | sym::UNION | sym::TYPE | sym::NEWTYPE)
+            Some(
+                sym::DEF | sym::MACRO | sym::TYPED_MACRO | sym::MODEL | sym::UNION | sym::TYPE,
+            )
+            | Some(sym::NEWTYPE)
             | Some(sym::TRAIT | sym::IMPL | sym::IMPORT | sym::DECORATE | sym::TEST)
             | Some(sym::PROPERTY) => self.item(n),
 

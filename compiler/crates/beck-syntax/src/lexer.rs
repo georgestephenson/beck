@@ -296,6 +296,7 @@ pub const KEYWORDS: &[&str] = &[
     "trait",
     "try",
     "type",
+    "typed",
     "union",
     "uses",
     "var",

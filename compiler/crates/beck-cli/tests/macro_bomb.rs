@@ -76,6 +76,43 @@ fn a_doubling_macro_is_refused() {
     );
 }
 
+/// The typed expander has its own budget, and it is bounded the same way.
+///
+/// A second expander is a second place the F17 hole can open, and it would open **silently**: the
+/// budget the untyped pass spends is not the one the checker's pass spends, so a gate written only
+/// against `macro` would stay green while `typed macro` had no ceiling at all. The doubling macro
+/// is written twice here for that reason — one word apart, one refusal each.
+///
+/// It went red the first time it was run, and on the worse half of the hole rather than the
+/// obvious one. The budget *was* being charged; the checker infers a call's arguments inside a
+/// rollback, the argument here is itself a doubling call, so the refusal was reported **inside the
+/// probe and thrown away with it** — after which every expansion produced nothing, the definition
+/// checked as `unit`, and `beck check` said the program was fine. A budget is spent once and
+/// reported once, so a discarded report is the only one there will ever be.
+#[test]
+fn a_doubling_typed_macro_is_refused_by_its_own_budget() {
+    let typed = bomb(24).replacen("macro pair", "typed macro pair", 1);
+    let refused = codes("typed-bomb.beck", &typed);
+    assert!(
+        refused.iter().any(|c| c == "B0214"),
+        "a doubling typed macro should be refused by the expansion budget: {refused:?}"
+    );
+    // Refused, not silently emptied: the shape this went red on checked clean.
+    assert!(
+        beck_core::compile_or_library_str("typed-bomb.beck", &typed)
+            .1
+            .has_errors(),
+        "the program has to be refused, not checked as `unit`"
+    );
+    // And the person's depth still compiles through the checker's expander too, which is what makes
+    // the budget a judgement on both sides rather than a wall on one.
+    let small = bomb(8).replacen("macro pair", "typed macro pair", 1);
+    assert!(
+        codes("typed-small.beck", &small).is_empty(),
+        "eight nestings through the typed expander should compile"
+    );
+}
+
 /// …and the same macro at a depth a person would write compiles.
 ///
 /// The other direction, and the one that makes the number a *judgement* rather than a wall: eight

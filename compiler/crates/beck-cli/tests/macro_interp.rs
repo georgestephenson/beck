@@ -711,3 +711,372 @@ test "the derived encoder names every field":
         "importing `json` brought the library's own tests into the program:\n{text}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Typed macros: the same interpreter, with the checker's answers in reach
+// ---------------------------------------------------------------------------------------------
+//
+// `docs/02` §2.4's second flavour. An ordinary `macro` runs before anything has been inferred,
+// which is why `derive_json` above is handed a *declaration*: a model's fields are in its syntax.
+// A `typed macro` is handed an *expression* and asks what the checker made of it, so it is the
+// checker that expands one.
+//
+// What is asserted here is behaviour rather than mechanism — the code a typed macro writes is run,
+// and the two refusals it owes are the ones a person meets first.
+
+/// **The headline: an encoder for a model nobody decorated, from another module.**
+///
+/// `derive_json` can only be used where a declaration is being written, so a `model` that already
+/// exists — in somebody else's file, or three imports away — cannot be given one. `json_of` is
+/// called on the *value*, so it can. That is the whole difference between the two flavours, and it
+/// is asserted across an import because a facility a library cannot ship is a mechanism.
+#[test]
+fn a_typed_macro_writes_the_encoder_for_a_model_nobody_decorated() {
+    let dir = scratch("typed-json");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+type Id = newtype[Str]
+
+model Todo:
+    id: Id
+    text: Str
+    done: Bool
+
+model Board:
+    name: Str
+    todos: list[Todo]
+
+test "the encoder was written from the type rather than from a declaration":
+    expect json_render(json_of(Todo(id=Id("1"), text="milk", done=false))) == "{\"done\":false,\"id\":\"1\",\"text\":\"milk\"}"
+
+test "and it reaches through a list and a newtype the same way":
+    expect json_render(json_of([Id("a"), Id("b")])) == "[\"a\",\"b\"]"
+
+test "a model inside a list inside a model is the recursion going through the expander":
+    expect json_render(json_of(Board(name="week", todos=[Todo(id=Id("1"), text="milk", done=true)]))) == "{\"name\":\"week\",\"todos\":[{\"done\":true,\"id\":\"1\",\"text\":\"milk\"}]}"
+"#,
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("3 passed"), "{text}");
+}
+
+/// One call site, two types, two different programs — which is what a typed macro *is*.
+///
+/// The control the test above does not give: `derive_json` would also pass it, because a decorated
+/// model is a declaration in hand. Writing the same call twice at different types and getting
+/// different code out is the property that needs inference to have run.
+#[test]
+fn one_typed_macro_call_writes_different_code_at_different_types() {
+    let dir = scratch("typed-two");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+model Pair:
+    a: Int
+    b: Int
+
+def encode_pair(p: Pair) -> Str:
+    return json_render(json_of(p))
+
+def encode_int(n: Int) -> Str:
+    return json_render(json_of(n))
+
+test "the same macro, called on two types, wrote two encoders":
+    expect encode_pair(Pair(a=1, b=2)) == "{\"a\":1.0,\"b\":2.0}"
+    expect encode_int(7) == "7.0"
+"#,
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+}
+
+/// `node_ty` in an ordinary `macro` body is refused, and told which word to write.
+///
+/// The honest half of the division: an untyped macro runs before the checker, so the answer does
+/// not exist yet. Saying "cannot find `node_ty`" would be a lie about the reason — the same lie
+/// `macro_sandbox.rs` refuses to tell about `now()`.
+#[test]
+fn an_untyped_macro_body_cannot_ask_what_a_type_is() {
+    let src = "\
+macro guess(x):
+    t = node_ty(x)
+    return quote:
+        $x
+
+def f() -> Int:
+    return guess(1)
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("guess.beck", src);
+    let text = diags.render(&map);
+    assert!(text.contains("B0209"), "{text}");
+    assert!(text.contains("typed macro"), "{text}");
+}
+
+/// A typed macro that has no rule for a type says so, in its own words, at the call.
+///
+/// `json_of` reaches every type former it has a rule for and refuses the rest. Without `refuse` it
+/// would emit something that failed to check for a reason nobody could trace back to the macro,
+/// which is the failure mode a code generator has instead of an error message.
+#[test]
+fn a_typed_macro_refuses_what_it_has_no_rule_for() {
+    let dir = scratch("typed-refuse");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+union Shot:
+    Hit(at: Int)
+    Miss
+
+def f(s: Shot) -> Str:
+    return json_render(json_of(s))
+"#,
+        )],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !ok,
+        "a type `json_of` has no rule for was accepted:\n{text}"
+    );
+    assert!(text.contains("B0224"), "{text}");
+    assert!(
+        text.contains("no rule for Shot") && text.contains("union"),
+        "the message should be the macro's own: {text}"
+    );
+}
+
+/// A typed macro over a *declaration* is refused, and told that is the other flavour's job.
+#[test]
+fn a_typed_macro_cannot_decorate_a_declaration() {
+    let dir = scratch("typed-item");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+json_of:
+    model Todo:
+        id: Str
+"#,
+        )],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!ok, "{text}");
+    assert!(text.contains("B0223"), "{text}");
+}
+
+/// A typed macro whose expansion calls itself at the same type is refused rather than run forever.
+///
+/// The bound that only typed macros need: an untyped one that expands into itself is caught by the
+/// expander's own depth count, and a typed one expands *through the checker*, which is a different
+/// loop. `json_of` recurses on purpose — on something smaller each time — so the bound has to be a
+/// depth rather than a ban.
+#[test]
+fn a_typed_macro_that_expands_into_itself_is_refused() {
+    let src = "\
+typed macro forever(x):
+    return quote:
+        forever($x)
+
+def f() -> Int:
+    return forever(1)
+";
+    let all = codes("forever.beck", src);
+    assert!(
+        all.iter().any(|c| c == "B0201"),
+        "a typed macro that expands into itself should be a diagnostic: {all:?}"
+    );
+}
+
+/// What the checker does to learn a typed macro's argument types leaves nothing behind.
+///
+/// The gate for the rollback. The arguments are inferred once to tell the macro what they are and
+/// again inside whatever it wrote, and only the second time counts — so a macro that *discards* an
+/// argument discards its effects too, because nothing performs them. Inference itself is not rolled
+/// back and must not be: a unification the argument forces is one the expansion would force.
+///
+/// The control is in the same test and is what stops it passing vacuously: the same argument
+/// through a macro that *keeps* it puts `nondet` on the row, so an empty row is a fact about this
+/// macro rather than about the probe never charging anything.
+#[test]
+fn inferring_a_typed_macros_arguments_does_not_charge_their_effects() {
+    let src = "\
+typed macro kind_of(x):
+    t = node_ty(x)
+    return t.name
+
+typed macro through(x):
+    return quote:
+        $x
+
+def dropped() -> Str:
+    return kind_of(now())
+
+def kept() -> Int:
+    return through(now())
+";
+    let placed = compile("probe.beck", src);
+    let row = |name: &str| -> Vec<String> {
+        placed
+            .program
+            .defs
+            .get(name)
+            .unwrap_or_else(|| panic!("`{name}` is defined"))
+            .effects
+            .iter()
+            .map(|e| e.name().to_string())
+            .collect()
+    };
+    assert!(
+        row("dropped").is_empty(),
+        "the discarded argument's effects reached the caller's row: {:?}",
+        row("dropped")
+    );
+    assert!(
+        row("kept").contains(&"nondet".to_string()),
+        "the control says the probe never charges anything: {:?}",
+        row("kept")
+    );
+    // …and the macro still read the argument's real type, which is what it was probed for.
+    let body = format!(
+        "{:?}",
+        placed.program.defs.get("dropped").expect("dropped").body
+    );
+    assert!(body.contains("Str(\"Int\")"), "{body}");
+}
+
+/// …and it reports what is wrong with an argument once rather than twice.
+///
+/// The other half of the same rollback. The arguments are checked to learn their types and checked
+/// again inside whatever the macro wrote, and a reader must not see the second pass.
+#[test]
+fn an_argument_with_a_mistake_in_it_is_reported_once() {
+    let src = "\
+typed macro through(x):
+    return quote:
+        $x
+
+def f() -> Int:
+    return through(missing_name())
+";
+    let all = codes("once.beck", src);
+    let unknown = all.iter().filter(|c| *c == "B0340").count();
+    assert_eq!(
+        unknown, 1,
+        "the argument was reported {unknown} times: {all:?}"
+    );
+}
+
+/// A typed macro's argument may be another typed macro's call, and the type that reaches the outer
+/// body is the type of what the inner one wrote.
+///
+/// The composition case, and the reason the probe expands rather than guessing: the checker cannot
+/// know what `doubled(1)` is until `doubled` has written it, so inferring the outer call's
+/// arguments means running the inner macro. It is also where the cost lives — an argument expanded
+/// in the probe is expanded again in the real check — which is bounded by the same budget
+/// `macro_bomb.rs` holds and is why nesting typed calls is not free.
+#[test]
+fn a_typed_macro_may_be_called_on_another_typed_macros_answer() {
+    let src = "\
+typed macro doubled(x):
+    return quote:
+        $x + $x
+
+typed macro kind_of(x):
+    t = node_ty(x)
+    return t.name
+
+def f() -> Str:
+    return kind_of(doubled(1))
+";
+    let placed = compile("compose.beck", src);
+    let body = format!("{:?}", placed.program.defs.get("f").expect("f").body);
+    assert!(
+        body.contains("Str(\"Int\")"),
+        "the outer macro should have been told what the inner one wrote: {body}"
+    );
+}
+
+/// Hygiene holds **across the two phases**: an untyped macro's binding, a typed macro's binding and
+/// the caller's own are three different `n`s.
+///
+/// Two expanders run over one module — `beck-macro` before the checker and the checker's own — and
+/// each mints hygiene scopes from its own counter. A scope both of them minted would make a binding
+/// one introduced visible to a reference the other introduced, which is hygiene failing in the one
+/// way it fails *silently*: the program still compiles and means something else. They are kept
+/// apart by parity, and this is the shape that would notice if they were not.
+#[test]
+fn the_two_expanders_do_not_share_a_hygiene_scope() {
+    let src = r#"
+macro plain(do):
+    return quote:
+        n = 100
+        $do
+
+typed macro typed_one(x):
+    return quote:
+        n = 1000
+        $x
+
+def f() -> Int:
+    n = 7
+    inner = typed_one(n)
+    plain():
+        return n + inner
+
+test "each `n` is its own":
+    expect f() == 14
+"#;
+    all_pass("phases.beck", src);
+}
+
+/// A name a typed macro introduces does not capture one the caller wrote.
+///
+/// `json_of` binds `here` so that the expression it was given is evaluated once. Hygiene is what
+/// makes that safe to do in a library: a caller with its own `here` still means their own.
+#[test]
+fn a_typed_macros_own_binding_does_not_capture_the_callers() {
+    let dir = scratch("typed-hygiene");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+model Pair:
+    a: Int
+    b: Int
+
+def encoded(here: Pair) -> Str:
+    return json_render(json_of(here))
+
+test "the caller's `here` is the caller's":
+    expect encoded(Pair(a=1, b=2)) == "{\"a\":1.0,\"b\":2.0}"
+"#,
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+}

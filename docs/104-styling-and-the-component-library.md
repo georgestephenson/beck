@@ -742,8 +742,11 @@ escape hatch for an attribute that is genuinely yours is HTML's own, so there wa
 Three things about the fix are worth more than the table.
 
 - **It is a table in a crate, not a check in the expander.** `ui:` is a compiler-provided special
-  case standing in for a user-written macro, and typed macros retire it
-  ([`10`](10-decisions.md) D22); a vocabulary buried in today's expander would be written twice, and
+  case standing in for a user-written macro, and a user-written one is what eventually retires it
+  ([`10`](10-decisions.md) D22) — typed macros are built now
+  ([`102`](102-the-macro-interpreter-report.md) §102.9) and are not enough on their own, because a
+  `ui:` block's expansion writes patterns and `$` does not yet reach a pattern's constructor. A
+  vocabulary buried in today's expander would be written twice, and
   the second copy is the one that drifts. §12.4's three accessibility checks — since built — read this module rather
   than a list of their own, which is what makes them a day's work rather than a table's.
 - **The events are asserted to be the client's, not declared to be.** They are written in different
@@ -759,8 +762,10 @@ Three things about the fix are worth more than the table.
 
 What is **not** refused is an unknown *element*, and that is a limit of today's surface rather than
 a judgement: inside a `ui:` block a lowercase call whose arguments are all keyword arguments is
-indistinguishable from an element, so refusing one would refuse a user's own helper. It is where
-typed macros make a difference rather than a table.
+indistinguishable from an element, so refusing one would refuse a user's own helper. It is where a
+typed macro makes a difference rather than a table: `node_ty` on the call would say whether the
+thing being called is a function the program declared, which is the question the expander cannot
+ask.
 
 ### Wall 3 — focus is not a function of state
 

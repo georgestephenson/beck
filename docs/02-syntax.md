@@ -156,6 +156,12 @@ macro derive(*traits, do):
     ty = do.as_model()
     impls = [gen_impl(t, ty) for t in traits]     # ordinary Beck code, compile time
     return splice([do, *impls])
+
+typed macro json_of(v):
+    t = node_ty(v)                                # what the checker made of `v`
+    if t.kind == "model":
+        ...                                       # a field at a time, out of the type
+    return refuse("no rule for " + t.name)        # said at the call, in the macro's words
 ```
 
 Design decisions:
@@ -174,7 +180,9 @@ Design decisions:
   `postinstall` leave open.
 - **Typed macros.** Two flavours, as in Nim: `macro` (untyped AST in, AST out, expands before type
   checking) and `typed macro` (receives the AST *with* inferred types attached — needed for
-  `derive`, ORM-style query building, and exhaustiveness-aware codegen).
+  ORM-style query building and exhaustiveness-aware codegen). The division is which of the two
+  things a macro is handed: a `macro` takes a **declaration**, whose fields are in its syntax, and a
+  `typed macro` takes an **expression**, which is only a type once something has inferred it.
 - **Expansion is incremental and cached.** Keyed by the macro's own content hash plus input `Node`
   hash, memoised in Salsa (§4.6). Macro-heavy code must not destroy IDE latency.
 
@@ -194,20 +202,56 @@ name (`B0207`), and an enumeration over the prelude that fails when a new one ap
 passed to a macro *in item position* holds declarations, a `quote:` holds them too, `$` unquotes
 where a **type** and where a **field name** go, and a `do` at module level is flattened all the way
 down — so a macro takes a `model`, reads its fields out of the syntax, and emits an `impl` that
-names each one. `examples/derive.beck` is the program, and it closes the row
+names each one. [`lib/json.beck`](../compiler/lib/json.beck)'s `derive_json` is the program, and
+it closes the row
 [`46`](46-standard-library-report.md) §46.16 and `prelude.rs` have both carried since the standard
 library was written: turning a `model` into a `Json` is generated rather than written, with **no
 reflection in the running program**. The `$`-in-a-type rule is what hygiene makes necessary rather
 than convenient — a type name *written* in a template gets a fresh scope and refers to nothing, so
 the generated `impl` has to unquote the caller's own name.
 
-Not built: **the half that wants the checker's answers, and the half that wants a run time** —
-typed macros, `derive`'s `.as_model()` sugar, `inject`/`unsafe_macro`, Salsa-memoised expansion,
-nested quoting's `(quote depth node)`, and §2.5's typed literal macros. The `derive` sketch above is
-written in two spellings the language does not have: a list comprehension (`for` inside `[…]` does
-not parse, in a macro body or anywhere else — a `for` loop that appends is how that is written) and
-`*traits`, since a parameter list has no rest form. `.as_model()` is a third: `node_args` reads the
-declaration, which is the same information with more punctuation.
+**And a `typed macro` is expanded by the checker**, which is where its arguments have types. Its
+body is the same language an ordinary macro body is, with one name added — `node_ty(e)`, the type
+the checker gave that expression — and what it answers is read through the ordinary record notation
+rather than through a family of builtins:
+
+| Written | Answers |
+|---|---|
+| `t.name` | `"Int"`, `"list"`, `"Todo"` — the head, with no arguments |
+| `t.kind` | `"builtin"`, `"model"`, `"union"`, `"newtype"`, `"fn"`, `"param"`, `"unknown"` |
+| `t.args` | `list[Int]` answers `[Int]`; a function answers its parameter types, and `t.result` its result |
+| `t.fields` | a model's fields, as `{name, ty}` records, with the type's own arguments substituted in — so `Box[Int]`'s field is an `Int` and not a `T` |
+| `t.variants` | a union's variants, as `{name, fields}` records |
+| `t.inner` | what a `newtype` wraps |
+
+`fields`, `variants` and `inner` are read **on access** rather than carried in the value, because a
+model whose field mentions itself would otherwise not be a finite value. Recursion is through the
+**expander**: a typed macro emits a call to itself on something smaller and the checker expands
+that in turn, which is what `lib/json.beck`'s `json_of` does to reach a field of a model of a list.
+A compile-time helper cannot do that job, because it is an ordinary `def` and would have to
+typecheck as ordinary code — and a function over a *type* has no Beck type. And because a macro that
+writes code from a type meets types it has no rule for, **`refuse("…")`** reports the macro
+author's own message at the call site (`B0224`) rather than emitting something that fails to check
+somewhere else.
+
+Two refusals go with it: `node_ty` in an untyped `macro` body says which word to write rather than
+that the name does not exist, and a `typed macro` decorating a *declaration* is `B0223` — a
+declaration has nothing inferred about it, so that is the other flavour's job.
+
+Not built: **the half that wants a run time, and the sugar** — `derive`'s `.as_model()`,
+`inject`/`unsafe_macro`, Salsa-memoised expansion, nested quoting's `(quote depth node)`, and
+§2.5's typed literal macros. The `derive` sketch above is written in two spellings the language does
+not have: a list comprehension (`for` inside `[…]` does not parse, in a macro body or anywhere else
+— a `for` loop that appends is how that is written) and `*traits`, since a parameter list has no
+rest form. `.as_model()` is a third: `node_args` reads the declaration, which is the same
+information with more punctuation.
+
+And **exhaustiveness-aware codegen is one `$` rule short**. A typed macro can already read a union's
+variants and write a `match` — a `quote:` holds one, and a generated arm checks — but only with the
+patterns written out, because `$` unquotes an *expression* and a pattern's constructor is a head.
+`case $n(at)` therefore reads as the compile-time call `n(at)`. It is the same shape as the two
+rules `derive` needed — `$` where a **type** and where a **field name** go, both of them heads — and
+it is the third: `$` where a **pattern's constructor** goes.
 
 **And a macro crosses a module boundary**, so a library can ship one — which is what turns every
 mechanism above into a facility. `lib/json.beck` is the first: `import json` and `derive_json:` over

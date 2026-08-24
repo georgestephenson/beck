@@ -59,6 +59,8 @@ use beck_diag::depth::Nesting;
 use beck_diag::{Diagnostic, Diagnostics, Span};
 use beck_syntax::{print, sym, Head, Lit, Node, Symbol};
 
+use crate::typed::{TyRepr, TypeEnv};
+
 /// How many steps one module's macro bodies may take, in total.
 ///
 /// The same shape as [`crate::MAX_EXPANSION`] and for the same reason: per module, because that is
@@ -117,6 +119,10 @@ pub enum Val {
     Record(Arc<Vec<(Arc<str>, Val)>>),
     Syntax(Node),
     Fun(Arc<Lambda>),
+    /// What `node_ty(e)` answers with: the type the checker gave an expression
+    /// ([`crate::typed`]). Only a typed macro's body can hold one, because only there has anything
+    /// been inferred.
+    Type(Arc<TyRepr>),
 }
 
 impl Val {
@@ -132,6 +138,7 @@ impl Val {
             Val::Record(_) => "record",
             Val::Syntax(_) => "syntax",
             Val::Fun(_) => "function",
+            Val::Type(_) => "type",
         }
     }
 
@@ -176,8 +183,25 @@ enum Flow {
     Returned(Val),
 }
 
+/// The step budget's refusal, in one place: the meter reports it, and so does a checker whose
+/// probe discarded the first report ([`crate::typed::TypedExpander::exhausted`]).
+pub(crate) fn ran_too_long(span: Span) -> Diagnostic {
+    Diagnostic::error("B0215", "a macro body ran too long", span)
+        .with_primary_label("the interpreter stopped here")
+        .with_note(format!(
+            "the budget is {MAX_STEPS} steps for the whole module — a bound on how long a compile \
+             takes, which is what answers a macro body that does not terminate"
+        ))
+}
+
 pub struct Interp<'a> {
     defs: &'a HashMap<Arc<str>, FnDef>,
+    /// What the checker inferred about the call being expanded, or `None` in the untyped phase —
+    /// which is what makes `node_ty` a name a typed macro's body has and an ordinary one's has not.
+    types: Option<&'a TypeEnv>,
+    /// Where the macro was called. A body's own errors point into the body; a `refuse` is a message
+    /// *to the caller* and points at the call.
+    call: Span,
     diags: &'a mut Diagnostics,
     /// What is left of [`MAX_STEPS`] for the whole module.
     pub steps: u64,
@@ -200,11 +224,25 @@ impl<'a> Interp<'a> {
     ) -> Interp<'a> {
         Interp {
             defs,
+            types: None,
+            call: Span::NONE,
             diags,
             steps,
             exhausted,
             nesting: Nesting::new(),
         }
+    }
+
+    /// Where the call being expanded was written.
+    pub fn called_at(mut self, span: Span) -> Interp<'a> {
+        self.call = span;
+        self
+    }
+
+    /// The same, with the checker's answers about the call site in reach.
+    pub fn knowing(mut self, types: Option<&'a TypeEnv>) -> Interp<'a> {
+        self.types = types;
+        self
     }
 
     /// Run a macro body, given its parameters already bound to the syntax they were called with.
@@ -242,15 +280,7 @@ impl<'a> Interp<'a> {
         if self.steps == 0 {
             if !self.exhausted {
                 self.exhausted = true;
-                self.diags.push(
-                    Diagnostic::error("B0215", "a macro body ran too long", span)
-                        .with_primary_label("the interpreter stopped here")
-                        .with_note(format!(
-                            "the budget is {MAX_STEPS} steps for the whole module — a bound on how \
-                             long a compile takes, which is what answers a macro body that does \
-                             not terminate"
-                        )),
-                );
+                self.diags.push(ran_too_long(span));
             }
             return Err(Halt);
         }
@@ -271,6 +301,24 @@ impl<'a> Interp<'a> {
             );
         }
         Err(Halt)
+    }
+
+    /// The macro decided it cannot generate for this, and said why.
+    ///
+    /// Distinct from [`Interp::wrong`] because it is not a mistake: a macro that reads a type and
+    /// writes code for it meets types it has no rule for, and the alternative to saying so is
+    /// emitting something that fails to check for a reason nobody can trace back to here.
+    fn refusal(&mut self, msg: Arc<str>, span: Span) -> Halt {
+        let at = match self.call.is_none() {
+            true => span,
+            false => self.call,
+        };
+        self.diags.push(
+            Diagnostic::error("B0224", msg.to_string(), at)
+                .with_primary_label("refused by the macro expanding here")
+                .with_label(span, "the macro said so here"),
+        );
+        Halt
     }
 
     fn wrong(&mut self, msg: impl Into<String>, span: Span) -> Halt {
@@ -560,6 +608,9 @@ impl<'a> Interp<'a> {
             let Some(field) = e.args[1].as_var().map(|s| s.name.clone()) else {
                 return Err(self.wrong("a field is a name", e.args[1].span()));
             };
+            if let Val::Type(t) = &subject {
+                return self.type_field(t, &field, e.span());
+            }
             let Val::Record(fields) = &subject else {
                 let msg = format!("{} has no fields", subject.type_name());
                 return Err(self.wrong(msg, e.span()));
@@ -877,7 +928,70 @@ impl<'a> Interp<'a> {
                     span,
                 ))
             }
+            Val::Type(t) => {
+                let msg = format!(
+                    "`{t}` is a type and has no syntax — a macro reads a type and writes the code \
+                     that a value of it goes through"
+                );
+                return Err(self.wrong(msg, span));
+            }
         })
+    }
+
+    /// What a type answers when asked about itself: `t.name`, `t.kind`, `t.args`, `t.result`,
+    /// `t.fields`, `t.variants`, `t.inner`.
+    ///
+    /// Read on access rather than carried in the value, because `model Tree: left: Tree` is a type
+    /// whose fields mention itself: a value holding its own fields would not be finite.
+    fn type_field(&mut self, t: &TyRepr, field: &str, span: Span) -> Eval<Val> {
+        let types = self.types;
+        let of = |r: &TyRepr| Val::Type(Arc::new(r.clone()));
+        let pairs = |fs: crate::typed::Fields| {
+            Val::list(
+                fs.into_iter()
+                    .map(|(n, ft)| {
+                        Val::Record(Arc::new(vec![
+                            (Arc::from("name"), Val::Str(n)),
+                            (Arc::from("ty"), Val::Type(Arc::new(ft))),
+                        ]))
+                    })
+                    .collect(),
+            )
+        };
+        match field {
+            "name" => Ok(Val::Str(t.head())),
+            "kind" => Ok(Val::str_(t.kind_name())),
+            "args" => Ok(Val::list(t.args().iter().map(of).collect())),
+            "result" => match t {
+                TyRepr::Fun { result, .. } => Ok(of(result)),
+                _ => {
+                    let msg = format!("`{t}` is not a function, so it has no result type");
+                    Err(self.wrong(msg, span))
+                }
+            },
+            "fields" => Ok(pairs(types.map(|e| e.fields(t)).unwrap_or_default())),
+            "inner" => Ok(of(&types.map(|e| e.inner(t)).unwrap_or(TyRepr::Unknown))),
+            "variants" => {
+                let vs = types.map(|e| e.variants(t)).unwrap_or_default();
+                Ok(Val::list(
+                    vs.into_iter()
+                        .map(|(n, fs)| {
+                            Val::Record(Arc::new(vec![
+                                (Arc::from("name"), Val::Str(n)),
+                                (Arc::from("fields"), pairs(fs)),
+                            ]))
+                        })
+                        .collect(),
+                ))
+            }
+            other => {
+                let msg = format!(
+                    "a type answers `name`, `kind`, `args`, `result`, `fields`, `variants` and \
+                     `inner` — not `{other}`"
+                );
+                Err(self.wrong(msg, span))
+            }
+        }
     }
 
     // --------------------------------------------------------------------------------- builtins
@@ -1216,6 +1330,40 @@ impl<'a> Interp<'a> {
                 arity(1, self)?;
                 Ok(Val::str_(print::to_sexpr(&n!(0))))
             }
+            // The one name a `typed macro` body has that an ordinary one does not: what the
+            // checker inferred this expression to be (`docs/02` §2.4).
+            "node_ty" => {
+                arity(1, self)?;
+                let node = n!(0);
+                let Some(types) = self.types else {
+                    return Err(self.wrong(
+                        "`node_ty` needs the checker's answers, which only a `typed macro` has — \
+                         write `typed macro` rather than `macro`",
+                        span,
+                    ));
+                };
+                match types.of(node.span()) {
+                    Some(t) => Ok(Val::Type(Arc::new(t.clone()))),
+                    // Everything the call site *supplied* was inferred before this body ran, so
+                    // what reaches here is syntax the body built itself. Saying which is what
+                    // stops the answer being a plausible-looking `?`.
+                    None => {
+                        let msg = format!(
+                            "`{}` has no inferred type: `node_ty` answers about the expressions \
+                             this macro was called with, and this is syntax the body built",
+                            print::to_sexpr(&node)
+                        );
+                        Err(self.wrong(msg, span))
+                    }
+                }
+            }
+            // A macro that reads a type and writes code for it meets types it has no rule for.
+            // `refuse` is how it says so, at the call site rather than in its own body.
+            "refuse" => {
+                arity(1, self)?;
+                let msg = s!(0);
+                Err(self.refusal(msg, span))
+            }
             // `splice([a, b])` is several forms where one is expected — the shape §2.4's `derive`
             // returns, and the reason `expand_module` flattens a `do` at the top of a module.
             "splice" => {
@@ -1400,7 +1548,9 @@ pub const BUILTINS: &[&str] = &[
     "node_is_lit",
     "node_str",
     "node_sym",
+    "node_ty",
     "not",
+    "refuse",
     "splice",
     "str",
     "str_chars",
@@ -1452,6 +1602,7 @@ fn display(v: &Val) -> String {
         }
         Val::Syntax(n) => print::to_sexpr(n),
         Val::Fun(_) => "<function>".to_string(),
+        Val::Type(t) => t.to_string(),
     }
 }
 
@@ -1473,6 +1624,9 @@ fn val_eq(a: &Val, b: &Val) -> bool {
                     .all(|((ka, va), (kb, vb))| ka == kb && val_eq(va, vb))
         }
         (Val::Syntax(x), Val::Syntax(y)) => x.structurally_eq(y),
+        // Two types are equal when they are the same type, which is what a macro asking
+        // `node_ty(a) == node_ty(b)` means.
+        (Val::Type(x), Val::Type(y)) => x == y,
         _ => false,
     }
 }

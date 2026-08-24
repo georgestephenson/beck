@@ -9,13 +9,18 @@ plan, and it lands with the gate [`12`](12-standards-and-conformance.md) §12.7 
 **And `derive` is built on it.** That is a correction to what this report first said: it listed
 `derive` beside typed macros as wanting the checker's answers, and it does not, because a model's
 fields are in its declaration. What it wanted was four parsing rules made uniform, and
-`examples/derive.beck` is the program.
+[`lib/json.beck`](../compiler/lib/json.beck)'s `derive_json` is the program.
+
+**And typed macros are built on it too**, which is the other half of the same correction: §2.4's
+second flavour receives the AST with inferred types attached, and what that turned out to need was
+not a second interpreter but a **caller** — the checker, expanding a call once it has inferred the
+call's arguments. §102.9 is that work, and the finding in it is that the interesting problem was
+never the types: it was what a *probe* must not leave behind.
 
 What it does **not** establish: a `Node` that a *running* program can hold (a `quote` that survives
-expansion is still `B0332`) or typed macros. Those want the checker's answers or a run time, and
-§102.8 says why each waits — and it also records the constraint that used to keep every macro out
-of a library, which neither this report nor [`02`](02-syntax.md) §2.4 had written down until
-somebody went looking for it.
+expansion is still `B0332`). §102.8 says why that waits — and it also records the constraint that
+used to keep every macro out of a library, which neither this report nor [`02`](02-syntax.md) §2.4
+had written down until somebody went looking for it.
 
 ## 102.1 What was there, and what the sentence in §2.4 actually asked for
 
@@ -178,19 +183,19 @@ and an argument about consequences is not an answer to it. §8.5.5 now says so w
 
 ## 102.8 What this does not establish
 
-- **Typed macros.** §2.4's second flavour receives the AST *with inferred types attached*, which is
-  the checker's output, and this interpreter runs before the checker. That is the genuinely Lane A
-  piece, and it is what retires the compiler-provided `ui:` block (D22).
+- **Typed macros are built** — §102.9 — and are struck from this list rather than left in it with a
+  correction filed three sections later. What they do *not* yet retire is the compiler-provided
+  `ui:` block (D22): a user-written `ui:` needs the pattern half of the `$` rules §102.9 ends on.
 - **`derive` is built, and it did not need them** — which is the correction this list owes, because
   it said the two were one item. §2.4's sketch reads a `model`'s fields and emits code per field,
   and a model's fields are *in the declaration*: `(model Point (typarams) (field x Int) …)` is
   syntax, so `node_args` answers what `.as_model()` was going to. What it needed instead was four
   rules made uniform — a block passed to a macro **in item position** holds declarations, a
   `quote:` holds them too, `$` unquotes where a **type** and where a **field name** go, and a `do`
-  at module level flattens all the way down. `examples/derive.beck` is the program and it generates
-  a JSON encoder, closing the row [`46`](46-standard-library-report.md) §46.16 and `prelude.rs`
-  both carried. What is still owed is the *spelling*: `.as_model()`, and the `*traits` a parameter
-  list has no rest form for.
+  at module level flattens all the way down. [`lib/json.beck`](../compiler/lib/json.beck)'s
+  `derive_json` is the program and it generates a JSON encoder, closing the row
+  [`46`](46-standard-library-report.md) §46.16 and `prelude.rs` both carried. What is still owed
+  is the *spelling*: `.as_model()`, and the `*traits` a parameter list has no rest form for.
 - **A macro crosses a module boundary**, and it did not when this list was written. `expand_module`
   took one parsed file and ran before any import was resolved, so a macro was usable where it was
   declared and nowhere else — nothing refused it, the name was simply not there, which is why the
@@ -214,3 +219,105 @@ and an argument about consequences is not an answer to it. §8.5.5 now says so w
   expansion, so a `def` whose body calls a macro is not callable from a macro body. That is a
   deliberate refusal rather than an oversight: the alternative is an expansion order that depends
   on who calls what.
+
+## 102.9 Typed macros: the interesting problem was not the types
+
+§2.4's second flavour receives the AST *with inferred types attached*. As a feature list that sounds
+like a second interpreter; read against the tree it is a **caller**. The body a typed macro runs is
+the one this report already built, unchanged — bindings, `for`, `while`, lambdas, calls to
+the module's own `def`s, `quote:` and `$`. What was missing was somebody to run it at a point where
+the answer exists, and there is exactly one such point:
+[`check/mod.rs`](../compiler/crates/beck-core/src/check/mod.rs)'s `call`, before the head is
+resolved.
+
+So the phase order is the design. An ordinary `macro` is expanded by `beck-macro` before anything is
+checked; a `typed macro` is left exactly as written by that pass and expanded by the checker, which
+infers the arguments, hands the body what they are, and then checks the code the body wrote —
+**with the caller's own expectation**, so a typed macro is an expression like any other and
+inference flows through it.
+
+### What a body sees, and why it is a record rather than a family of builtins
+
+`node_ty(e)` answers with a value, and the value answers `.name`, `.kind`, `.args`, `.result`,
+`.fields`, `.variants` and `.inner` — §2.4 has the table. Three things about that shape are
+load-bearing rather than stylistic:
+
+- **`fields`, `variants` and `inner` are read on access.** A model whose field mentions itself is an
+  ordinary declaration; a value that carried its own fields eagerly would not be a finite value. A
+  *type expression* is always finite, so `.name`/`.kind`/`.args` can be, and only looking into a
+  declaration recurses.
+- **A declaration's type parameters are substituted by the arguments the mention carried**, so
+  `Box[Int]`'s field is an `Int`. This is the half a projection gets silently wrong: forgetting it
+  answers `T`, which is a name, and a plausible one.
+- **An unsolved unification variable answers `unknown`, not a name.** A body that branched on `?7`
+  would be generating code from an accident of inference order.
+
+The value is not forgeable: the compile-time interpreter grew one variant for it rather than
+reusing a record, so a macro cannot hand `.fields` something that merely looks like a type.
+
+### Recursion goes through the expander, because a compile-time helper is an ordinary `def`
+
+The obvious way to write `json_of` is a helper that recurses over the type. It cannot be written:
+§102.2's rule is that a macro body calls the module's own `def`s, and a `def` is *also* ordinary
+code that the checker checks — so a function whose parameter is a **type** has no Beck type to
+give it. What works instead is that a typed macro emits a call **to itself**, on something smaller,
+and the checker expands that in turn. `lib/json.beck`'s `json_of` reaches a field of a model of a
+list that way, and `B0201` — the expander's own depth limit, now counted across the checker's loop
+as well — is what stops a type that contains itself.
+
+### A macro that writes code from a type needs a way to refuse
+
+`refuse("…")` is the other half of that, and it is not a convenience. A code generator that meets a
+type it has no rule for either emits something that fails to check somewhere else — with a message
+about the generated code, which the reader never wrote — or says so itself. `B0224` carries the
+macro author's own words, positioned at the **call** with a second label on the line in the body
+that decided.
+
+### The finding: a probe is defined by what it does not leave behind
+
+Inferring a call's arguments means checking them, and they are checked again inside whatever the
+macro wrote. Everything that check accumulates is therefore a duplicate, and two of those duplicates
+are wrong rather than merely noisy:
+
+- **Diagnostics.** A mistake in an argument would be reported twice, and the second report is about
+  a pass no reader asked for. The mark-and-truncate is over the whole `Diagnostics`, not over the
+  checker's own error helper, because "everything this run reported" is the property — including
+  whatever pushed without going through it.
+- **The effect row.** A macro may *discard* an argument. Then nothing performs that argument's
+  effects, and charging them would put `nondet` on a definition that does not read the clock —
+  which is not a cosmetic error in a language where the row decides placement and the generated
+  NetworkPolicy. The row is saved and restored around the probe, and the gate has the control
+  beside it: the same argument through a macro that *keeps* it does charge `nondet`, so an empty
+  row is a fact about the macro rather than about the probe never charging anything.
+
+What is deliberately **not** rolled back is inference itself. A unification the arguments force is
+one the expansion would force too, and a substitution rolled back would be a second, quieter answer
+to the same question.
+
+**And one report must survive the rollback**, which is the half that was got wrong first and is
+worth stating as a rule: *a budget is spent once and reported once, so a discarded report is the
+only one there will ever be.* An argument that is itself a typed macro call expands inside the
+probe, and expansion draws on the module-wide production budget (F17,
+[`14`](14-review-findings.md)). The first version of this work charged that budget correctly and
+then deleted its refusal with the rest of the probe — after which every later expansion produced
+nothing, the definition checked as `unit`, and `beck check` said the program was **fine**. The
+doubling macro one word away from `macro_bomb.rs`'s existing fixture is what found it, on its first
+run, which is the argument for writing a gate against the *shape of the gap* rather than against the
+fix: a second expander is a second place the same hole opens, and it opens silently.
+
+The cost the probe leaves is not correctness but work. An argument that is a typed macro call is
+expanded in the probe and expanded again in the real check, so nesting typed calls `d` deep costs
+`2^d` expansions — bounded by the same production budget, charged honestly against it, and the
+reason `a_typed_macro_may_be_called_on_another_typed_macros_answer` sits beside the bomb rather than
+alone. Memoised expansion (§2.4, still unbuilt) is what would make it linear, and this is now the
+second caller that would benefit.
+
+### What is left, and it is one rule
+
+A typed macro can read a union's variants and write a `match`; a `quote:` holds one and a generated
+arm checks. What it cannot do is write the *patterns* from the variant names it just read, because
+`$` unquotes an expression and a pattern's constructor is a **head** — so `case $n(at)` reads as the
+compile-time call `n(at)`. That is the same shape as the two rules `derive` needed (`$` where a type
+goes, `$` where a field name goes, both heads) and it is the third. Until it exists,
+exhaustiveness-aware codegen — one of the three things §2.4 named typed macros for — is written out
+by hand, and a user-written `ui:` (D22) is blocked behind the same rule.

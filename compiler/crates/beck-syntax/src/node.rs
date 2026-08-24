@@ -321,6 +321,11 @@ pub mod sym {
     pub const IMPL: &str = "impl";
     pub const IMPORT: &str = "import";
     pub const MACRO: &str = "macro";
+    /// `typed macro f(x):` — a macro the **checker** expands, so its body can ask what a
+    /// call site's expressions were inferred to be (`docs/02` §2.4). A separate head
+    /// because the expander must leave it alone: an untyped expansion runs before there is
+    /// anything to ask.
+    pub const TYPED_MACRO: &str = "typed-macro";
     pub const QUOTE: &str = "quote";
     pub const UNQUOTE: &str = "unquote";
     pub const SPLICE: &str = "unquote-splicing";

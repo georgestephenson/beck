@@ -533,9 +533,10 @@ rows.
     going to, and the work was four rules made uniform in the **parser** — a block passed to a macro
     *in item position* holds declarations, a `quote:` holds them too, `$` unquotes where a type and
     where a field name go, and a `do` at module level flattens all the way down. Not one line of
-    `check/` or `ty.rs`. `examples/derive.beck` generates a JSON encoder from a model's fields with
-    no reflection in the running program, closing the row [`46`](46-standard-library-report.md)
-    §46.16 and `prelude.rs` have both carried since the standard library was written.
+    `check/` or `ty.rs`. [`lib/json.beck`](../compiler/lib/json.beck)'s `derive_json` generates a
+    JSON encoder from a model's fields with no reflection in the running program, closing the row
+    [`46`](46-standard-library-report.md) §46.16 and `prelude.rs` have both carried since the
+    standard library was written.
   - **A macro crosses a module boundary. Done**, and it is what turned every item in this list from
     a mechanism into a *facility*. Expansion ran per module, on the parsed file, before any import
     was resolved — so a macro was usable where it was declared and nowhere else, and neither
@@ -549,12 +550,30 @@ rows.
     **`lib/json.beck` is the first library file to ship a macro** — `import json`, then
     `derive_json:` over a `model` — which closes [`46`](46-standard-library-report.md) §46.16's
     `@derive` row.
-  - **Typed macros** (Lane A, and now the whole of what `derive` was standing in front of): a
-    `typed macro` receives the AST *with inferred types attached* ([`02`](02-syntax.md) §2.4),
-    which the untyped interpreter runs before. This is the piece that needs the checker's answers
-    to reach a macro body, and it is what retires the compiler-provided `ui:` special case standing
-    in for a user-written macro (D22). `.as_model()` is its spelling half, and so is the `*traits`
-    a parameter list has no rest form for.
+  - **Typed macros. Built** ([`102`](102-the-macro-interpreter-report.md) §102.9), and the item was
+    in the wrong lane for the *fourth* time: a `typed macro` receives the AST with inferred types
+    attached, so it was filed under Lane A on the reasoning that the checker's answers have to reach
+    a macro body — and they do, through one hook in `check/mod.rs`'s `call` and a projection of
+    `Ty`, with nothing added to `ty.rs` and no rule of the type system changed. The body is the
+    interpreter that already existed; what was missing was a **caller** at a point where the answer
+    exists. `node_ty(e)` is the one name added, `refuse("…")` is how a macro that writes code from a
+    type says it has no rule for one, and `lib/json.beck`'s `json_of` writes a JSON encoder for a
+    model **nobody decorated** — which is what `derive` could not do, because `derive` is handed a
+    declaration and this is handed an expression. The finding is in the probe rather than in the
+    types: inferring an argument to tell the macro what it is must leave behind neither the
+    diagnostics nor the **effects**, since a macro may discard the argument and then nothing
+    performs them. What is left is **one `$` rule** — `$` where a *pattern's constructor* goes, the
+    third of the same family `derive` needed two of — and it is what exhaustiveness-aware codegen
+    and a user-written `ui:` (D22) are both behind. `.as_model()` is a spelling half that remains,
+    and so is the `*traits` a parameter list has no rest form for.
+  - **`$` where a pattern's constructor goes** (Lane C, and the successor typed macros left): the
+    third of the family `derive` needed two of — `$` in a **type** and `$` in a **field name**, both
+    of them heads, and a pattern's constructor is a head too. Without it a typed macro that has read
+    a union's variants still has to write its `match` arms out by hand, so **exhaustiveness-aware
+    codegen** — one of the three things [`02`](02-syntax.md) §2.4 names typed macros for — is the
+    one that did not land with them, and a **user-written `ui:`** (D22) is behind the same rule,
+    because a `ui:` block's expansion writes patterns. It is a parser rule, in the file `derive`'s
+    four were made uniform in, and it has no other predecessor.
   - **§2.5's typed literal macros** (`sql"…"`, `html"…"`, `regex"…"`) — the DSL escape hatch, and
     the mechanism the security suite already points at for SQL and HTML. Sugar over a macro call
     (§2.3's table) plus a parse at compile time, so this one is free of Lane A.
@@ -716,8 +735,10 @@ rows.
      with a text input had labelled it with a placeholder and nothing else. The events are held to the client's own listener table by a test that reads
      `beck-patch.js`, in both directions
      ([`104`](104-styling-and-the-component-library.md) §104.8). A **table** rather than expander
-     code, because typed macros above retire the compiler-provided `ui:` special case (D22) and a
-     user-written `ui:` has to be held to the same names. Lane C, with a `beck-macro` half.
+     code, because a user-written `ui:` eventually retires the compiler-provided special case (D22)
+     and has to be held to the same names. Typed macros above are built and are **not** enough on
+     their own: a `ui:` block's expansion writes patterns, and `$` does not yet reach a pattern's
+     constructor. Lane C, with a `beck-macro` half.
   3. **`class=` takes a list, and `Class` is a type** (F): the prerequisite for everything else in
      the styling half, and what makes the editor's existing completion, hover and rename answer for
      utilities without an extension ([`65`](65-the-editor-report.md)). **The list and the analysis
@@ -808,7 +829,7 @@ directories.
 
 | Lane | Owns | What is left in it | Collides with |
 |---|---|---|---|
-| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3 and 7 (§8.5.4) — `Class` as a type and focus as an attribute | **Itself, completely** — see below |
+| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3 and 7 (§8.5.4) — `Class` as a type and focus as an attribute. **Typed macros and `derive` were this cell's and are done**, and neither belonged in it: `derive` was four rules in the parser, and a typed macro is one hook in `check/mod.rs` plus a projection of `Ty` — `ty.rs` unchanged | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned; the styling cluster's item 5 (§8.5.4) — the theme as a Beck value; items 1 and 4 are done | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4). Comment-preserving printing and the `ui:` vocabulary were this lane's and are done | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
@@ -834,8 +855,16 @@ they are what the next ordering should assume:
   been answered as two by four phases of implementation; errors and structured concurrency were one
   row with different successors. The classification is about *cost over time*, and it is silent
   about whether an item is one item.
-- **A wave item can be in the wrong lane**, and it has now happened three times — the third being
-  the first where the *item itself* was misread rather than its lane. `derive` was filed under
+- **A wave item can be in the wrong lane**, and it has now happened four times — the fourth being
+  the one this rule was surest about. **Typed macros** were Lane A's headline item and its
+  justification was the strongest of the four: a macro body that receives inferred types needs the
+  checker's answers, which is a checker change. It *is* a checker change — and it is one hook in
+  `check/mod.rs`'s `call`, a probe that rolls itself back, and a projection of `Ty` into a value the
+  macro crate already knew how to hold. **`ty.rs` is untouched, and no rule of the type system
+  moved**, so the file two Lane A branches would have fought over was never opened. Which is the
+  rule again, in its sharpest form yet: an item's lane is the set of files it *edits*, and a correct
+  argument about what an item depends on says nothing about that set. The third
+  was the first where the *item itself* was misread rather than its lane. `derive` was filed under
   Lane A on the reasoning that §2.4 lists it beside `typed macro`, and the reasoning was the
   document's rather than the tree's: a model's fields are in its declaration, so what `derive` needs
   is a **parser** that lets a macro's block hold one. Four rules in `beck-syntax`, not one line of

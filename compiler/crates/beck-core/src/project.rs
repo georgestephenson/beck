@@ -44,7 +44,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use beck_diag::{Diagnostic, Diagnostics, Span};
 
-use crate::check::{check_module_with, Mode, Program};
+use crate::check::{check_module_importing, Mode, Program};
 use crate::iface::Interface;
 use crate::place;
 use crate::split::Placed;
@@ -123,7 +123,7 @@ pub fn check_one_in_with(
 ) -> Checked {
     let parsed = beck_syntax::parse_file(file, name, src, diags);
     let expanded = beck_macro::expand_module_with(&parsed, macros_from, diags);
-    let mut program = check_module_with(&expanded, Mode::Module, imports, diags);
+    let mut program = check_module_importing(&expanded, Mode::Module, imports, macros_from, diags);
     let solution = place::solve(&program, lock);
     place::apply(&mut program, &solution);
     place::check_placement(&program, diags);
@@ -161,7 +161,7 @@ fn parsed_if_it_declares_a_macro(
     parsed
         .args
         .iter()
-        .any(|i| i.is_form(beck_syntax::sym::MACRO))
+        .any(|i| i.is_form(beck_syntax::sym::MACRO) || i.is_form(beck_syntax::sym::TYPED_MACRO))
         .then_some(parsed)
 }
 

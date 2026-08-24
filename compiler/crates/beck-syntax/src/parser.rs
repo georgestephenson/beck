@@ -245,8 +245,14 @@ impl<'a> Parser<'a> {
             self.end_of_line();
             return Some(Node::form(sym::IDENTITY, vec![provider], span));
         }
+        // `typed macro f(x):` — the same item with the checker for an expander (§2.4). Guarded on
+        // the following word rather than on `typed` alone, so a program may still call a value
+        // `typed`: only `typed macro` at the top level is this.
+        if self.at_kw("typed") && matches!(self.peek_raw(1), Some(Raw::Ident(w)) if w == "macro") {
+            return self.macro_item(sym::TYPED_MACRO);
+        }
         if self.at_kw("macro") {
-            return self.macro_item();
+            return self.macro_item(sym::MACRO);
         }
         if self.at_kw("model") {
             return self.model_item();
@@ -381,8 +387,12 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn macro_item(&mut self) -> Option<Node> {
+    /// `macro f(x):` and `typed macro f(x):`, which differ only in who expands them.
+    fn macro_item(&mut self, head: &str) -> Option<Node> {
         let start = self.span();
+        if head == sym::TYPED_MACRO {
+            self.bump(); // typed
+        }
         self.bump(); // macro
         let (name, name_span) = self.ident("a macro name")?;
         let params = self.params()?;
@@ -390,7 +400,7 @@ impl<'a> Parser<'a> {
         let body = self.block()?;
         let span = start.to(body.span());
         Some(Node::form(
-            sym::MACRO,
+            head,
             vec![Node::sym(name, name_span), params, body],
             span,
         ))

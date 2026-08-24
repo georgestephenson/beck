@@ -262,13 +262,19 @@ A macro body now runs Beck ([`102`](102-the-macro-interpreter-report.md)) and ca
 inspect and return a `Node`, so *programs that compute programs* is backed rather than gestured
 at. What is still not backed is the **run-time** half of code-as-data: a `quote` that survives
 expansion is error `B0332`, so a `Node` is a compile-time value and not yet a value a running
-program holds, and typed macros want the checker's answers, which this interpreter runs before.
+program holds.
 **`derive` is now on the backed side**: a macro takes a `model`, reads its fields out of the
-declaration and emits an `impl` per field (`examples/derive.beck`), which is the shape §2.4's
-sketch has and which needed no reflection at all — a model's fields are in its syntax. So "a
-Python-shaped surface carries Lisp's power" is backed for the notation, the special forms,
-compile-time metaprogramming **and generating code from a declaration**, and **not for run-time
-reflection**.
+declaration and emits an `impl` per field
+([`lib/json.beck`](../compiler/lib/json.beck)'s `derive_json`), which is the shape §2.4's
+sketch has and which needed no reflection at all — a model's fields are in its syntax. **And so is
+generating code from a *type*.** A `typed macro` is expanded by the checker and its body asks
+`node_ty(e)` what an expression was inferred to be, so `json_of` in the same file writes an encoder
+for a model nobody decorated — reached through a list, a `newtype` and a field, with the recursion
+going through the expander rather than through a helper. So "a Python-shaped surface carries Lisp's
+power" is backed for the notation, the special forms, compile-time metaprogramming, **generating
+code from a declaration and from a type**, and **not for run-time reflection**. What one `$` rule
+still costs is the *pattern* half — a generated `match` has to write its constructors out — and
+§2.4 says which rule.
 [`08`](08-roadmap.md) §8.5.4 carries what is left.
 
 The counting protocol (§25.5) is part of the standard, because lines of code is a real metric and
