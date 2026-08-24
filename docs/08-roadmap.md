@@ -562,18 +562,13 @@ rows.
     declaration and this is handed an expression. The finding is in the probe rather than in the
     types: inferring an argument to tell the macro what it is must leave behind neither the
     diagnostics nor the **effects**, since a macro may discard the argument and then nothing
-    performs them. What is left is **one `$` rule** — `$` where a *pattern's constructor* goes, the
-    third of the same family `derive` needed two of — and it is what exhaustiveness-aware codegen
-    and a user-written `ui:` (D22) are both behind. `.as_model()` is a spelling half that remains,
-    and so is the `*traits` a parameter list has no rest form for.
-  - **`$` where a pattern's constructor goes** (Lane C, and the successor typed macros left): the
-    third of the family `derive` needed two of — `$` in a **type** and `$` in a **field name**, both
-    of them heads, and a pattern's constructor is a head too. Without it a typed macro that has read
-    a union's variants still has to write its `match` arms out by hand, so **exhaustiveness-aware
-    codegen** — one of the three things [`02`](02-syntax.md) §2.4 names typed macros for — is the
-    one that did not land with them, and a **user-written `ui:`** (D22) is behind the same rule,
-    because a `ui:` block's expansion writes patterns. It is a parser rule, in the file `derive`'s
-    four were made uniform in, and it has no other predecessor.
+    performs them. **Exhaustiveness-aware codegen came with it and needed nothing added**: a macro
+    that read a union's variants generates one `match` arm per variant with `node_form`, and a
+    constructor it computed is written `case n(at):` inside a `quote:` — a template head that names
+    bound syntax *is* that syntax. This list said otherwise for the length of one experiment, on
+    the strength of `case $n(at):` failing, which is `$` taking an expression exactly as §2.4 says
+    it does; the refusal now carries the spelling that works. `.as_model()` is a spelling half that
+    remains, and so is the `*traits` a parameter list has no rest form for.
   - **§2.5's typed literal macros** (`sql"…"`, `html"…"`, `regex"…"`) — the DSL escape hatch, and
     the mechanism the security suite already points at for SQL and HTML. Sugar over a macro call
     (§2.3's table) plus a parse at compile time, so this one is free of Lane A.

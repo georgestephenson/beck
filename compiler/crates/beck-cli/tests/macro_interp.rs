@@ -987,6 +987,102 @@ def f() -> Int:
     );
 }
 
+/// **Exhaustiveness-aware codegen**: one `match` arm per variant, written from the union rather
+/// than by hand.
+///
+/// The third of the things [`docs/02`](../../../../docs/02-syntax.md) §2.4 names typed macros for,
+/// and the one whose spelling is worth writing down: a *variable* number of arms is built with
+/// `node_form`, and a `match` is `(match subject (case pat body)…)`. A fixed constructor inside a
+/// `quote:` needs no reflection at all — a template head that names bound syntax **is** that
+/// syntax, so `case n(at):` is how a computed constructor is written and `case $n(at):` is not.
+///
+/// The control is what makes this a claim about the *type* rather than about one program: the same
+/// macro, the same call site, one more variant in the union, and the generated `match` grows an arm
+/// nobody wrote.
+#[test]
+fn a_typed_macro_writes_one_match_arm_per_variant() {
+    let program = |extra: &str, check: &str| {
+        format!(
+            "\
+union Shot:
+    Hit(at: Int, by: Str)
+    Miss{extra}
+
+typed macro variant_name(v):
+    t = node_ty(v)
+    arms = []
+    for va in t.variants:
+        holes = []
+        for f in va.fields:
+            holes = list_append(holes, node_sym(\"_\"))
+        body = quote:
+            $(va.name)
+        arms = list_append(arms, node_form(\"case\", [node_form(va.name, holes), body]))
+    return node_form(\"match\", concat_lists([[v], arms]))
+
+def f(s: Shot) -> Str:
+    return variant_name(s)
+
+test \"the arms came from the union\":
+{check}
+"
+        )
+    };
+    all_pass(
+        "exhaust.beck",
+        &program(
+            "",
+            "    expect f(Hit(at=1, by=\"a\")) == \"Hit\"\n    expect f(Miss) == \"Miss\"",
+        ),
+    );
+    // One more variant, no edit at the call site, and the generated `match` covers it. A macro that
+    // had written its arms out would not compile against this union at all.
+    all_pass(
+        "exhaust-grown.beck",
+        &program(
+            "\n    Blocked(why: Str)",
+            "    expect f(Blocked(why=\"rain\")) == \"Blocked\"\n    expect f(Miss) == \"Miss\"",
+        ),
+    );
+}
+
+/// `$n(…)` inside a `quote:` is the call `n(…)`, and the diagnostic says which word to drop.
+///
+/// `$` takes an expression, so `$n(at)` evaluates `n(at)` in the macro body — where `at` is a name
+/// the *template* has and the body does not. Reported before the arguments are evaluated, because
+/// otherwise the message is about `at` and the reader is looking at the wrong word.
+#[test]
+fn unquoting_a_head_is_refused_with_the_spelling_that_works() {
+    let src = "\
+union Shot:
+    Hit(at: Int)
+    Miss
+
+macro pick(v):
+    n = node_sym(\"Hit\")
+    return quote:
+        match $v:
+            case $n(at):
+                at
+            case _:
+                0
+
+def f(s: Shot) -> Int:
+    return pick(s)
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("dollar-head.beck", src);
+    let text = diags.render(&map);
+    assert!(text.contains("B0209"), "{text}");
+    assert!(
+        text.contains("write `n(…)` rather than `$n(…)`"),
+        "the message has to carry the spelling that works: {text}"
+    );
+    assert!(
+        !text.contains("cannot find `at`"),
+        "the report should be about the head, not about a name the template owns: {text}"
+    );
+}
+
 /// A typed macro's argument may be another typed macro's call, and the type that reaches the outer
 /// body is the type of what the inner one wrote.
 ///

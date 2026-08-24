@@ -744,8 +744,8 @@ Three things about the fix are worth more than the table.
 - **It is a table in a crate, not a check in the expander.** `ui:` is a compiler-provided special
   case standing in for a user-written macro, and a user-written one is what eventually retires it
   ([`10`](10-decisions.md) D22) — typed macros are built now
-  ([`102`](102-the-macro-interpreter-report.md) §102.9) and are not enough on their own, because a
-  `ui:` block's expansion writes patterns and `$` does not yet reach a pattern's constructor. A
+  ([`102`](102-the-macro-interpreter-report.md) §102.9), so what stands between the two is this
+  document's own list rather than anything the macro system lacks. A
   vocabulary buried in today's expander would be written twice, and
   the second copy is the one that drifts. §12.4's three accessibility checks — since built — read this module rather
   than a list of their own, which is what makes them a day's work rather than a table's.

@@ -272,9 +272,9 @@ generating code from a *type*.** A `typed macro` is expanded by the checker and 
 for a model nobody decorated — reached through a list, a `newtype` and a field, with the recursion
 going through the expander rather than through a helper. So "a Python-shaped surface carries Lisp's
 power" is backed for the notation, the special forms, compile-time metaprogramming, **generating
-code from a declaration and from a type**, and **not for run-time reflection**. What one `$` rule
-still costs is the *pattern* half — a generated `match` has to write its constructors out — and
-§2.4 says which rule.
+code from a declaration and from a type**, and **not for run-time reflection**. Exhaustiveness-aware
+codegen is on the backed side too: a macro reads a union's variants and builds the `match`, one arm
+per variant, with the constructors it just read.
 [`08`](08-roadmap.md) §8.5.4 carries what is left.
 
 The counting protocol (§25.5) is part of the standard, because lines of code is a real metric and

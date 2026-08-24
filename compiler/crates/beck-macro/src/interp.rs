@@ -648,6 +648,18 @@ impl<'a> Interp<'a> {
                 {
                     return Err(self.unbound(&name.name.clone(), e.span()));
                 }
+                // Calling *syntax* is never right, and there is one way to write it by accident:
+                // `$n(x)` inside a `quote:`. `$` takes an expression, so that is the call `n(x)`
+                // evaluated in the body — where `x` is a name the *template* has and this
+                // environment does not. Said here, before the arguments are evaluated, because
+                // otherwise the report is about `x` and the reader is looking at the wrong word.
+                if matches!(frame.get(&name.name), Some(Val::Syntax(_))) {
+                    let msg = format!(
+                        "`{name}` is syntax and cannot be called at compile time — inside a \
+                         `quote:`, write `{name}(…)` rather than `${name}(…)`"
+                    );
+                    return Err(self.wrong(msg, e.span()));
+                }
             }
 
             let mut values = Vec::with_capacity(args.len());

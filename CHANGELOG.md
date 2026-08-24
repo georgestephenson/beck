@@ -40,8 +40,14 @@ carry the order, so leave them where they land.
   itself a typed macro call expands inside the probe, and the production budget is spent once and
   refused once — so the first version deleted the only refusal there would ever be, every later
   expansion produced nothing, and a doubling macro checked clean as `unit`. `macro_bomb.rs` gains
-  the typed twin of its own fixture, one word apart, and it went red on that. Ten gates there and
-  in `macro_interp.rs`, two in `check/mod.rs`; `ty.rs` is
+  the typed twin of its own fixture, one word apart, and it went red on that. **Exhaustiveness-aware
+  codegen came with it and needed nothing added**: a macro that has read a union's variants builds
+  `(match subject (case pat body)…)` with `node_form`, and a constructor it computed is written
+  `case n(at):` inside a `quote:` — a template head naming bound syntax already *is* that syntax.
+  This change claimed a `$` rule was missing, on the strength of `case $n(at):` failing, and
+  withdrew it in the same change once the gate was written; `$n(…)` now refuses with the spelling
+  that works rather than with a report about a name the template owns. Twelve gates in
+  `macro_interp.rs`, one in `macro_bomb.rs`, two in `check/mod.rs`; `ty.rs` is
   untouched, which is the fourth time §8.5.5's lane rule has been got wrong and the first time the
   argument for the wrong lane was a correct one about dependencies.
 

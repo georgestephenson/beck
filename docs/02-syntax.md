@@ -246,12 +246,14 @@ not have: a list comprehension (`for` inside `[…]` does not parse, in a macro 
 rest form. `.as_model()` is a third: `node_args` reads the declaration, which is the same
 information with more punctuation.
 
-And **exhaustiveness-aware codegen is one `$` rule short**. A typed macro can already read a union's
-variants and write a `match` — a `quote:` holds one, and a generated arm checks — but only with the
-patterns written out, because `$` unquotes an *expression* and a pattern's constructor is a head.
-`case $n(at)` therefore reads as the compile-time call `n(at)`. It is the same shape as the two
-rules `derive` needed — `$` where a **type** and where a **field name** go, both of them heads — and
-it is the third: `$` where a **pattern's constructor** goes.
+**Exhaustiveness-aware codegen** — the third thing this section names typed macros for — needs
+nothing further, and the spelling is worth writing down because the obvious one is wrong. A
+constructor a macro computed is written **`case n(at):`** inside a `quote:`, not `case $n(at):`: a
+template head that names bound syntax *is* that syntax, while `$` takes an expression, so the second
+reads as the compile-time call `n(at)` and is refused with the first as its suggestion. A *variable*
+number of arms is built with `node_form`, because a `match` is `(match subject (case pat body)…)`
+like any other form. `macro_interp.rs` generates one arm per variant of a union and then grows the
+union by one, with no edit at the call site.
 
 **And a macro crosses a module boundary**, so a library can ship one — which is what turns every
 mechanism above into a facility. `lib/json.beck` is the first: `import json` and `derive_json:` over

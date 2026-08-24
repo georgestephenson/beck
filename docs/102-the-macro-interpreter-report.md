@@ -312,12 +312,26 @@ reason `a_typed_macro_may_be_called_on_another_typed_macros_answer` sits beside 
 alone. Memoised expansion (§2.4, still unbuilt) is what would make it linear, and this is now the
 second caller that would benefit.
 
-### What is left, and it is one rule
+### Exhaustiveness-aware codegen, and a rule that was thought to be missing
 
-A typed macro can read a union's variants and write a `match`; a `quote:` holds one and a generated
-arm checks. What it cannot do is write the *patterns* from the variant names it just read, because
-`$` unquotes an expression and a pattern's constructor is a **head** — so `case $n(at)` reads as the
-compile-time call `n(at)`. That is the same shape as the two rules `derive` needed (`$` where a type
-goes, `$` where a field name goes, both heads) and it is the third. Until it exists,
-exhaustiveness-aware codegen — one of the three things §2.4 named typed macros for — is written out
-by hand, and a user-written `ui:` (D22) is blocked behind the same rule.
+The third of the three things §2.4 names typed macros for arrived with them and needed nothing
+added, which this section said the opposite of for as long as one experiment took. A typed macro
+reads a union's variants and builds `(match subject (case pat body)…)` with `node_form` — a variable
+number of arms is a list, and `match` is a form like any other. `macro_interp.rs` generates one arm
+per variant and then grows the union by one, with no edit at the call site.
+
+**What was actually missing was knowing the spelling.** A constructor a macro computed is written
+`case n(at):` inside a `quote:`, because a template head that names bound syntax *is* that syntax —
+the rule `template_inner` has carried since the interpreter landed, and the one `derive`'s two `$`
+rules exist to complete rather than to duplicate. `case $n(at):` is not the same thing and never
+was: `$` takes an *expression*, so that is the call `n(at)` evaluated in the body, where `at` is a
+name the template has and the body does not. It now refuses with the working spelling in the
+message, reported at the head rather than at the argument that happened to be unbound.
+
+The lesson is the one this repository keeps relearning from the other direction: **one failed
+experiment is evidence about the experiment.** The claim "a rule is missing" was written into five
+documents from a single misspelling, and what would have caught it before the ink dried is the thing
+that caught it after — writing the gate, which meant writing a program that had to work.
+
+A user-written `ui:` (D22) is therefore not blocked on a parser rule either. What it is blocked on
+is [`104`](104-styling-and-the-component-library.md) §104.8's own list.
