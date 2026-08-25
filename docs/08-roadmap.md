@@ -589,8 +589,16 @@ rows.
     signature holding it, and `date"2026-08-25"` is the `Date` by the time the checker sees it.
     The compile-time check is `is_valid` — the function `parse_date` calls — so the two doors
     cannot drift. §3.5's "no injection / no XSS" row named a mechanism that does not exist and now
-    says which one delivers the property. Interpolation, a triple-quoted body and a literal that
-    returns a *typed* `Node` remain (§2.5).
+    says which one delivers the property. **`decimal"1.25"` is the second sigil**, and it is where
+    the pattern's limit shows: a date's validator is integer arithmetic and runs as written, while
+    this library decides validity through a `Result` a macro body cannot read — so only the
+    *grammar* is shared and the value is built twice, held together by a differential.
+    Interpolation, a triple-quoted body and a literal that returns a *typed* `Node` remain (§2.5).
+  - **A macro body that can call an imported `def`.** It cannot today — `B0208`, honestly, with the
+    rule in its note — so a helper two library files share cannot be used by either one's macro,
+    and `dates.beck` and `decimal.beck` carry the same three-line digit predicate under two names
+    for exactly that reason. Small, and it is the difference between a macro being written where
+    its helpers are and being written where it is needed.
   - **`inject`/`unsafe_macro`**, the deliberate-capture escape, and **nested quoting's
     `(quote depth node)`**.
   - **A `Node` a *running* program can hold**: a `quote` that survives expansion is still `B0332`,

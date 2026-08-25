@@ -413,6 +413,35 @@ The library's own test says the cost out loud rather than describing it. It comp
 against `parse_date` of the same text — and needs a `try:` to do it, because a `test` block's
 effect row must be empty. The demonstration and the argument are the same three lines.
 
+### The second one is where the limit is
+
+One instance is a coincidence, so `decimal"1.25"` was written next, in a different library, and the
+answer is that the *pattern* held and the *sharing* did not.
+
+A date's validator is `is_valid` — integer arithmetic, which a macro body runs exactly as written,
+so there is one validator and it cannot drift. `decimal.beck` decides validity through `big_of_str`,
+which answers a `Result`, and a macro body has no unions to read one with. What could be shared was
+therefore the **grammar** and not the check: `is_decimal_text` is factored out and both doors ask
+it, so the nine texts `decimal.beck` refuses at run time are the nine the sigil refuses at compile
+time, held by a gate that runs that list through the other door. The **value** is still built twice,
+out of an `Int` here and a `Big` there, which no factoring fixes — so the library's tests run a list
+of literals through both and demand the same answer, and the sigil has two bounds the run-time door
+does not: eighteen digits, and `max_scale()`.
+
+Writing that shared function is where the compile-time subset turns out to be narrower than "no
+unions" sounds. `list_get` answers an `Option` and so does `str_index_of`, so a function meant for
+both phases cannot index what `str_split` returned and cannot find a character's position at all.
+The two halves of `"1.25"` are recovered with `str_starts_with`, `str_ends_with` and `str_replace`
+instead. That is a real constraint on how much of a library a sigil can reuse, and it is the reason
+to expect *some* duplication rather than none.
+
+A smaller limit came out of the same work and is a line in [`08`](08-roadmap.md) §8.5.4 rather than
+a defect, because the compiler says so plainly (`B0208`, with the rule in its note): **a macro body
+resolves its own module's `def`s and not an imported module's.** A macro crosses a module boundary;
+the definitions its body calls do not. So a helper two library files share cannot be used by either
+one's macro, and `dates.beck` and `decimal.beck` carry the same three-line digit predicate under two
+names — `all_digits` and `is_digit_run` — for exactly that reason.
+
 ### One error, not two
 
 A macro that refused used to be reported twice. The expansion left the call where it was, the

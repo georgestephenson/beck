@@ -339,9 +339,17 @@ wrong. So §3.5's "no injection / no XSS" row named a mechanism that does not ex
 the system does have, and now says which mechanism actually delivers it.
 
 What that leaves for a sigil is the case `date"…"` is: **a value the language has no literal
-for**, where the alternative is a run-time parse that can fail. `decimal"0.1"` and `bignum"…"` are
-the same shape and are the obvious next two. `regex"…"` is a third, and it wants something this
-repository does not have — a regex engine — rather than anything from this section.
+for**, where the alternative is a run-time parse that can fail. `decimal"1.25"` is the second, in
+[`lib/decimal.beck`](../compiler/lib/decimal.beck), and it is where the pattern's *limit* shows.
+A date's validator is integer arithmetic, so the macro runs `is_valid` as written; this library's
+decides validity through a `Result`, which a macro body has no unions to read. So only the
+**grammar** is shared — `is_decimal_text`, written in the subset both phases run — and the *value*
+is built twice, out of an `Int` at compile time and a `Big` at run time, with a differential in the
+library's own tests holding the two together. That subset is narrower than it looks: `list_get` and
+`str_index_of` answer an `Option`, so a function meant for both phases recovers a split string with
+`str_starts_with`/`str_replace` rather than by indexing what `str_split` returned. `bignum"…"` is a
+third of the same shape. `regex"…"` is a fourth, and it wants something this repository does not
+have — a regex engine — rather than anything from this section.
 
 Still unbuilt, and named here because §2.5 has always promised them: a typed literal that returns
 a **typed** `Node` rather than an ordinary one (`sql"..."` returning a `Query[Order]` checked

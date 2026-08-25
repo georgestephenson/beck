@@ -1392,3 +1392,103 @@ def f() -> Date:
         "{text}"
     );
 }
+
+/// **The two doors into a `Decimal` refuse the same texts.**
+///
+/// `date"…"` could share its whole validator with `parse_date`, because a calendar's is integer
+/// arithmetic. This library's is not — `decimal_of_str` decides validity through `big_of_str`,
+/// which answers a `Result` a macro body has no unions to read — so what is shared is the
+/// *grammar*, factored into `is_decimal_text` and written in the subset both phases run.
+///
+/// This list is `decimal.beck`'s own "text that is not a decimal says so" test, aimed at the other
+/// door. Red the day somebody gives the sigil a second opinion about what a numeral is, which is
+/// the failure that would otherwise show up as a literal a program can write and a string it
+/// cannot — or the reverse.
+#[test]
+fn the_two_doors_into_a_decimal_refuse_the_same_texts() {
+    let dir = scratch("sigil-decimal");
+    for bad in ["1.", "1.2.3", "1.-5", "1e6", "one", ".5", "-.5", "", "-"] {
+        let src = format!(
+            "\
+import decimal
+
+def f() -> Decimal:
+    return decimal\"{bad}\"
+"
+        );
+        let (ok, text) = beck_in(&dir, &[("app.beck", &src)], &["check"]);
+        assert!(
+            !ok,
+            "`{bad}` is not a decimal, and `decimal_of_str` says so: {text}"
+        );
+        assert!(
+            text.contains("B0224") && text.contains("a decimal literal is"),
+            "`{bad}`: {text}"
+        );
+    }
+
+    // …and the control, without which the loop above would pass on a macro that refused
+    // everything.
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            "\
+import decimal
+
+test \"the literal is the number\":
+    expect decimal\"1.25\" == of_units(125, 2)
+    expect decimal\"-0.5\" + decimal\"0.5\" == decimal_zero()
+",
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+}
+
+/// The two bounds a sigil has that the run-time door does not, because an `Int` is not a `Big`.
+///
+/// Eighteen digits is where `str_to_int` stops being safe without case analysis, and past it the
+/// value is genuinely a `Big` — so the refusal names `decimal_of_str` rather than pretending. The
+/// control is the eighteen-digit literal that still compiles: a bound tested only from the failing
+/// side is a bound that could be zero.
+#[test]
+fn a_decimal_literal_says_when_a_value_has_outgrown_the_notation() {
+    let dir = scratch("sigil-decimal-bounds");
+    let case = |lit: &str| {
+        format!(
+            "\
+import decimal
+
+def f() -> Decimal:
+    return decimal\"{lit}\"
+"
+        )
+    };
+
+    let (ok, text) = beck_in(
+        &dir,
+        &[("app.beck", &case("1234567890123456789"))],
+        &["check"],
+    );
+    assert!(
+        !ok && text.contains("decimal_of_str"),
+        "nineteen digits: {text}"
+    );
+
+    let deep = format!("0.{}1", "0".repeat(44));
+    let (ok, text) = beck_in(&dir, &[("app.beck", &case(&deep))], &["check"]);
+    assert!(
+        !ok && text.contains("max_scale"),
+        "past the scale bound: {text}"
+    );
+
+    let (ok, text) = beck_in(
+        &dir,
+        &[("app.beck", &case("123456789012345678"))],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok, "eighteen digits is inside the bound: {text}");
+}
