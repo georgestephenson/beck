@@ -305,12 +305,24 @@ doubling macro one word away from `macro_bomb.rs`'s existing fixture is what fou
 run, which is the argument for writing a gate against the *shape of the gap* rather than against the
 fix: a second expander is a second place the same hole opens, and it opens silently.
 
-The cost the probe leaves is not correctness but work. An argument that is a typed macro call is
-expanded in the probe and expanded again in the real check, so nesting typed calls `d` deep costs
-`2^d` expansions — bounded by the same production budget, charged honestly against it, and the
-reason `a_typed_macro_may_be_called_on_another_typed_macros_answer` sits beside the bomb rather than
-alone. Memoised expansion (§2.4, still unbuilt) is what would make it linear, and this is now the
-second caller that would benefit.
+The cost the probe leaves looked like work and is a defect. An argument that is a typed macro call
+is expanded in the probe and expanded again in the real check, so nesting typed calls `d` deep costs
+`2^d` expansions — and this section said they were "charged honestly against" the production budget.
+They are not: the probe's output is *thrown away*, and F17's budget is defined as a bound on what
+expansion **produces**. Measured, on a macro producing three nodes: 97 ms at thirteen deep, 175 ms
+at fourteen, and at fifteen a `B0214` refusal — `2^15 × 3 ≈ 98,000` against a budget of 100,000 —
+for a program whose total expansion is about **forty-five nodes**. The message a reader gets says
+"macro expansion produced too much", on a module that produced almost nothing, and then a second
+error, because after the budget is spent every expansion produces nothing and the macro's own
+`refuse` fires on a type it can no longer see.
+
+It is in [`DEFECTS.md`](../DEFECTS.md) with the two gates a fix owes, and the second is the
+interesting one: whatever stops charging the probe must keep `macro_bomb.rs`'s doubling typed macro
+refused, and the probe's charge is precisely what the first version of this work deleted. Memoising
+the expansion on `(call span, argument types)` would fix the *charge*; it would not make the shape
+linear, because the doubling is in `Checker::expr` rather than in the expander — the argument is
+checked in the probe and checked again in the real pass, and reusing the probe's `Core` is not free
+either, since the effect row it rolls back is rolled back on purpose.
 
 ### Exhaustiveness-aware codegen, and a rule that was thought to be missing
 
