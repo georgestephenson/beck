@@ -176,8 +176,12 @@ the gateway, metrics exported — folded into R5's mitigation set.
   is the half that had a live attack surface — [`42`](42-security-assurance.md) §42.2's playground
   compiles a stranger's source in their own tab. The depth counters that already existed bounded how
   *deep* expansion goes and a doubling macro is shallow, which is
-  [`82`](82-the-edge-report.md) §82.10's pattern a fourth time. Typed-literal parsers
-  have no compile-time work to bound yet, so that half stays open by not existing.
+  [`82`](82-the-edge-report.md) §82.10's pattern a fourth time. **The other half is closed too, and
+  by arriving rather than by being built**: a typed literal desugars to a macro call
+  ([`02`](02-syntax.md) §2.5), so a parser inside one is a macro body spending the budget every
+  macro body spends. This finding had named it as a second thing to bound; there was no second
+  thing. `macro_bomb.rs` gates it, because "same mechanism" is a claim that stops being true the
+  day the mechanism changes.
 - **F18** NATS/Synadia governance dispute (2025): the "verify licence at adoption" note applies to
   NATS JetStream specifically; it is post-1.0 and optional either way.
 - **F19** Keycloak is JVM-heavy for the distroless ethos; fine as `managed()` default (it is its

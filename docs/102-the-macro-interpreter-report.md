@@ -335,3 +335,91 @@ that caught it after — writing the gate, which meant writing a program that ha
 
 A user-written `ui:` (D22) is therefore not blocked on a parser rule either. What it is blocked on
 is [`104`](104-styling-and-the-component-library.md) §104.8's own list.
+
+## 102.10 Typed literals: the notation was free and the readers were missing
+
+[`02`](02-syntax.md) §2.5 has described `sql"…"`, `html"…"` and `regex"…"` since the first draft,
+and [`08`](08-roadmap.md) §8.5.4 filed the item as "sugar over a macro call plus a parse at compile
+time". Both halves of that are right, and neither is where the work was.
+
+**The sugar is one token and one arm.** `name"body"` lexes as a single `Sigil`, and the parser
+turns it into `name_sigil(raw="body")` — §2.3's table, minus a `span=` argument the table promised
+and nothing could have consumed. Nothing else in the front end knows a sigil exists: what parses a
+body is an ordinary macro, expanded by the ordinary expander, and a program gets `date"…"` by
+writing `import dates` exactly as it gets `derive_json`. The notation was free because §2.4's
+interpreter had already paid for it.
+
+Three properties make it usable rather than merely present, and each is a gate:
+
+- **The body is raw.** `regex"^\d{4}$"` must reach its macro with the backslash it was written
+  with, so a sigil body never goes near the string lexer's `unescape`. The gate compares a body
+  containing `\d`, `{}` and `$` against what was typed.
+- **The body has its own span** — the one *inside* the quotes — and `refuse(msg, node)` reports
+  there. The gate is the caret width: five characters is the body, eleven is the literal, and the
+  difference is this feature working.
+- **A sigil with no macro behind it names the sigil that was written.** `sql_sigil` appears in no
+  source file, so a bare "cannot find" sends a reader after a name they never typed.
+
+**What was actually missing was two readers.** A macro could ask whether its argument was a
+literal and never find out *which* one: `node_head` reads a symbol's name and refuses a literal,
+and nothing read a literal's value. That is `node_lit`, and its absence is why no macro before this
+could look at what it was handed. The second is `str_to_int`, which the sandbox had refused for a
+reason that was true and a conclusion that was not — it returns an `Option`, and there are no
+unions at compile time. But indexing returns one too, and the compile-time half of *that* had
+already been settled: **total, and refuses**. The same answer was available for `str_to_int` the
+whole time and nobody had needed it, because until a macro could read a literal there was no text
+to turn into a number.
+
+### The first typed literal is none of the three
+
+`date"YYYY-MM-DD"`, in [`lib/dates.beck`](../compiler/lib/dates.beck). That is not the order §2.5
+implies, and the reason is worth more than the feature.
+
+`sql"…"` and `html"…"` were the headline examples because their value was stated as a *security*
+property — "injection is unrepresentable", "XSS-impossible by construction". Beck has both
+properties, and by a different mechanism in each case: a program never writes SQL, because a
+`store` is queried through the algebra and the runtime binds its own parameters; a program never
+writes HTML, because a view is a tree and `beck-core/src/html.rs` escapes text and attributes on
+the way out — the row [`20`](20-phase-2-report.md) verifies with a todo whose text is a `<script>`
+tag. **A sigil for either would be a second way to say something the language already refuses to
+get wrong**, and §3.5's "no injection / no XSS" row had been naming a mechanism that did not exist
+for a property the system did have. It now names the mechanisms that deliver it.
+
+What a sigil is actually for is the case `date"…"` is: **a value the language has no literal for**,
+where the alternative is a run-time parse that can fail. `parse_date` raises, correctly — it is the
+door for text a program was *handed*. But an effect row is part of a type here, so a single
+hard-coded date put `raises(CalendarError)` on the signature of whatever held it, and the cost was
+not a parse but a *signature*. `date"2026-08-25"` is `Date(year=2026, month=8, day=25)` by the time
+the checker sees it.
+
+The compile-time check is `is_valid` — the function `parse_date` calls — run on the same three
+numbers, so `date"2026-02-30"` is refused for exactly the reason `parse_date("2026-02-30")` raises.
+There is one validator, called from two phases, and that is the property worth having: two of them
+would drift, and the second one to drift would be the one nobody runs.
+
+The library's own test says the cost out loud rather than describing it. It compares the literal
+against `parse_date` of the same text — and needs a `try:` to do it, because a `test` block's
+effect row must be empty. The demonstration and the argument are the same three lines.
+
+### One error, not two
+
+A macro that refused used to be reported twice. The expansion left the call where it was, the
+checker then could not find the macro's name, and a reader was told both that the macro had refused
+and that it did not exist. On a sigil the second message names a symbol nobody typed.
+
+What replaces a failed call is `<refused>`, a head **spelled so no program can write it** — a head
+the checker matches on and a name a program may use are the same namespace, which is what
+`RESERVED_FORMS` exists to police, and a marker only the compiler builds should not cost a word.
+The checker gives it a *fresh type variable* rather than `unit`, so the caller's expectation
+unifies and nothing cascades there either; that is the same shape `typed_macro` had already used
+for the same reason, which is the sort of symmetry that is obvious once both halves exist.
+
+### And F17's other half closed by arriving
+
+[`14`](14-review-findings.md)'s F17 asked for fuel on two things: macro expansion, and
+*typed-literal parsers*. The first was built and measured (§102.5). The second is now closed, and
+nothing was built for it: a typed literal desugars to a macro call, so its parser is a macro body
+spending the same two budgets. **The finding had named one surface twice** — which is only visible
+once the second surface exists and turns out to be the first. `macro_bomb.rs` gates it in both
+directions, because "it is the same mechanism" is a claim that stops being true on the day the
+mechanism changes.

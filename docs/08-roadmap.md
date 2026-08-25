@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **995<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **996<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -569,9 +569,24 @@ rows.
     the strength of `case $n(at):` failing, which is `$` taking an expression exactly as §2.4 says
     it does; the refusal now carries the spelling that works. `.as_model()` is a spelling half that
     remains, and so is the `*traits` a parameter list has no rest form for.
-  - **§2.5's typed literal macros** (`sql"…"`, `html"…"`, `regex"…"`) — the DSL escape hatch, and
-    the mechanism the security suite already points at for SQL and HTML. Sugar over a macro call
-    (§2.3's table) plus a parse at compile time, so this one is free of Lane A.
+  - **§2.5's typed literal macros. Built** — `name"body"` is one token, the body is raw, and it
+    desugars to `name_sigil(raw="body")`, which is §2.3's table and the whole mechanism: what
+    parses a body is an ordinary macro. Two things were missing and neither was syntax. A macro
+    could ask whether its argument was a literal and never find out **which** one, so `node_lit`
+    is the reader `node_head` is for symbols; and turning text into a number needs `str_to_int`,
+    which the sandbox had refused *because it returns an `Option`* — the compile-time half is
+    total and refuses, as indexing already was. The **first** typed literal is `date"YYYY-MM-DD"`,
+    not one of the three named here, and the reason is the finding: `sql"…"` and `html"…"` were
+    the headline examples because their value was a security property, and Beck has both
+    properties already — a program never writes SQL (the algebra queries, the runtime binds) and
+    never writes HTML (a view is a tree and the renderer escapes). What a sigil is actually for is
+    a **value the language has no literal for**, where the alternative is a run-time parse that
+    can fail: `parse_date` raises, so one hard-coded date put `raises(CalendarError)` on the
+    signature holding it, and `date"2026-08-25"` is the `Date` by the time the checker sees it.
+    The compile-time check is `is_valid` — the function `parse_date` calls — so the two doors
+    cannot drift. §3.5's "no injection / no XSS" row named a mechanism that does not exist and now
+    says which one delivers the property. Interpolation, a triple-quoted body and a literal that
+    returns a *typed* `Node` remain (§2.5).
   - **`inject`/`unsafe_macro`**, the deliberate-capture escape, and **nested quoting's
     `(quote depth node)`**.
   - **A `Node` a *running* program can hold**: a `quote` that survives expansion is still `B0332`,

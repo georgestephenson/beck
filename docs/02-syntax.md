@@ -137,7 +137,7 @@ Additional block forms, all sugar over the same rule:
 | `f(x): expr` (single line) | `f(x, do=quote(expr))` |
 | `else:` / `catch e:` clauses after a block | extra keyword args: `else_=quote(...)`, `catch=quote(...)` |
 | `@deco` before `def` | `deco(quote(def ...))` — a real AST transform |
-| `q"..."` typed literal | `q_sigil(raw="...", span=...)` expanded at compile time |
+| `q"..."` typed literal | `q_sigil(raw="...")` expanded at compile time |
 
 `@decorator` deserves emphasis: Python programmers already know and love decorator syntax, but in
 Python a decorator only sees a *function object*. In Beck, `@server`, `@memo`, `@component`,
@@ -196,7 +196,10 @@ the prelude, `node_*` reflection over syntax, and `splice([…])` returning seve
 one was written. `$e` is an expression whose *value* is reflected into the template, so `$x` is the
 caller's code and `$(n * 2)` is a literal. The environment is capability-restricted as this section
 demands, and `macro_sandbox.rs` is what says so: a whitelist, the effectful primitives refused by
-name (`B0207`), and an enumeration over the prelude that fails when a new one appears.
+name (`B0207`), and an enumeration over the prelude that fails when a new one appears. Where a
+prelude primitive returns an `Option` — which a sandbox with no unions cannot represent — the
+compile-time half is **total and refuses**: indexing (`xs[i]`) is that, and so is `str_to_int`,
+which §2.5's typed literals need to turn a body into a number.
 
 **And a macro can decorate a declaration**, which is what the `derive` sketch above is: a block
 passed to a macro *in item position* holds declarations, a `quote:` holds them too, `$` unquotes
@@ -290,15 +293,60 @@ k  = k8s_patch"""spec: {containers: [{name: app, ...}]}"""
 re = regex"^\d{4}-\d{2}$"                              # compiled, groups typed
 ```
 
-Each is a compile-time macro that parses its own body, reports errors *at the right source offsets
-inside the literal*, and returns typed `Node`s. `sql"..."` returns a `Query[Order]` whose columns are
-checked against the `store` declarations, so a typo is a compile error and interpolation is
-parameter-bound (injection is unrepresentable, as in Ur/Web).
+Each is a compile-time macro that parses its own body and reports errors *at the right source
+offsets inside the literal*.
 
-**Status: none of these exist** — not in the lexer, not in the expander. A typed literal macro is
-a compile-time macro that parses its own body, so the whole section arrives with §2.4's
-interpreter ([`08`](08-roadmap.md) §8.5.4's first item); the `sql`/`html` rows are the mechanism
-the security suite already points at for injection and XSS.
+**The notation is built.** `name"body"` lexes as one token and desugars to `name_sigil(raw="body")`
+— §2.3's table, and the whole of the mechanism: what parses the body is an ordinary macro, so
+nothing in the lexer or the parser knows anything about SQL or dates. Three properties are what
+make it usable, and each is a gate in `macro_interp.rs`:
+
+- **The body is raw.** No escape is processed and nothing else looks at it, so `regex"^\d{4}$"`
+  reaches its macro with the backslash it was written with.
+- **The body has its own span**, the one inside the quotes, and `refuse(msg, raw)` reports there —
+  so a macro's objection underlines the ten characters it is about rather than the whole
+  expression.
+- **A sigil with no macro behind it names the sigil that was written**, because `sql_sigil` is a
+  name that appears in no source file and a bare "cannot find" sends the reader after something
+  they never typed.
+
+A macro body reads its body with **`node_lit`** — the reader `node_head` is for a symbol and there
+was none for a literal — and turns text into numbers with **`str_to_int`**, which at compile time
+is total and refuses, the same shape indexing has and for the same reason (§2.4's sandbox has no
+unions to answer `None` with).
+
+**The first typed literal is `date"YYYY-MM-DD"`**, in [`lib/dates.beck`](../compiler/lib/dates.beck),
+and it is worth saying why that one rather than the four above. A `Date` is a value the language
+has no literal for, so the only way to write one down was `parse_date("2026-08-25")` — which
+**raises**, because it is the door for text a program was *handed*. In this language an effect row
+is part of a type, so one hard-coded date put `raises(CalendarError)` on the signature of whatever
+held it. `date"2026-08-25"` **is** `Date(year=2026, month=8, day=25)` by the time the checker sees
+it: no parse at run time, nothing raised, nothing to handle. What checks it is `is_valid` — the
+function `parse_date` calls — run at compile time on the same three numbers, so `date"2026-02-30"`
+is refused for exactly the reason `parse_date("2026-02-30")` raises, and the two cannot drift
+apart because there are not two of them.
+
+**`sql"..."` and `html"..."` are not next, and the reason is a finding rather than a schedule.**
+They were this section's headline examples because their value was stated as a security property —
+"injection is unrepresentable", "XSS-impossible by construction" — and Beck already has both
+properties by a different route. A program never writes SQL: a `store` is queried through the
+algebra ([`99`](99-the-data-tier-means-of-combination.md)) and the runtime's own statements bind
+their parameters. A program never writes HTML: a view is a tree, text is text, and
+[`beck-core/src/html.rs`](../compiler/crates/beck-core/src/html.rs) escapes it on the way out —
+which is the row [`20`](20-phase-2-report.md) verifies with a todo whose text is a `<script>` tag.
+A sigil for either would be a second way to say something the language already refuses to get
+wrong. So §3.5's "no injection / no XSS" row named a mechanism that does not exist for a property
+the system does have, and now says which mechanism actually delivers it.
+
+What that leaves for a sigil is the case `date"…"` is: **a value the language has no literal
+for**, where the alternative is a run-time parse that can fail. `decimal"0.1"` and `bignum"…"` are
+the same shape and are the obvious next two. `regex"…"` is a third, and it wants something this
+repository does not have — a regex engine — rather than anything from this section.
+
+Still unbuilt, and named here because §2.5 has always promised them: a typed literal that returns
+a **typed** `Node` rather than an ordinary one (`sql"..."` returning a `Query[Order]` checked
+against the `store` declarations), **interpolation** inside a body (`{floor}`, which needs a way to
+turn body text into an expression), and a **triple-quoted** body for notation that spans lines.
 
 ## 2.6 Other surface decisions, and their reasons
 

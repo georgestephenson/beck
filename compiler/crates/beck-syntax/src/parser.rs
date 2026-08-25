@@ -1898,6 +1898,32 @@ impl<'a> Parser<'a> {
                 self.bump();
                 Some(Node::lit(Lit::Str(s.into()), span))
             }
+            // `name"body"` is sugar for `name_sigil(raw="body")`, which is §2.3's table and the
+            // whole of the desugaring: what parses the body is an ordinary macro, so nothing here
+            // knows anything about SQL or dates. The `raw=` argument's span is the **body**, not
+            // the literal, so a macro that objects to what it was given can point inside the
+            // quotes with `refuse(msg, raw)`.
+            Some(Raw::Sigil(t)) => {
+                self.bump();
+                let open = span.start + t.name.len() as u32 + 1;
+                let body = Span {
+                    file: span.file,
+                    start: open,
+                    end: open + t.raw.len() as u32,
+                };
+                let kw = Node::form(
+                    sym::KW_ARG,
+                    vec![
+                        Node::sym("raw", body),
+                        Node::lit(Lit::Str(t.raw.as_str().into()), body),
+                    ],
+                    body,
+                );
+                let mut n = Node::symbol(Symbol::new(format!("{}_sigil", t.name)), span);
+                n.args.push(kw);
+                n.applied = true;
+                Some(n)
+            }
             Some(Raw::Keyword(k)) => {
                 self.bump();
                 Some(Node::lit(Lit::Keyword(k.into()), span))

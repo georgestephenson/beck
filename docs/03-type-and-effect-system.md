@@ -135,7 +135,7 @@ type ApiKey = secret[str]          # secret[T] is not Sendable
 | Clients can only *propose* | The client's entire write surface is `send(cmd)` into a typed `Command` union. There is no other mutation path — mass assignment and over-posting have no representation |
 | Authority is one chokepoint | Only `validate` (the `ingress` consumer, holding `Session` capabilities) turns commands into events; forgetting an auth check means the `cap.*` effect goes undischarged — a compile error, not a pentest finding |
 | The log and rules never ship to clients | `ingress`/`durable` are undischargeable on `client`; DCE strips server-only code from client artefacts, verified |
-| No injection / no XSS | `sql"..."`/`html"..."` typed literals: interpolation is bind-parameters / escaped by type (Ur/Web's guarantee) |
+| No injection / no XSS | **Neither notation is ever written.** A program queries a `store` through the algebra and the runtime binds its own parameters; a view is a tree, and `beck-core/src/html.rs` escapes text and attributes on the way out ([`20`](20-phase-2-report.md) verifies it with a todo whose text is a `<script>` tag). This row named `sql"..."`/`html"..."` typed literals until those were built and the examples turned out to be the two the design had already removed the need for ([`02`](02-syntax.md) §2.5) |
 | Least-privilege infra, computed | Effect rows → NetworkPolicy, RBAC, store grants ([`06`](06-kubernetes-and-packaging.md) §6.5) |
 | No arbitrary build-time code | Macro phase is capability-restricted ([`02`](02-syntax.md) §2.4) |
 | Tamper-evident history | State is a fold over an append-only log: "how did this row get here" is `beck replay`, not forensics |

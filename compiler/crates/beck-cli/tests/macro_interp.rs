@@ -1176,3 +1176,219 @@ test "the caller's `here` is the caller's":
     let _ = std::fs::remove_dir_all(&dir);
     assert!(ok && text.contains("1 passed"), "{text}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Typed literals — §2.5's sigils
+// ---------------------------------------------------------------------------------------------
+
+/// **The desugaring is the whole feature**: `name"body"` is `name_sigil(raw="body")`.
+///
+/// Asserted from the macro's side rather than by reading the tree, because what
+/// [`docs/02`](../../../../docs/02-syntax.md) §2.3's table promises is a *calling convention* a
+/// person writes a macro against. Two halves, and they fail on different days: the first if the
+/// name stops gaining `_sigil` or the body stops arriving as a string literal, the second if the
+/// argument stops being keyword-bound — a positional binding would accept any parameter name and
+/// silently make `raw` a spelling nobody had to get right.
+#[test]
+fn a_typed_literal_is_sugar_for_a_macro_call() {
+    let src = "\
+macro tag_sigil(raw):
+    text = node_lit(raw)
+    return quote:
+        $text + \"!\"
+
+test \"sugar\":
+    expect tag\"hi\" == \"hi!\"
+";
+    all_pass("sigil.beck", src);
+
+    let wrong_name = "\
+macro tag_sigil(body):
+    return quote:
+        1
+
+def f() -> Int:
+    return tag\"hi\"
+";
+    let all = codes("sigil-param.beck", wrong_name);
+    assert!(
+        all.contains(&"B0202".to_string()),
+        "the body is bound by the name `raw`, so a macro that calls it something else has no \
+         argument: {all:?}"
+    );
+}
+
+/// **A sigil's body is raw.** No escape is processed, and nothing else looks at it.
+///
+/// This is the gate the notation exists for: `regex"^\d{4}$"` has to reach its macro with the
+/// backslash it was written with, and a body routed through the string lexer's `unescape` would
+/// arrive as `^d{4}$` — or fail to lex at all. `$` and `{}` are in here for the same reason:
+/// the body belongs to whatever parses it, so Beck's own interpolation-shaped punctuation must
+/// pass through untouched.
+#[test]
+fn a_typed_literals_body_is_raw() {
+    let src = "\
+macro raw_sigil(raw):
+    text = node_lit(raw)
+    return quote:
+        $text
+
+test \"the body is what was written\":
+    expect raw\"^\\d{4}-\\d{2}$\" == \"^\\\\d{4}-\\\\d{2}$\"
+    expect raw\"$x $* {}\" == \"$x $* {}\"
+";
+    all_pass("sigil-raw.beck", src);
+}
+
+/// A sigil with no macro behind it names **the sigil somebody wrote**, not the name it desugars to.
+///
+/// `sql_sigil` is a name that appears in no source file, so a bare "cannot find" sends the reader
+/// looking for something they never typed. Red if the note goes.
+#[test]
+fn a_sigil_with_no_macro_says_where_the_name_came_from() {
+    let src = "\
+def f() -> Int:
+    return sql\"select 1\"
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("no-sigil.beck", src);
+    let text = diags.render(&map);
+    assert!(text.contains("B0340"), "{text}");
+    assert!(text.contains("sql_sigil"), "{text}");
+    assert!(
+        text.contains("sql\"…\"") && text.contains("typed literal"),
+        "the note has to name the notation that was written: {text}"
+    );
+}
+
+/// **A macro points inside the literal it was given**, which is §2.5's "errors at the right source
+/// offsets inside the literal".
+///
+/// The caret width is the assertion, and it is the whole point: five characters is the body,
+/// eleven would be `tag"abcde"` and would be this feature not working. It rests on two things that
+/// can each break alone — the parser giving the `raw=` argument the span *inside* the quotes, and
+/// `refuse` honouring a second argument that says where to point.
+#[test]
+fn a_macro_can_point_inside_the_literal_it_was_given() {
+    let src = "\
+macro tag_sigil(raw):
+    refuse(\"no tags today\", raw)
+
+def f() -> Int:
+    return tag\"abcde\"
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("sigil-point.beck", src);
+    let text = diags.render(&map);
+    assert!(
+        text.contains("^^^^^ the macro expanding here refused this"),
+        "the caret should cover the five characters of the body and nothing else: {text}"
+    );
+}
+
+/// **A refusal is reported once.** A macro that refuses was *found*.
+///
+/// Before this, an expansion that failed left the call where it was and the checker then reported
+/// that it could not find the macro's name — two errors, the second contradicting the first, and
+/// on a sigil the second one names a symbol nobody typed. What replaces the call is `refused`,
+/// carrying a fresh type variable so the *caller's* expectation unifies and nothing cascades
+/// there either: this fixture wants an `Int` and is handed the failure.
+#[test]
+fn a_refused_expansion_is_reported_once() {
+    let src = "\
+macro no_sigil(raw):
+    refuse(\"never\", raw)
+
+def f() -> Int:
+    return no\"x\"
+";
+    let all = codes("sigil-once.beck", src);
+    assert_eq!(
+        all,
+        vec!["B0224".to_string()],
+        "the macro was found and refused; nothing else has anything to add: {all:?}"
+    );
+}
+
+/// The two readers a typed literal needs, and what each does when it is asked the wrong thing.
+///
+/// `node_lit` and the compile-time `str_to_int` are both **total** — the sandbox has no unions to
+/// answer `None` with — so the way they say no is a diagnostic. Red if either starts answering
+/// something instead.
+#[test]
+fn the_readers_a_typed_literal_needs_refuse_rather_than_answer() {
+    let not_a_literal = "\
+macro peek_sigil(raw):
+    return quote:
+        $(node_lit(quote: f()))
+
+def f() -> Int:
+    return peek\"x\"
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("sigil-notlit.beck", not_a_literal);
+    let text = diags.render(&map);
+    assert!(
+        text.contains("B0209") && text.contains("is not a literal and has no value"),
+        "{text}"
+    );
+
+    let not_a_number = "\
+macro num_sigil(raw):
+    n = str_to_int(node_lit(raw))
+    return quote:
+        $n
+
+def f() -> Int:
+    return num\"twelve\"
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("sigil-notnum.beck", not_a_number);
+    let text = diags.render(&map);
+    assert!(
+        text.contains("B0209") && text.contains("`twelve` is not an integer"),
+        "{text}"
+    );
+}
+
+/// **`date"…"` is checked by the same function that checks a parsed one**, and costs no effect row.
+///
+/// The library's own tests hold the values; this holds the two things they cannot. First that a
+/// bad date is a *compile* error rather than a run-time raise — `2026-02-30` is the case
+/// `dates.beck` singles out, a date that would silently become the first of March in a language
+/// that let it through. Second that the notation crosses a module boundary, which is what makes it
+/// a facility rather than a trick available inside one file.
+#[test]
+fn a_date_literal_is_refused_at_compile_time_by_the_calendar_itself() {
+    let dir = scratch("sigil-date");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            "\
+import dates
+
+test \"a date literal is a date\":
+    expect date\"2024-02-29\" == Date(year=2024, month=2, day=29)
+",
+        )],
+        &["test"],
+    );
+    assert!(ok && text.contains("1 passed"), "{text}");
+
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            "\
+import dates
+
+def f() -> Date:
+    return date\"2026-02-30\"
+",
+        )],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!ok, "2026-02-30 is not a date: {text}");
+    assert!(
+        text.contains("B0224") && text.contains("there is no such date"),
+        "{text}"
+    );
+}

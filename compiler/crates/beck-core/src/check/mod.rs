@@ -2440,6 +2440,10 @@ impl<'a> Checker<'a> {
                     span,
                 )
             }
+            // An expansion that failed, and said why. A **fresh** type variable rather than
+            // `unit`, so that whatever the call site expected unifies and the one error a reader
+            // sees is the refusal — the same shape `typed_macro` uses for the same reason.
+            sym::REFUSED => Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span),
             sym::QUOTE => {
                 self.error("B0332", "a `quote` survived macro expansion", span);
                 Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span)
@@ -3788,7 +3792,27 @@ impl<'a> Checker<'a> {
                 self.apply_fn(func, &n.args, span)
             }
             None => {
-                self.error("B0340", format!("cannot find `{head}` in this scope"), span);
+                // A typed literal is sugar and the name in the message is not the one anybody
+                // typed, so say where it came from. Without this the reader is told about
+                // `sql_sigil` having written `sql"…"` (`docs/02` §2.5).
+                match head.as_str().strip_suffix("_sigil") {
+                    Some(sigil) => {
+                        let d = Diagnostic::error(
+                            "B0340",
+                            format!("cannot find `{head}` in this scope"),
+                            span,
+                        )
+                        .with_note(format!(
+                            "`{sigil}\"…\"` is a typed literal and expands to \
+                             `{head}(raw=\"…\")`, so what is missing is a macro named `{head}` \
+                             — `docs/02` §2.5"
+                        ));
+                        self.diags.push(d);
+                    }
+                    None => {
+                        self.error("B0340", format!("cannot find `{head}` in this scope"), span)
+                    }
+                }
                 Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span)
             }
         }

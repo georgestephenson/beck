@@ -42,9 +42,11 @@
 //!
 //! # What it does not have
 //!
-//! - **Unions**, and therefore no `Option`: the prelude's `str_to_int`, `str_index_of` and
-//!   `list_get` return one, so they are not compile-time builtins. Indexing (`xs[i]`) is, and
-//!   refuses out of range rather than answering `None`.
+//! - **Unions**, and therefore no `Option`: the prelude's `str_index_of` and `list_get` return
+//!   one, so they are not compile-time builtins. Where the operation is needed anyway the
+//!   compile-time half is **total and refuses** rather than answering `None` — indexing (`xs[i]`)
+//!   is that, and so is `str_to_int`, which a macro parsing a typed literal (§2.5) has no other
+//!   way to do.
 //! - **`match`**, for the same reason: its patterns are about variants.
 //! - **The transcendentals.** `sqrt`, `sin` and `cos` would make the compiler's answer depend on
 //!   the host's libm, which is F9's open question ([`docs/35`](../../../../../docs/35-standards-landscape.md)
@@ -316,6 +318,22 @@ impl<'a> Interp<'a> {
         self.diags.push(
             Diagnostic::error("B0224", msg.to_string(), at)
                 .with_primary_label("refused by the macro expanding here")
+                .with_label(span, "the macro said so here"),
+        );
+        Halt
+    }
+
+    /// A refusal that points where the macro said to, rather than at the call.
+    ///
+    /// The fallback matters: a node the macro *built* has no span, and pointing a diagnostic at
+    /// nothing is worse than pointing it at the call site.
+    fn refusal_at(&mut self, msg: Arc<str>, at: Span, span: Span) -> Halt {
+        if at.is_none() {
+            return self.refusal(msg, span);
+        }
+        self.diags.push(
+            Diagnostic::error("B0224", msg.to_string(), at)
+                .with_primary_label("the macro expanding here refused this")
                 .with_label(span, "the macro said so here"),
         );
         Halt
@@ -1086,6 +1104,20 @@ impl<'a> Interp<'a> {
                 arity(1, self)?;
                 Ok(Val::Bool(s!(0).is_empty()))
             }
+            // The prelude's returns an `Option` and this has no unions, so — as with indexing —
+            // the compile-time half is **total and refuses**. A macro parsing a typed literal
+            // needs a number out of text and has no other way to get one.
+            "str_to_int" => {
+                arity(1, self)?;
+                let text = s!(0);
+                match text.trim().parse::<i64>() {
+                    Ok(n) => Ok(Val::Int(n)),
+                    Err(_) => {
+                        let msg = format!("`{text}` is not an integer");
+                        Err(self.wrong(msg, span))
+                    }
+                }
+            }
             "str_trim" => {
                 arity(1, self)?;
                 Ok(Val::str_(s!(0).trim()))
@@ -1325,6 +1357,25 @@ impl<'a> Interp<'a> {
                 arity(1, self)?;
                 Ok(Val::Bool(n!(0).as_lit().is_some()))
             }
+            // The reader `node_head` is for a symbol; this is its other half. Without it a macro
+            // could ask whether its argument was a literal and never find out *which* one, which
+            // is what a typed literal's body is (§2.5) — the sigil desugaring hands the macro
+            // `raw="…"` and the parse begins by reading that string.
+            "node_lit" => {
+                arity(1, self)?;
+                let node = n!(0);
+                match node.as_lit() {
+                    Some(Lit::Int(n)) => Ok(Val::Int(*n)),
+                    Some(Lit::Float(f)) => Ok(Val::Float(*f)),
+                    Some(Lit::Str(s)) => Ok(Val::Str(s.clone())),
+                    Some(Lit::Bool(b)) => Ok(Val::Bool(*b)),
+                    Some(Lit::Keyword(k)) => Ok(Val::Keyword(k.clone())),
+                    None => Err(self.wrong(
+                        "this node is not a literal and has no value — ask `node_is_lit` first",
+                        span,
+                    )),
+                }
+            }
             "node_sym" => {
                 arity(1, self)?;
                 Ok(Val::Syntax(Node::sym(s!(0).as_ref(), span)))
@@ -1372,9 +1423,26 @@ impl<'a> Interp<'a> {
             // A macro that reads a type and writes code for it meets types it has no rule for.
             // `refuse` is how it says so, at the call site rather than in its own body.
             "refuse" => {
-                arity(1, self)?;
+                if args.len() != 1 && args.len() != 2 {
+                    let msg = format!(
+                        "`refuse` expects a message, and optionally somewhere to \
+                                       point — {} arguments given",
+                        args.len()
+                    );
+                    return Err(self.wrong(msg, span));
+                }
                 let msg = s!(0);
-                Err(self.refusal(msg, span))
+                // With a second argument the diagnostic lands on *that* node rather than on the
+                // call. A macro that parses a typed literal has the body's own span (the sigil
+                // desugaring gives `raw=` the span inside the quotes), so this is how §2.5's
+                // "errors at the right offsets inside the literal" is reached.
+                match args.len() {
+                    2 => {
+                        let at = n!(1).span();
+                        Err(self.refusal_at(msg, at, span))
+                    }
+                    _ => Err(self.refusal(msg, span)),
+                }
             }
             // `splice([a, b])` is several forms where one is expected — the shape §2.4's `derive`
             // returns, and the reason `expand_module` flattens a `do` at the top of a module.
@@ -1558,6 +1626,7 @@ pub const BUILTINS: &[&str] = &[
     "node_head",
     "node_is_call",
     "node_is_lit",
+    "node_lit",
     "node_str",
     "node_sym",
     "node_ty",
@@ -1577,6 +1646,7 @@ pub const BUILTINS: &[&str] = &[
     "str_slice",
     "str_split",
     "str_starts_with",
+    "str_to_int",
     "str_trim",
     "str_upper",
     "trunc",

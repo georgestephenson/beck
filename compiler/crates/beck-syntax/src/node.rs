@@ -327,6 +327,18 @@ pub mod sym {
     /// anything to ask.
     pub const TYPED_MACRO: &str = "typed-macro";
     pub const QUOTE: &str = "quote";
+
+    /// What an expansion that failed leaves where the call was.
+    ///
+    /// The alternative is leaving the call, and then the checker cannot find the macro's name and
+    /// says so — a second, contradictory error about a name that *was* found and refused. The
+    /// checker gives this a fresh type variable, so nothing downstream cascades either.
+    ///
+    /// **Spelled so that no program can write it.** A head the checker matches on and a name a
+    /// program may use are the same namespace, which is what [`RESERVED_FORMS`] exists to police;
+    /// a marker only the compiler ever builds should not cost a word, and `<` cannot begin an
+    /// identifier.
+    pub const REFUSED: &str = "<refused>";
     pub const UNQUOTE: &str = "unquote";
     pub const SPLICE: &str = "unquote-splicing";
     pub const DECORATE: &str = "decorate";

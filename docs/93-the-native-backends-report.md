@@ -7,7 +7,7 @@ backends** — carried since Phase 1 as a shape with the evaluator on both sides
 file — is a three-way one: the tree-walker, LLVM and Cranelift on every call.
 
 Across the corpus, both benchmark suites, both SICP chapters, the examples and the standard library,
-**995<!--c:native-compiled--> definitions compile and 144<!--c:native-refused--> are refused**, and `examples/todo.beck` compiles **all nine of its
+**996<!--c:native-compiled--> definitions compile and 144<!--c:native-refused--> are refused**, and `examples/todo.beck` compiles **all nine of its
 definitions** — the sentence that used to name `validate` as the one left, for a Unicode table, was
 out of date rather than made true again by §93.12: `validate` reaches none of the fifteen primitives
 that section is about. **All 39<!--c:corpus-folds-->** corpus programs compile their `apply_event` — the step

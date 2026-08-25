@@ -461,7 +461,10 @@ impl<'a> Expander<'a> {
 
         match self.apply_macro(&def, &here) {
             Some(out) if self.charge(&out, here.span()) => self.expand(&out, depth + 1),
-            _ => here,
+            // The macro was found and did not produce code — it refused, ran out of budget, or was
+            // called wrongly, and each of those has already been reported. Leaving the call here
+            // would have the checker report a *second* thing, that it cannot find the name.
+            _ => Node::form(sym::REFUSED, Vec::new(), here.span()),
         }
     }
 

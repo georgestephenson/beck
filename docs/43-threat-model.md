@@ -170,9 +170,11 @@ The controls a reader would reasonably assume exist, that do not:
   a hole: `macro_bomb.rs` refuses a doubling macro of **each** kind, one word apart. What it did
   catch is the report going missing rather than the charge — a budget is spent once and refused
   once, and the checker infers a call's arguments inside a rollback, so the first version deleted
-  the only refusal there would ever be and a doubling typed macro checked clean. What remains absent
-  is a bound on the *other* half of F17 — a typed-literal parser's own work — which does not exist
-  to bound yet.
+  the only refusal there would ever be and a doubling typed macro checked clean. The *other* half of
+  F17 — a typed-literal parser's own work — is closed as well, and it closed by the work arriving
+  rather than by anything being built for it: a typed literal desugars to a macro call
+  ([`02`](02-syntax.md) §2.5), so its parser is a macro body and spends the same two budgets. What
+  the finding described as a second surface was one surface named twice.
 
 None of these is a secret, and none of them is prose only:
 `compiler/crates/beck-cli/tests/pending_security.rs` asserts each one **as an absence**, in the

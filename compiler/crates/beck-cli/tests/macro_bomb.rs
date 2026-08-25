@@ -113,6 +113,54 @@ fn a_doubling_typed_macro_is_refused_by_its_own_budget() {
     );
 }
 
+/// **A typed literal's parser is a macro body, and is bounded like one.**
+///
+/// This is the half of F17 that `docs/43` §43.4 recorded as having "nothing to bound yet": the
+/// finding named a *typed-literal parser's own work* as a second, separate thing to bound, and
+/// when typed literals arrived it turned out there was no second thing — `date"…"` desugars to a
+/// macro call (`docs/02` §2.5), so the parser inside it is spending the same budget every other
+/// macro body spends. Written as a gate rather than as an argument, because "it is the same
+/// mechanism" is exactly the kind of claim that stops being true when the mechanism is changed:
+/// red the day a sigil is expanded anywhere but through `apply_macro`.
+#[test]
+fn a_typed_literals_parser_spends_the_same_budget_every_macro_body_does() {
+    let forever = "\
+macro spin_sigil(raw):
+    n = 0
+    while true:
+        n = n + 1
+    return quote:
+        $n
+
+def f() -> Int:
+    return spin\"x\"
+";
+    let all = codes("sigil-spin.beck", forever);
+    assert!(
+        all.contains(&"B0215".to_string()),
+        "a body that does not terminate is refused wherever it was called from: {all:?}"
+    );
+
+    let doubling = "\
+macro two(x):
+    return quote:
+        [$x, $x]
+
+macro wide_sigil(raw):
+    return quote:
+        two(two(two(two(two(two(two(two(two(two(two(two(two(two(two(two(two(two(two(two(
+            two(two(two(two(1))))))))))))))))))))))))
+
+def f() -> Int:
+    return wide\"x\"
+";
+    let all = codes("sigil-wide.beck", doubling);
+    assert!(
+        all.contains(&"B0214".to_string()),
+        "and so is one that produces too much: {all:?}"
+    );
+}
+
 /// …and the same macro at a depth a person would write compiles.
 ///
 /// The other direction, and the one that makes the number a *judgement* rather than a wall: eight
