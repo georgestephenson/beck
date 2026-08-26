@@ -506,7 +506,7 @@ everything in this section is at zero.
 | **Cloud SDKs** (boto3, and the same shape in three other ecosystems) | **S** | Phase 4, beside the managed-cloud path. `external store` and `net.out` already type it; what is missing is that nobody wants to hand-write S3's signature algorithm |
 | **Image handling** (Pillow, sharp, ImageSharp) | **S** | Phase 4. A capability, so linking is the whole answer |
 | **The Python sidecar** ([`09`](09-risks-and-open-questions.md) §9.2) | **S** | Phase 4, unchanged — with §105.2's placement restriction as a **diagnostic** rather than a discovery |
-| **Regex** (`regex"…"`) | **S** | **Unblocked** — §2.5's typed literal macros are named in §8.5.4's successor list, and §104 confirms that half is free of Lane A |
+| **Regex** (`regex"…"`) | **S** | **The notation is built and this is not.** §2.5's typed literals ship — `name"body"` lexes with a **raw** body, which is what `^\d{4}$` needs, and three of them exist in `lib/` — so what is left here is not language work at all: a `regex_sigil` needs a regex engine to compile against, and this repository has none |
 
 The sidecar's diagnostic is worth naming as its own obligation. A `python_service` call inside a fold
 is refused today by `place.rs:760`'s replay-purity check, with a message about fold purity that does

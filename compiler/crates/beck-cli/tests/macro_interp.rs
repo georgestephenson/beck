@@ -711,3 +711,953 @@ test "the derived encoder names every field":
         "importing `json` brought the library's own tests into the program:\n{text}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Typed macros: the same interpreter, with the checker's answers in reach
+// ---------------------------------------------------------------------------------------------
+//
+// `docs/02` §2.4's second flavour. An ordinary `macro` runs before anything has been inferred,
+// which is why `derive_json` above is handed a *declaration*: a model's fields are in its syntax.
+// A `typed macro` is handed an *expression* and asks what the checker made of it, so it is the
+// checker that expands one.
+//
+// What is asserted here is behaviour rather than mechanism — the code a typed macro writes is run,
+// and the two refusals it owes are the ones a person meets first.
+
+/// **The headline: an encoder for a model nobody decorated, from another module.**
+///
+/// `derive_json` can only be used where a declaration is being written, so a `model` that already
+/// exists — in somebody else's file, or three imports away — cannot be given one. `json_of` is
+/// called on the *value*, so it can. That is the whole difference between the two flavours, and it
+/// is asserted across an import because a facility a library cannot ship is a mechanism.
+#[test]
+fn a_typed_macro_writes_the_encoder_for_a_model_nobody_decorated() {
+    let dir = scratch("typed-json");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+type Id = newtype[Str]
+
+model Todo:
+    id: Id
+    text: Str
+    done: Bool
+
+model Board:
+    name: Str
+    todos: list[Todo]
+
+test "the encoder was written from the type rather than from a declaration":
+    expect json_render(json_of(Todo(id=Id("1"), text="milk", done=false))) == "{\"done\":false,\"id\":\"1\",\"text\":\"milk\"}"
+
+test "and it reaches through a list and a newtype the same way":
+    expect json_render(json_of([Id("a"), Id("b")])) == "[\"a\",\"b\"]"
+
+test "a model inside a list inside a model is the recursion going through the expander":
+    expect json_render(json_of(Board(name="week", todos=[Todo(id=Id("1"), text="milk", done=true)]))) == "{\"name\":\"week\",\"todos\":[{\"done\":true,\"id\":\"1\",\"text\":\"milk\"}]}"
+"#,
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("3 passed"), "{text}");
+}
+
+/// One call site, two types, two different programs — which is what a typed macro *is*.
+///
+/// The control the test above does not give: `derive_json` would also pass it, because a decorated
+/// model is a declaration in hand. Writing the same call twice at different types and getting
+/// different code out is the property that needs inference to have run.
+#[test]
+fn one_typed_macro_call_writes_different_code_at_different_types() {
+    let dir = scratch("typed-two");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+model Pair:
+    a: Int
+    b: Int
+
+def encode_pair(p: Pair) -> Str:
+    return json_render(json_of(p))
+
+def encode_int(n: Int) -> Str:
+    return json_render(json_of(n))
+
+test "the same macro, called on two types, wrote two encoders":
+    expect encode_pair(Pair(a=1, b=2)) == "{\"a\":1.0,\"b\":2.0}"
+    expect encode_int(7) == "7.0"
+"#,
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+}
+
+/// `node_ty` in an ordinary `macro` body is refused, and told which word to write.
+///
+/// The honest half of the division: an untyped macro runs before the checker, so the answer does
+/// not exist yet. Saying "cannot find `node_ty`" would be a lie about the reason — the same lie
+/// `macro_sandbox.rs` refuses to tell about `now()`.
+#[test]
+fn an_untyped_macro_body_cannot_ask_what_a_type_is() {
+    let src = "\
+macro guess(x):
+    t = node_ty(x)
+    return quote:
+        $x
+
+def f() -> Int:
+    return guess(1)
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("guess.beck", src);
+    let text = diags.render(&map);
+    assert!(text.contains("B0209"), "{text}");
+    assert!(text.contains("typed macro"), "{text}");
+}
+
+/// A typed macro that has no rule for a type says so, in its own words, at the call.
+///
+/// `json_of` reaches every type former it has a rule for and refuses the rest. Without `refuse` it
+/// would emit something that failed to check for a reason nobody could trace back to the macro,
+/// which is the failure mode a code generator has instead of an error message.
+#[test]
+fn a_typed_macro_refuses_what_it_has_no_rule_for() {
+    let dir = scratch("typed-refuse");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+union Shot:
+    Hit(at: Int)
+    Miss
+
+def f(s: Shot) -> Str:
+    return json_render(json_of(s))
+"#,
+        )],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !ok,
+        "a type `json_of` has no rule for was accepted:\n{text}"
+    );
+    assert!(text.contains("B0224"), "{text}");
+    assert!(
+        text.contains("no rule for Shot") && text.contains("union"),
+        "the message should be the macro's own: {text}"
+    );
+}
+
+/// A typed macro over a *declaration* is refused, and told that is the other flavour's job.
+#[test]
+fn a_typed_macro_cannot_decorate_a_declaration() {
+    let dir = scratch("typed-item");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+json_of:
+    model Todo:
+        id: Str
+"#,
+        )],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!ok, "{text}");
+    assert!(text.contains("B0223"), "{text}");
+}
+
+/// A typed macro whose expansion calls itself at the same type is refused rather than run forever.
+///
+/// The bound that only typed macros need: an untyped one that expands into itself is caught by the
+/// expander's own depth count, and a typed one expands *through the checker*, which is a different
+/// loop. `json_of` recurses on purpose — on something smaller each time — so the bound has to be a
+/// depth rather than a ban.
+#[test]
+fn a_typed_macro_that_expands_into_itself_is_refused() {
+    let src = "\
+typed macro forever(x):
+    return quote:
+        forever($x)
+
+def f() -> Int:
+    return forever(1)
+";
+    let all = codes("forever.beck", src);
+    assert!(
+        all.iter().any(|c| c == "B0201"),
+        "a typed macro that expands into itself should be a diagnostic: {all:?}"
+    );
+}
+
+/// What the checker does to learn a typed macro's argument types leaves nothing behind.
+///
+/// The gate for the rollback. The arguments are inferred once to tell the macro what they are and
+/// again inside whatever it wrote, and only the second time counts — so a macro that *discards* an
+/// argument discards its effects too, because nothing performs them. Inference itself is not rolled
+/// back and must not be: a unification the argument forces is one the expansion would force.
+///
+/// The control is in the same test and is what stops it passing vacuously: the same argument
+/// through a macro that *keeps* it puts `nondet` on the row, so an empty row is a fact about this
+/// macro rather than about the probe never charging anything.
+#[test]
+fn inferring_a_typed_macros_arguments_does_not_charge_their_effects() {
+    let src = "\
+typed macro kind_of(x):
+    t = node_ty(x)
+    return t.name
+
+typed macro through(x):
+    return quote:
+        $x
+
+def dropped() -> Str:
+    return kind_of(now())
+
+def kept() -> Int:
+    return through(now())
+";
+    let placed = compile("probe.beck", src);
+    let row = |name: &str| -> Vec<String> {
+        placed
+            .program
+            .defs
+            .get(name)
+            .unwrap_or_else(|| panic!("`{name}` is defined"))
+            .effects
+            .iter()
+            .map(|e| e.name().to_string())
+            .collect()
+    };
+    assert!(
+        row("dropped").is_empty(),
+        "the discarded argument's effects reached the caller's row: {:?}",
+        row("dropped")
+    );
+    assert!(
+        row("kept").contains(&"nondet".to_string()),
+        "the control says the probe never charges anything: {:?}",
+        row("kept")
+    );
+    // …and the macro still read the argument's real type, which is what it was probed for.
+    let body = format!(
+        "{:?}",
+        placed.program.defs.get("dropped").expect("dropped").body
+    );
+    assert!(body.contains("Str(\"Int\")"), "{body}");
+}
+
+/// …and it reports what is wrong with an argument once rather than twice.
+///
+/// The other half of the same rollback. The arguments are checked to learn their types and checked
+/// again inside whatever the macro wrote, and a reader must not see the second pass.
+#[test]
+fn an_argument_with_a_mistake_in_it_is_reported_once() {
+    let src = "\
+typed macro through(x):
+    return quote:
+        $x
+
+def f() -> Int:
+    return through(missing_name())
+";
+    let all = codes("once.beck", src);
+    let unknown = all.iter().filter(|c| *c == "B0340").count();
+    assert_eq!(
+        unknown, 1,
+        "the argument was reported {unknown} times: {all:?}"
+    );
+}
+
+/// **Exhaustiveness-aware codegen**: one `match` arm per variant, written from the union rather
+/// than by hand.
+///
+/// The third of the things [`docs/02`](../../../../docs/02-syntax.md) §2.4 names typed macros for,
+/// and the one whose spelling is worth writing down: a *variable* number of arms is built with
+/// `node_form`, and a `match` is `(match subject (case pat body)…)`. A fixed constructor inside a
+/// `quote:` needs no reflection at all — a template head that names bound syntax **is** that
+/// syntax, so `case n(at):` is how a computed constructor is written and `case $n(at):` is not.
+///
+/// The control is what makes this a claim about the *type* rather than about one program: the same
+/// macro, the same call site, one more variant in the union, and the generated `match` grows an arm
+/// nobody wrote.
+#[test]
+fn a_typed_macro_writes_one_match_arm_per_variant() {
+    let program = |extra: &str, check: &str| {
+        format!(
+            "\
+union Shot:
+    Hit(at: Int, by: Str)
+    Miss{extra}
+
+typed macro variant_name(v):
+    t = node_ty(v)
+    arms = []
+    for va in t.variants:
+        holes = []
+        for f in va.fields:
+            holes = list_append(holes, node_sym(\"_\"))
+        body = quote:
+            $(va.name)
+        arms = list_append(arms, node_form(\"case\", [node_form(va.name, holes), body]))
+    return node_form(\"match\", concat_lists([[v], arms]))
+
+def f(s: Shot) -> Str:
+    return variant_name(s)
+
+test \"the arms came from the union\":
+{check}
+"
+        )
+    };
+    all_pass(
+        "exhaust.beck",
+        &program(
+            "",
+            "    expect f(Hit(at=1, by=\"a\")) == \"Hit\"\n    expect f(Miss) == \"Miss\"",
+        ),
+    );
+    // One more variant, no edit at the call site, and the generated `match` covers it. A macro that
+    // had written its arms out would not compile against this union at all.
+    all_pass(
+        "exhaust-grown.beck",
+        &program(
+            "\n    Blocked(why: Str)",
+            "    expect f(Blocked(why=\"rain\")) == \"Blocked\"\n    expect f(Miss) == \"Miss\"",
+        ),
+    );
+}
+
+/// `$n(…)` inside a `quote:` is the call `n(…)`, and the diagnostic says which word to drop.
+///
+/// `$` takes an expression, so `$n(at)` evaluates `n(at)` in the macro body — where `at` is a name
+/// the *template* has and the body does not. Reported before the arguments are evaluated, because
+/// otherwise the message is about `at` and the reader is looking at the wrong word.
+#[test]
+fn unquoting_a_head_is_refused_with_the_spelling_that_works() {
+    let src = "\
+union Shot:
+    Hit(at: Int)
+    Miss
+
+macro pick(v):
+    n = node_sym(\"Hit\")
+    return quote:
+        match $v:
+            case $n(at):
+                at
+            case _:
+                0
+
+def f(s: Shot) -> Int:
+    return pick(s)
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("dollar-head.beck", src);
+    let text = diags.render(&map);
+    assert!(text.contains("B0209"), "{text}");
+    assert!(
+        text.contains("write `n(…)` rather than `$n(…)`"),
+        "the message has to carry the spelling that works: {text}"
+    );
+    assert!(
+        !text.contains("cannot find `at`"),
+        "the report should be about the head, not about a name the template owns: {text}"
+    );
+}
+
+/// A typed macro's argument may be another typed macro's call, and the type that reaches the outer
+/// body is the type of what the inner one wrote.
+///
+/// The composition case, and the reason the probe expands rather than guessing: the checker cannot
+/// know what `doubled(1)` is until `doubled` has written it, so inferring the outer call's
+/// arguments means running the inner macro. It is also where the cost lives — an argument expanded
+/// in the probe is expanded again in the real check — which is bounded by the same budget
+/// `macro_bomb.rs` holds and is why nesting typed calls is not free.
+#[test]
+fn a_typed_macro_may_be_called_on_another_typed_macros_answer() {
+    let src = "\
+typed macro doubled(x):
+    return quote:
+        $x + $x
+
+typed macro kind_of(x):
+    t = node_ty(x)
+    return t.name
+
+def f() -> Str:
+    return kind_of(doubled(1))
+";
+    let placed = compile("compose.beck", src);
+    let body = format!("{:?}", placed.program.defs.get("f").expect("f").body);
+    assert!(
+        body.contains("Str(\"Int\")"),
+        "the outer macro should have been told what the inner one wrote: {body}"
+    );
+}
+
+/// Hygiene holds **across the two phases**: an untyped macro's binding, a typed macro's binding and
+/// the caller's own are three different `n`s.
+///
+/// Two expanders run over one module — `beck-macro` before the checker and the checker's own — and
+/// each mints hygiene scopes from its own counter. A scope both of them minted would make a binding
+/// one introduced visible to a reference the other introduced, which is hygiene failing in the one
+/// way it fails *silently*: the program still compiles and means something else. They are kept
+/// apart by parity, and this is the shape that would notice if they were not.
+#[test]
+fn the_two_expanders_do_not_share_a_hygiene_scope() {
+    let src = r#"
+macro plain(do):
+    return quote:
+        n = 100
+        $do
+
+typed macro typed_one(x):
+    return quote:
+        n = 1000
+        $x
+
+def f() -> Int:
+    n = 7
+    inner = typed_one(n)
+    plain():
+        return n + inner
+
+test "each `n` is its own":
+    expect f() == 14
+"#;
+    all_pass("phases.beck", src);
+}
+
+/// A name a typed macro introduces does not capture one the caller wrote.
+///
+/// `json_of` binds `here` so that the expression it was given is evaluated once. Hygiene is what
+/// makes that safe to do in a library: a caller with its own `here` still means their own.
+#[test]
+fn a_typed_macros_own_binding_does_not_capture_the_callers() {
+    let dir = scratch("typed-hygiene");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            r#"
+import json
+
+model Pair:
+    a: Int
+    b: Int
+
+def encoded(here: Pair) -> Str:
+    return json_render(json_of(here))
+
+test "the caller's `here` is the caller's":
+    expect encoded(Pair(a=1, b=2)) == "{\"a\":1.0,\"b\":2.0}"
+"#,
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Typed literals — §2.5's sigils
+// ---------------------------------------------------------------------------------------------
+
+/// **The desugaring is the whole feature**: `name"body"` is `name_sigil(raw="body")`.
+///
+/// Asserted from the macro's side rather than by reading the tree, because what
+/// [`docs/02`](../../../../docs/02-syntax.md) §2.3's table promises is a *calling convention* a
+/// person writes a macro against. Two halves, and they fail on different days: the first if the
+/// name stops gaining `_sigil` or the body stops arriving as a string literal, the second if the
+/// argument stops being keyword-bound — a positional binding would accept any parameter name and
+/// silently make `raw` a spelling nobody had to get right.
+#[test]
+fn a_typed_literal_is_sugar_for_a_macro_call() {
+    let src = "\
+macro tag_sigil(raw):
+    text = node_lit(raw)
+    return quote:
+        $text + \"!\"
+
+test \"sugar\":
+    expect tag\"hi\" == \"hi!\"
+";
+    all_pass("sigil.beck", src);
+
+    let wrong_name = "\
+macro tag_sigil(body):
+    return quote:
+        1
+
+def f() -> Int:
+    return tag\"hi\"
+";
+    let all = codes("sigil-param.beck", wrong_name);
+    assert!(
+        all.contains(&"B0202".to_string()),
+        "the body is bound by the name `raw`, so a macro that calls it something else has no \
+         argument: {all:?}"
+    );
+}
+
+/// **A sigil's body is raw.** No escape is processed, and nothing else looks at it.
+///
+/// This is the gate the notation exists for: `regex"^\d{4}$"` has to reach its macro with the
+/// backslash it was written with, and a body routed through the string lexer's `unescape` would
+/// arrive as `^d{4}$` — or fail to lex at all. `$` and `{}` are in here for the same reason:
+/// the body belongs to whatever parses it, so Beck's own interpolation-shaped punctuation must
+/// pass through untouched.
+#[test]
+fn a_typed_literals_body_is_raw() {
+    let src = "\
+macro raw_sigil(raw):
+    text = node_lit(raw)
+    return quote:
+        $text
+
+test \"the body is what was written\":
+    expect raw\"^\\d{4}-\\d{2}$\" == \"^\\\\d{4}-\\\\d{2}$\"
+    expect raw\"$x $* {}\" == \"$x $* {}\"
+";
+    all_pass("sigil-raw.beck", src);
+}
+
+/// A sigil with no macro behind it names **the sigil somebody wrote**, not the name it desugars to.
+///
+/// `sql_sigil` is a name that appears in no source file, so a bare "cannot find" sends the reader
+/// looking for something they never typed. Red if the note goes.
+#[test]
+fn a_sigil_with_no_macro_says_where_the_name_came_from() {
+    let src = "\
+def f() -> Int:
+    return sql\"select 1\"
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("no-sigil.beck", src);
+    let text = diags.render(&map);
+    assert!(text.contains("B0340"), "{text}");
+    assert!(text.contains("sql_sigil"), "{text}");
+    assert!(
+        text.contains("sql\"…\"") && text.contains("typed literal"),
+        "the note has to name the notation that was written: {text}"
+    );
+}
+
+/// **A macro points inside the literal it was given**, which is §2.5's "errors at the right source
+/// offsets inside the literal".
+///
+/// The caret width is the assertion, and it is the whole point: five characters is the body,
+/// eleven would be `tag"abcde"` and would be this feature not working. It rests on two things that
+/// can each break alone — the parser giving the `raw=` argument the span *inside* the quotes, and
+/// `refuse` honouring a second argument that says where to point.
+#[test]
+fn a_macro_can_point_inside_the_literal_it_was_given() {
+    let src = "\
+macro tag_sigil(raw):
+    refuse(\"no tags today\", raw)
+
+def f() -> Int:
+    return tag\"abcde\"
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("sigil-point.beck", src);
+    let text = diags.render(&map);
+    assert!(
+        text.contains("^^^^^ the macro expanding here refused this"),
+        "the caret should cover the five characters of the body and nothing else: {text}"
+    );
+}
+
+/// **A refusal is reported once.** A macro that refuses was *found*.
+///
+/// Before this, an expansion that failed left the call where it was and the checker then reported
+/// that it could not find the macro's name — two errors, the second contradicting the first, and
+/// on a sigil the second one names a symbol nobody typed. What replaces the call is `refused`,
+/// carrying a fresh type variable so the *caller's* expectation unifies and nothing cascades
+/// there either: this fixture wants an `Int` and is handed the failure.
+#[test]
+fn a_refused_expansion_is_reported_once() {
+    let src = "\
+macro no_sigil(raw):
+    refuse(\"never\", raw)
+
+def f() -> Int:
+    return no\"x\"
+";
+    let all = codes("sigil-once.beck", src);
+    assert_eq!(
+        all,
+        vec!["B0224".to_string()],
+        "the macro was found and refused; nothing else has anything to add: {all:?}"
+    );
+}
+
+/// The two readers a typed literal needs, and what each does when it is asked the wrong thing.
+///
+/// `node_lit` and the compile-time `str_to_int` are both **total** — the sandbox has no unions to
+/// answer `None` with — so the way they say no is a diagnostic. Red if either starts answering
+/// something instead.
+#[test]
+fn the_readers_a_typed_literal_needs_refuse_rather_than_answer() {
+    let not_a_literal = "\
+macro peek_sigil(raw):
+    return quote:
+        $(node_lit(quote: f()))
+
+def f() -> Int:
+    return peek\"x\"
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("sigil-notlit.beck", not_a_literal);
+    let text = diags.render(&map);
+    assert!(
+        text.contains("B0209") && text.contains("is not a literal and has no value"),
+        "{text}"
+    );
+
+    let not_a_number = "\
+macro num_sigil(raw):
+    n = str_to_int(node_lit(raw))
+    return quote:
+        $n
+
+def f() -> Int:
+    return num\"twelve\"
+";
+    let (_, diags, map) = beck_core::compile_or_library_str("sigil-notnum.beck", not_a_number);
+    let text = diags.render(&map);
+    assert!(
+        text.contains("B0209") && text.contains("`twelve` is not an integer"),
+        "{text}"
+    );
+}
+
+/// **`date"…"` is checked by the same function that checks a parsed one**, and costs no effect row.
+///
+/// The library's own tests hold the values; this holds the two things they cannot. First that a
+/// bad date is a *compile* error rather than a run-time raise — `2026-02-30` is the case
+/// `dates.beck` singles out, a date that would silently become the first of March in a language
+/// that let it through. Second that the notation crosses a module boundary, which is what makes it
+/// a facility rather than a trick available inside one file.
+#[test]
+fn a_date_literal_is_refused_at_compile_time_by_the_calendar_itself() {
+    let dir = scratch("sigil-date");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            "\
+import dates
+
+test \"a date literal is a date\":
+    expect date\"2024-02-29\" == Date(year=2024, month=2, day=29)
+",
+        )],
+        &["test"],
+    );
+    assert!(ok && text.contains("1 passed"), "{text}");
+
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            "\
+import dates
+
+def f() -> Date:
+    return date\"2026-02-30\"
+",
+        )],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!ok, "2026-02-30 is not a date: {text}");
+    assert!(
+        text.contains("B0224") && text.contains("there is no such date"),
+        "{text}"
+    );
+}
+
+/// **The two doors into a `Decimal` refuse the same texts.**
+///
+/// `date"…"` could share its whole validator with `parse_date`, because a calendar's is integer
+/// arithmetic. This library's is not — `decimal_of_str` decides validity through `big_of_str`,
+/// which answers a `Result` a macro body has no unions to read — so what is shared is the
+/// *grammar*, factored into `is_decimal_text` and written in the subset both phases run.
+///
+/// This list is `decimal.beck`'s own "text that is not a decimal says so" test, aimed at the other
+/// door. Red the day somebody gives the sigil a second opinion about what a numeral is, which is
+/// the failure that would otherwise show up as a literal a program can write and a string it
+/// cannot — or the reverse.
+#[test]
+fn the_two_doors_into_a_decimal_refuse_the_same_texts() {
+    let dir = scratch("sigil-decimal");
+    for bad in ["1.", "1.2.3", "1.-5", "1e6", "one", ".5", "-.5", "", "-"] {
+        let src = format!(
+            "\
+import decimal
+
+def f() -> Decimal:
+    return decimal\"{bad}\"
+"
+        );
+        let (ok, text) = beck_in(&dir, &[("app.beck", &src)], &["check"]);
+        assert!(
+            !ok,
+            "`{bad}` is not a decimal, and `decimal_of_str` says so: {text}"
+        );
+        assert!(
+            text.contains("B0224") && text.contains("a decimal literal is"),
+            "`{bad}`: {text}"
+        );
+    }
+
+    // …and the control, without which the loop above would pass on a macro that refused
+    // everything.
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            "\
+import decimal
+
+test \"the literal is the number\":
+    expect decimal\"1.25\" == of_units(125, 2)
+    expect decimal\"-0.5\" + decimal\"0.5\" == decimal_zero()
+",
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+}
+
+/// The two bounds a sigil has that the run-time door does not, because an `Int` is not a `Big`.
+///
+/// Eighteen digits is where `str_to_int` stops being safe without case analysis, and past it the
+/// value is genuinely a `Big` — so the refusal names `decimal_of_str` rather than pretending. The
+/// control is the eighteen-digit literal that still compiles: a bound tested only from the failing
+/// side is a bound that could be zero.
+#[test]
+fn a_decimal_literal_says_when_a_value_has_outgrown_the_notation() {
+    let dir = scratch("sigil-decimal-bounds");
+    let case = |lit: &str| {
+        format!(
+            "\
+import decimal
+
+def f() -> Decimal:
+    return decimal\"{lit}\"
+"
+        )
+    };
+
+    let (ok, text) = beck_in(
+        &dir,
+        &[("app.beck", &case("1234567890123456789"))],
+        &["check"],
+    );
+    assert!(
+        !ok && text.contains("decimal_of_str"),
+        "nineteen digits: {text}"
+    );
+
+    let deep = format!("0.{}1", "0".repeat(44));
+    let (ok, text) = beck_in(&dir, &[("app.beck", &case(&deep))], &["check"]);
+    assert!(
+        !ok && text.contains("max_scale"),
+        "past the scale bound: {text}"
+    );
+
+    let (ok, text) = beck_in(
+        &dir,
+        &[("app.beck", &case("123456789012345678"))],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok, "eighteen digits is inside the bound: {text}");
+}
+
+/// **A macro body calls the `def`s of the modules its own module imports.**
+///
+/// It did not, and the way it did not is the point: whether an imported `def` was reachable
+/// depended on whether *that* module happened to declare a macro of its own, because the parse
+/// kept for crossing an import was decided by looking at the imported file. So adding an unused
+/// macro to the other file was the difference between `B0208` and a compile — and `B0208` states
+/// the rule "a `def` in this module", which was not the rule being applied.
+///
+/// Three programs, and the middle one is the regression: it passed before the fix, for a reason
+/// that had nothing to do with it.
+#[test]
+fn a_macro_body_calls_a_def_from_a_module_it_imports() {
+    let helper = "\
+def twice(n: Int) -> Int:
+    return n * 2
+";
+    let app = "\
+import helper
+
+macro four_sigil(raw):
+    n = twice(str_to_int(node_lit(raw)))
+    return quote:
+        $n
+
+test \"an imported def runs at compile time\":
+    expect four\"2\" == 4
+";
+    let dir = scratch("macro-imported-def");
+    let (ok, text) = beck_in(
+        &dir,
+        &[("app.beck", app), ("helper.beck", helper)],
+        &["test"],
+    );
+    assert!(ok && text.contains("1 passed"), "{text}");
+
+    // The same, with a macro in the imported module that nobody calls. This is what used to make
+    // the difference, and now makes none.
+    let with_a_macro = format!("{helper}\nmacro unused(x):\n    return quote:\n        $x\n");
+    let (ok, text) = beck_in(
+        &dir,
+        &[("app.beck", app), ("helper.beck", &with_a_macro)],
+        &["test"],
+    );
+    assert!(ok && text.contains("1 passed"), "{text}");
+
+    // And the limit is unchanged: a module this one does not import is not in scope, at compile
+    // time any more than at run time.
+    let unimported = "\
+macro four_sigil(raw):
+    n = twice(str_to_int(node_lit(raw)))
+    return quote:
+        $n
+
+def f() -> Int:
+    return four\"2\"
+";
+    let (ok, text) = beck_in(
+        &dir,
+        &[("app.beck", unimported), ("helper.beck", helper)],
+        &["check"],
+    );
+    assert!(!ok && text.contains("B0208"), "{text}");
+
+    // **The macro is not in the module that uses it.** This is the case the first version of this
+    // gate did not have, and it is the one a *library* is: `decimal.beck` declares a macro whose
+    // body calls what `decimal.beck` imports, and a program three modules away expands it. The
+    // body resolves in its own module's environment, so what has to be reachable is the closure of
+    // what that module can see — not the closure of what the call site can.
+    let mid = "\
+import helper
+
+macro four_sigil(raw):
+    n = twice(str_to_int(node_lit(raw)))
+    return quote:
+        $n
+";
+    let app_uses_mid = "\
+import mid
+
+test \"a macro from another module still calls that module's imports\":
+    expect four\"2\" == 4
+";
+    let (ok, text) = beck_in(
+        &dir,
+        &[
+            ("app.beck", app_uses_mid),
+            ("mid.beck", mid),
+            ("helper.beck", helper),
+        ],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+}
+
+/// **`bignum"…"` is the only way to write a large integer**, which is what makes it more than a
+/// convenience.
+///
+/// An `Int` literal is sixty-four bits, and every value past that reached a program through
+/// `big_of_str` — which raises, so a constant put `raises(BigError)` on the signature holding it.
+/// The first half of this test is that cost being absent: a `def` with an empty effect row
+/// returning a number no `Int` can hold.
+///
+/// The second half is the two doors agreeing. `bignum.beck` groups digits into limbs twice — once
+/// at run time reading `str_to_int`'s `Option`, once at compile time where there are no unions —
+/// so the four texts the run-time door refuses are aimed at the compile-time one here, and the
+/// library's own tests hold the values against Python's answers.
+#[test]
+fn a_big_integer_literal_is_the_only_way_to_write_one() {
+    let dir = scratch("sigil-bignum");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            "\
+import bignum
+
+def two_to_the_hundred() -> Big:
+    return bignum\"1267650600228229401496703205376\"
+
+test \"a value no Int can hold, in a row that declares nothing\":
+    expect render_big(two_to_the_hundred()) == \"1267650600228229401496703205376\"
+    expect bignum\"2\" * bignum\"1267650600228229401496703205376\" == bignum\"2535301200456458802993406410752\"
+",
+        )],
+        &["test"],
+    );
+    assert!(ok && text.contains("1 passed"), "{text}");
+
+    for bad in ["", "-", "12 34", "twelve", "1.5", "+5"] {
+        let src = format!(
+            "\
+import bignum
+
+def f() -> Big:
+    return bignum\"{bad}\"
+"
+        );
+        let (ok, text) = beck_in(&dir, &[("app.beck", &src)], &["check"]);
+        assert!(
+            !ok,
+            "`{bad}` is not an integer, and `big_of_str` says so: {text}"
+        );
+        assert!(
+            text.contains("B0224") && text.contains("a big-integer literal is"),
+            "`{bad}`: {text}"
+        );
+    }
+
+    // Leading zeros are a way of writing a number rather than a different number, which is what
+    // `big_of_str` documents — so the sigil must not be stricter than the door it mirrors.
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            "\
+import bignum
+
+test \"leading zeros normalise away, as they do through the reader\":
+    expect bignum\"0000000123\" == big(123)
+    expect bignum\"-0\" == zero()
+",
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+}

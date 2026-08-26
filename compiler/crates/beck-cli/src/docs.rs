@@ -378,6 +378,8 @@ fn cli_page() -> Page {
          parses the arguments.</p>\n",
     );
 
+    write_exit_statuses(&mut md, &mut html);
+
     for sub in cmd.get_subcommands() {
         write_command(&mut md, &mut html, sub, &["beck".to_string()]);
     }
@@ -388,6 +390,52 @@ fn cli_page() -> Page {
         markdown: md,
         body: html,
     }
+}
+
+/// What a `beck` process's status means, which is a contract a script depends on.
+///
+/// `docs/35` §35.2's POSIX row asks for this table; the pairing that makes it more than prose is
+/// `docs.rs::the_exit_status_table_is_what_the_binary_does`, which runs an invocation per row and
+/// fails in **both** directions — a row nothing produces, and a status no row names.
+///
+/// Deliberately four and not more. The distinction a script actually makes is "did it work", "did
+/// it work and say no", and "did I call it wrong"; splitting the middle one further — a file that
+/// could not be read against a program that does not compile — would be inventing a contract
+/// nobody has asked for, and every compiler this one is like answers `1` to both.
+const EXIT_STATUSES: &[(i32, &str)] = &[
+    (0, "The command did what was asked."),
+    (
+        1,
+        "The command ran and the answer is no: a program that does not compile, a test that \
+         failed, a file that could not be read.",
+    ),
+    (
+        2,
+        "The invocation was wrong — an unknown subcommand, an unknown flag, a missing argument. \
+         `clap`'s, and the POSIX convention.",
+    ),
+    (
+        101,
+        "The compiler panicked. That is a bug in this binary rather than in the program it was \
+         given, and it is Rust's own status for one.",
+    ),
+];
+
+fn write_exit_statuses(md: &mut String, html: &mut String) {
+    md.push_str("\n## Exit status\n\n| Status | Meaning |\n|---|---|\n");
+    html.push_str(
+        "<h2 id=\"exit-status\">Exit status</h2>\n<table><tr><th>Status</th><th>Meaning</th></tr>\n",
+    );
+    for (code, meaning) in EXIT_STATUSES {
+        let _ = writeln!(md, "| `{code}` | {meaning} |");
+        let _ = writeln!(
+            html,
+            "<tr><td><code>{code}</code></td><td>{}</td></tr>",
+            docgen::escape(meaning)
+        );
+    }
+    md.push('\n');
+    html.push_str("</table>\n");
 }
 
 fn write_command(md: &mut String, html: &mut String, cmd: &clap::Command, path: &[String]) {

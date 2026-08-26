@@ -117,7 +117,7 @@ So:
   to `awfy/`, `clbg/`, `sicp/` or `lib/`**: what the native backends compile is swept over all six
   directories, so the gate fires for a file added to any of them and not only to this one. Each of
   those quantities is marked where it is written, with an HTML comment
-  naming it (`995<!--c:native-compiled-->`), and
+  naming it (`997<!--c:native-compiled-->`), and
   `docs.rs::every_corpus_wide_count_quoted_in_prose_is_the_one_the_tree_has` derives them all
   and fails until every marked number agrees. Run it with `--nocapture` and it prints the
   table; a quantity it derives and nobody quotes fails too, so a figure cannot leave the

@@ -312,9 +312,49 @@ def checked_day(text: Str, year: Int, month: Option[Int], day: Option[Int]) -> D
 ## `str_to_int` accepts a sign and this notation does not, so `"-123"` in a four-digit field is not
 ## the year −123 arriving by the back door.
 def digits(text: Str) -> Option[Int]:
-    if list_all(str_chars(text), lambda c: c >= "0" and c <= "9"):
+    if all_digits(text):
         return str_to_int(text)
     return None
+
+## Whether every character is a digit.
+##
+## Its own function because the compile-time half of this file needs it: a macro body has no
+## unions and therefore no `Option`, so it cannot call `digits`, and `str_to_int` at compile time
+## refuses rather than answering `None` (`docs/02` §2.5). One definition, so the two doors agree
+## about what a digit is.
+def all_digits(text: Str) -> Bool:
+    return list_all(str_chars(text), lambda c: c >= "0" and c <= "9")
+
+# ---------------------------------------------------------------------------------------------
+# `date"YYYY-MM-DD"` — the same calendar, at compile time
+# ---------------------------------------------------------------------------------------------
+
+## A date literal, parsed and checked while the program compiles (`docs/02` §2.5).
+##
+## `parse_date` is the door for text a program was *handed*, and it raises. That is the wrong
+## shape for text a programmer *typed*: a literal that is plainly a date still puts
+## `raises(CalendarError)` on whatever called it, and in this language an effect row is part of a
+## type — so one hard-coded date changes the signature of the function holding it. A sigil has no
+## such cost. `date"2026-08-25"` **is** `Date(year=2026, month=8, day=25)` by the time the checker
+## sees it: no parse at run time, nothing raised, nothing to handle.
+##
+## What checks it is `is_valid` — the function `parse_date` calls — run at compile time on the same
+## three numbers. So `date"2026-02-30"` is refused for exactly the reason
+## `parse_date("2026-02-30")` raises, and the two cannot drift apart, because there are not two of
+## them.
+macro date_sigil(raw):
+    text = node_lit(raw)
+    if str_len(text) != 10 or str_slice(text, 4, 1) != "-" or str_slice(text, 7, 1) != "-":
+        refuse("a date literal is `YYYY-MM-DD`", raw)
+    if not all_digits(str_slice(text, 0, 4) + str_slice(text, 5, 2) + str_slice(text, 8, 2)):
+        refuse("a date literal is `YYYY-MM-DD`, and these are not all digits", raw)
+    year = str_to_int(str_slice(text, 0, 4))
+    month = str_to_int(str_slice(text, 5, 2))
+    day = str_to_int(str_slice(text, 8, 2))
+    if not is_valid(year, month, day):
+        refuse("there is no such date", raw)
+    return quote:
+        Date(year=$year, month=$month, day=$day)
 
 # ---------------------------------------------------------------------------------------------
 # The library's own tests, in the language (`docs/21` §21.2).
@@ -430,6 +470,16 @@ test "a duration is elapsed time, and it moves an instant rather than a date":
     expect after(midnight(Date(year=2024, month=1, day=1)), of_hours(9)) == 1704099600000
     expect time_format(after(midnight(Date(year=2024, month=1, day=1)), of_hours(9))) == "2024-01-01T09:00:00.000Z"
     expect before(0, of_days(1)) == -86400000
+
+test "a date literal is the date, with no parse and nothing raised":
+    # The point of the notation: this `expect` is in a test that declares no effect, and
+    # `parse_date("2026-08-25")` here would put `raises(CalendarError)` on it.
+    expect date"2026-08-25" == Date(year=2026, month=8, day=25)
+    # And the cost, demonstrated rather than argued: the same date through `parse_date` needs a
+    # `try:` here, because a test block's own effect row must be empty and that function raises.
+    expect (try: parse_date("2024-02-29")) == Ok(value=date"2024-02-29")
+    expect render_date(date"1900-01-01") == "1900-01-01"
+    expect days_between(date"2024-02-28", date"2024-03-01") == 2
 
 test "a duration renders as ISO 8601, in the units that are a fixed length":
     expect render_duration(of_millis(0)) == "PT0S"

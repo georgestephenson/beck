@@ -310,8 +310,13 @@ async fn once(url: String) -> Result<Reply, Failure> {
     Ok(Reply::Body(body.to_bytes().to_vec()))
 }
 
-/// Mozilla's trust store, and the provider named rather than defaulted — rustls picks one for you
-/// only when exactly one is compiled in, and "exactly one" is a property of feature unification.
+/// Mozilla's trust store, the provider named rather than defaulted — rustls picks one for you
+/// only when exactly one is compiled in, and "exactly one" is a property of feature unification —
+/// and the protocol versions [`beck_rt::outbound::TLS_VERSIONS`] names.
+///
+/// This client is deliberately not a program's ([`super::fetch`]'s header says why), and the one
+/// thing it must not differ about is which TLS it will speak: `docs/12`'s row is "TLS 1.3, no
+/// legacy downgrade", and two lists would be two chances to write 1.2 back in.
 fn client_config() -> Arc<tokio_rustls::rustls::ClientConfig> {
     use std::sync::OnceLock;
     static CONFIG: OnceLock<Arc<tokio_rustls::rustls::ClientConfig>> = OnceLock::new();
@@ -322,8 +327,8 @@ fn client_config() -> Arc<tokio_rustls::rustls::ClientConfig> {
             let mut config = tokio_rustls::rustls::ClientConfig::builder_with_provider(Arc::new(
                 tokio_rustls::rustls::crypto::aws_lc_rs::default_provider(),
             ))
-            .with_safe_default_protocol_versions()
-            .expect("the default protocol versions are supported by the provider")
+            .with_protocol_versions(beck_rt::outbound::TLS_VERSIONS)
+            .expect("TLS 1.3 is supported by the provider")
             .with_root_certificates(roots)
             .with_no_client_auth();
             config.alpn_protocols = vec![b"http/1.1".to_vec()];

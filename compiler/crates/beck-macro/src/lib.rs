@@ -36,6 +36,17 @@
 //! whose value is reflected back into the template — so `$x` where `x` is a parameter is the
 //! caller's code, and `$(n * 2)` is a literal. That is the whole difference from the template
 //! expander this used to be: a `let` in a macro body now *computes* rather than substituting.
+//!
+//! And `refuse("…")` is how a body says it has no rule for what it was given — a code generator
+//! that meets something it cannot write for otherwise emits code that fails to check somewhere
+//! else, with a message about lines the reader never wrote.
+//!
+//! # The two phases
+//!
+//! An ordinary `macro` is expanded here, before anything has been checked. A `typed macro` is left
+//! exactly as written by this pass and expanded by the **checker**, because its body asks what its
+//! arguments were inferred to be; [`typed`] is that half, and it is the same interpreter with one
+//! more name in scope.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -45,10 +56,12 @@ use beck_diag::{Diagnostic, Diagnostics, Span};
 use beck_syntax::{sym, Lit, Node, Scope, Symbol};
 
 pub mod interp;
+pub mod typed;
 mod ui;
 pub mod vocabulary;
 
 pub use interp::{Val, BUILTINS, MAX_STEPS, RESTRICTED};
+pub use typed::{DeclInfo, Fields, TyKind, TyRepr, TypeEnv, TypedExpander, Variants};
 pub use ui::expand_ui;
 
 /// How deep a macro may expand before the expander decides it is not going to terminate.
@@ -57,7 +70,7 @@ pub use ui::expand_ui;
 /// Walking into a form's arguments is not an expansion, and counting it here is what used to make
 /// a 65-level-deep expression with no macros in it report that macro expansion had not terminated.
 /// The structural walk is bounded by [`Nesting`] against the ceiling the whole front end shares.
-const MAX_DEPTH: u32 = 64;
+pub const MAX_DEPTH: u32 = 64;
 
 /// How many nodes a module's macros may **produce**, in total.
 ///
@@ -86,6 +99,18 @@ const MAX_DEPTH: u32 = 64;
 /// refused.
 pub const MAX_EXPANSION: u64 = 100_000;
 
+/// The expansion budget's refusal, in one place because two callers report it: the meter itself,
+/// and a checker whose probe threw the first report away ([`typed::TypedExpander::exhausted`]).
+pub(crate) fn too_much(span: Span) -> Diagnostic {
+    Diagnostic::error("B0214", "macro expansion produced too much", span)
+        .with_primary_label("the expander stopped here")
+        .with_note(format!(
+            "the budget is {MAX_EXPANSION} nodes for the whole module, and expansion is bounded by \
+             what it *produces* rather than by how deep it goes: a macro that doubles its output is \
+             shallow, terminates, and is enormous"
+        ))
+}
+
 #[derive(Clone, Debug)]
 struct MacroDef {
     name: Arc<str>,
@@ -93,6 +118,10 @@ struct MacroDef {
     /// The `do` block of the macro's body.
     body: Node,
     span: Span,
+    /// `typed macro` — expanded by the checker rather than here (§2.4, [`typed`]). Collected in
+    /// the same table as an untyped one so that the flat namespace is one namespace: two macros of
+    /// a name collide whichever kind they are, and `B0200` is what says so.
+    typed: bool,
 }
 
 pub struct Expander<'a> {
@@ -112,6 +141,9 @@ pub struct Expander<'a> {
     /// How deep into the tree this walk is. Separate from the expansion depth above, because they
     /// bound different things and only one of them means a macro is misbehaving.
     nesting: Nesting,
+    /// What the checker inferred about the call being expanded — `Some` only while a
+    /// [`typed::TypedExpander`] is driving, which is the whole difference between the two phases.
+    types: Option<&'a TypeEnv>,
     diags: &'a mut Diagnostics,
 }
 
@@ -151,20 +183,16 @@ pub fn expand_module_measured(module: &Node, diags: &mut Diagnostics) -> (Node, 
 }
 
 fn expand_module_inner(module: &Node, imported: &[&Node], diags: &mut Diagnostics) -> (Node, u64) {
-    let mut ex = Expander {
-        macros: HashMap::new(),
-        defs: HashMap::new(),
-        next_scope: 1,
-        steps: interp::MAX_STEPS,
-        steps_spent: false,
-        fuel: MAX_EXPANSION,
-        spent: false,
-        nesting: Nesting::new(),
-        diags,
-    };
+    let mut ex = Expander::collecting(diags);
     // The imports first, so a macro this module declares shadows nothing silently: `B0200` fires on
     // the second definition of a name, and the second one is this module's.
-    let brings_macros = imported.iter().any(|m| declares_a_macro(m));
+    //
+    // "Are there macros here at all" is asked of **every** module in play, this one included. Asked
+    // of the imports alone it made whether a macro body could call an imported `def` depend on
+    // whether that other module happened to declare a macro of its own — so adding an unused macro
+    // to the imported file was the difference between `B0208` and a compile, and `B0208` states a
+    // rule ("a `def` in this module") that was not the one being applied.
+    let brings_macros = declares_a_macro(module) || imported.iter().any(|m| declares_a_macro(m));
     for m in imported {
         ex.collect_macros_from(m, brings_macros);
     }
@@ -179,6 +207,13 @@ fn expand_module_inner(module: &Node, imported: &[&Node], diags: &mut Diagnostic
         }
         // A `macro` definition is consumed by the expander and does not survive into the program.
         if item.is_form(sym::MACRO) {
+            continue;
+        }
+        // A `typed macro` survives this phase untouched, and is consumed by the checker. Its body
+        // is a template like any macro's, so expanding *into* it would expand code that has not
+        // been called yet.
+        if item.is_form(sym::TYPED_MACRO) {
+            items.push(item.clone());
             continue;
         }
         let expanded = ex.expand(item, 0);
@@ -204,10 +239,19 @@ fn expand_module_inner(module: &Node, imported: &[&Node], diags: &mut Diagnostic
     )
 }
 
-/// Whether a parsed module declares a macro at all — the one question worth asking before copying
-/// anything out of it.
-fn declares_a_macro(module: &Node) -> bool {
-    module.args.iter().any(|i| i.is_form(sym::MACRO))
+/// Whether a parsed module declares a **typed** macro — the question the checker asks before
+/// collecting anything, since only a typed macro is its to expand.
+pub(crate) fn declares_a_typed_macro(module: &Node) -> bool {
+    module.args.iter().any(|i| i.is_form(sym::TYPED_MACRO))
+}
+
+/// Whether a parsed module declares a macro of either kind — the one question worth asking before
+/// copying anything out of it.
+pub(crate) fn declares_a_macro(module: &Node) -> bool {
+    module
+        .args
+        .iter()
+        .any(|i| i.is_form(sym::MACRO) || i.is_form(sym::TYPED_MACRO))
 }
 
 /// Every item a macro's answer stands for, with the `do`s it is wrapped in taken off.
@@ -224,6 +268,22 @@ fn flatten_into(node: &Node, out: &mut Vec<Node>) {
 }
 
 impl<'a> Expander<'a> {
+    /// An expander with nothing collected and the module's budgets full.
+    pub(crate) fn collecting(diags: &'a mut Diagnostics) -> Expander<'a> {
+        Expander {
+            macros: HashMap::new(),
+            defs: HashMap::new(),
+            next_scope: 1,
+            steps: interp::MAX_STEPS,
+            steps_spent: false,
+            fuel: MAX_EXPANSION,
+            spent: false,
+            nesting: Nesting::new(),
+            types: None,
+            diags,
+        }
+    }
+
     /// The macros and compile-time-callable `def`s of one module.
     ///
     /// `elsewhere` says whether some *other* module in scope declares a macro. A module with no
@@ -232,8 +292,8 @@ impl<'a> Expander<'a> {
     /// have nothing that could ever call one. That guard has to widen by exactly one word once
     /// macros are importable: a module with no macros that *imports* one still has to hand over its
     /// definitions, because the imported macro's body may call them.
-    fn collect_macros_from(&mut self, module: &Node, elsewhere: bool) {
-        let has_macros = elsewhere || module.args.iter().any(|i| i.is_form(sym::MACRO));
+    pub(crate) fn collect_macros_from(&mut self, module: &Node, elsewhere: bool) {
+        let has_macros = elsewhere || declares_a_macro(module);
 
         for item in &module.args {
             // A `def` is callable from a macro body, as the definition was *written*: expansion
@@ -256,7 +316,8 @@ impl<'a> Expander<'a> {
                 }
                 continue;
             }
-            if !item.is_form(sym::MACRO) || item.args.len() < 3 {
+            let typed = item.is_form(sym::TYPED_MACRO);
+            if !(item.is_form(sym::MACRO) || typed) || item.args.len() < 3 {
                 continue;
             }
             let Some(name) = item.args[0].as_var() else {
@@ -275,6 +336,7 @@ impl<'a> Expander<'a> {
                 params,
                 body: item.args[2].clone(),
                 span: item.span(),
+                typed,
             };
             if self.macros.insert(name.name.clone(), def).is_some() {
                 self.diags.push(
@@ -289,9 +351,19 @@ impl<'a> Expander<'a> {
         }
     }
 
+    /// A scope no other expansion has, **in either phase**.
+    ///
+    /// Two expanders run over one module — this one before the checker and
+    /// [`typed::TypedExpander`] inside it — and a scope both of them minted would make a binding one
+    /// introduced visible to a reference the other introduced. That is hygiene failing, and it is
+    /// the one way it can fail *silently*, so the two are kept apart by **parity** rather than by an
+    /// argument about how many scopes either can spend: this one counts the odd numbers and the
+    /// typed expander counts the even ones. A bound would have had to hold for expansions that
+    /// mint a scope and then *fail* — an arity error mints one and charges nothing — and the number
+    /// of those is bounded only by how many macro calls a source file can hold.
     fn fresh_scope(&mut self) -> Scope {
         let s = Scope(self.next_scope);
-        self.next_scope += 1;
+        self.next_scope += 2;
         s
     }
 
@@ -304,22 +376,13 @@ impl<'a> Expander<'a> {
     /// subsystem over). It also stops the moment the budget does, so the *accounting* is bounded by
     /// the budget it is accounting for — a macro that produced a billion nodes is refused after a
     /// hundred thousand of them have been counted, not after a billion.
-    fn charge(&mut self, out: &Node, span: Span) -> bool {
+    pub(crate) fn charge(&mut self, out: &Node, span: Span) -> bool {
         let mut stack = vec![out];
         while let Some(node) = stack.pop() {
             if self.fuel == 0 {
                 if !self.spent {
                     self.spent = true;
-                    self.diags.push(
-                        Diagnostic::error("B0214", "macro expansion produced too much", span)
-                            .with_primary_label("the expander stopped here")
-                            .with_note(format!(
-                                "the budget is {MAX_EXPANSION} nodes for the whole module, and \
-                                 expansion is bounded by what it *produces* rather than by how \
-                                 deep it goes: a macro that doubles its output is shallow, \
-                                 terminates, and is enormous"
-                            )),
-                    );
+                    self.diags.push(too_much(span));
                 }
                 return false;
             }
@@ -330,7 +393,7 @@ impl<'a> Expander<'a> {
     }
 
     /// Expand a node bottom-up, then re-expand if the node itself was a macro call.
-    fn expand(&mut self, n: &Node, depth: u32) -> Node {
+    pub(crate) fn expand(&mut self, n: &Node, depth: u32) -> Node {
         // Once the budget is gone nothing else is expanded: the module is not going to compile, and
         // carrying on would be spending the rest of the compile on a program already refused.
         if self.spent {
@@ -395,15 +458,24 @@ impl<'a> Expander<'a> {
         let Some(def) = self.macros.get(name.as_str()).cloned() else {
             return here;
         };
+        // A typed macro is the checker's to expand: its body asks what its arguments were inferred
+        // to be, and nothing has been inferred yet. Left exactly as written, so the call site the
+        // checker reports against is the one somebody typed.
+        if def.typed {
+            return here;
+        }
 
         match self.apply_macro(&def, &here) {
             Some(out) if self.charge(&out, here.span()) => self.expand(&out, depth + 1),
-            _ => here,
+            // The macro was found and did not produce code — it refused, ran out of budget, or was
+            // called wrongly, and each of those has already been reported. Leaving the call here
+            // would have the checker report a *second* thing, that it cannot find the name.
+            _ => Node::form(sym::REFUSED, Vec::new(), here.span()),
         }
     }
 
     /// One expansion step: the four-part dance described at the top of this module.
-    fn apply_macro(&mut self, def: &MacroDef, call: &Node) -> Option<Node> {
+    pub(crate) fn apply_macro(&mut self, def: &MacroDef, call: &Node) -> Option<Node> {
         let scope = self.fresh_scope();
 
         // Keyword arguments bind by name — which is how the block rule's `do=` reaches a macro
@@ -453,7 +525,7 @@ impl<'a> Expander<'a> {
             return None;
         }
 
-        let out = self.macro_result(def, env)?;
+        let out = self.macro_result(def, env, call.span())?;
         // The flip: call-site identifiers lose the scope they gained, template identifiers gain it.
         Some(
             out.flip_scope(scope)
@@ -466,9 +538,16 @@ impl<'a> Expander<'a> {
     /// The body is ordinary Beck ([`interp`]); the module's step budget is threaded through here
     /// rather than owned by the interpreter, because a module compiles once and its macros share
     /// what that compile is allowed to cost.
-    fn macro_result(&mut self, def: &MacroDef, env: HashMap<Arc<str>, Val>) -> Option<Node> {
+    fn macro_result(
+        &mut self,
+        def: &MacroDef,
+        env: HashMap<Arc<str>, Val>,
+        call: Span,
+    ) -> Option<Node> {
         let mut interp =
-            interp::Interp::new(&self.defs, &mut *self.diags, self.steps, self.steps_spent);
+            interp::Interp::new(&self.defs, &mut *self.diags, self.steps, self.steps_spent)
+                .knowing(self.types)
+                .called_at(call);
         let out = interp.run_body(&def.name, &def.body, env, def.span);
         self.steps = interp.steps;
         self.steps_spent = interp.exhausted;

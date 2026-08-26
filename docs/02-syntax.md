@@ -137,7 +137,7 @@ Additional block forms, all sugar over the same rule:
 | `f(x): expr` (single line) | `f(x, do=quote(expr))` |
 | `else:` / `catch e:` clauses after a block | extra keyword args: `else_=quote(...)`, `catch=quote(...)` |
 | `@deco` before `def` | `deco(quote(def ...))` — a real AST transform |
-| `q"..."` typed literal | `q_sigil(raw="...", span=...)` expanded at compile time |
+| `q"..."` typed literal | `q_sigil(raw="...")` expanded at compile time |
 
 `@decorator` deserves emphasis: Python programmers already know and love decorator syntax, but in
 Python a decorator only sees a *function object*. In Beck, `@server`, `@memo`, `@component`,
@@ -156,6 +156,12 @@ macro derive(*traits, do):
     ty = do.as_model()
     impls = [gen_impl(t, ty) for t in traits]     # ordinary Beck code, compile time
     return splice([do, *impls])
+
+typed macro json_of(v):
+    t = node_ty(v)                                # what the checker made of `v`
+    if t.kind == "model":
+        ...                                       # a field at a time, out of the type
+    return refuse("no rule for " + t.name)        # said at the call, in the macro's words
 ```
 
 Design decisions:
@@ -174,7 +180,9 @@ Design decisions:
   `postinstall` leave open.
 - **Typed macros.** Two flavours, as in Nim: `macro` (untyped AST in, AST out, expands before type
   checking) and `typed macro` (receives the AST *with* inferred types attached — needed for
-  `derive`, ORM-style query building, and exhaustiveness-aware codegen).
+  ORM-style query building and exhaustiveness-aware codegen). The division is which of the two
+  things a macro is handed: a `macro` takes a **declaration**, whose fields are in its syntax, and a
+  `typed macro` takes an **expression**, which is only a type once something has inferred it.
 - **Expansion is incremental and cached.** Keyed by the macro's own content hash plus input `Node`
   hash, memoised in Salsa (§4.6). Macro-heavy code must not destroy IDE latency.
 
@@ -183,31 +191,72 @@ these.** Built: hygiene by sets of scopes from the first commit, `$x` unquotes a
 expanded to a fixpoint, four independent resource bounds (`B0201` expansion depth, `B0213`
 nesting, `B0214` production budget, `B0215` the interpreter's step budget), and **a macro body
 that is ordinary Beck, evaluated at compile time** ([`102`](102-the-macro-interpreter-report.md)):
-bindings, `if`, `for`, `while`, lambdas, calls to the module's own `def`s and to the pure part of
-the prelude, `node_*` reflection over syntax, and `splice([…])` returning several definitions where
-one was written. `$e` is an expression whose *value* is reflected into the template, so `$x` is the
+bindings, `if`, `for`, `while`, lambdas, calls to the `def`s of this module and of the ones it
+imports and to the pure part of the prelude, `node_*` reflection over syntax, and `splice([…])`
+returning several definitions where one was written. `$e` is an expression whose *value* is reflected into the template, so `$x` is the
 caller's code and `$(n * 2)` is a literal. The environment is capability-restricted as this section
 demands, and `macro_sandbox.rs` is what says so: a whitelist, the effectful primitives refused by
-name (`B0207`), and an enumeration over the prelude that fails when a new one appears.
+name (`B0207`), and an enumeration over the prelude that fails when a new one appears. Where a
+prelude primitive returns an `Option` — which a sandbox with no unions cannot represent — the
+compile-time half is **total and refuses**: indexing (`xs[i]`) is that, and so is `str_to_int`,
+which §2.5's typed literals need to turn a body into a number.
 
 **And a macro can decorate a declaration**, which is what the `derive` sketch above is: a block
 passed to a macro *in item position* holds declarations, a `quote:` holds them too, `$` unquotes
 where a **type** and where a **field name** go, and a `do` at module level is flattened all the way
 down — so a macro takes a `model`, reads its fields out of the syntax, and emits an `impl` that
-names each one. `examples/derive.beck` is the program, and it closes the row
+names each one. [`lib/json.beck`](../compiler/lib/json.beck)'s `derive_json` is the program, and
+it closes the row
 [`46`](46-standard-library-report.md) §46.16 and `prelude.rs` have both carried since the standard
 library was written: turning a `model` into a `Json` is generated rather than written, with **no
 reflection in the running program**. The `$`-in-a-type rule is what hygiene makes necessary rather
 than convenient — a type name *written* in a template gets a fresh scope and refers to nothing, so
 the generated `impl` has to unquote the caller's own name.
 
-Not built: **the half that wants the checker's answers, and the half that wants a run time** —
-typed macros, `derive`'s `.as_model()` sugar, `inject`/`unsafe_macro`, Salsa-memoised expansion,
-nested quoting's `(quote depth node)`, and §2.5's typed literal macros. The `derive` sketch above is
-written in two spellings the language does not have: a list comprehension (`for` inside `[…]` does
-not parse, in a macro body or anywhere else — a `for` loop that appends is how that is written) and
-`*traits`, since a parameter list has no rest form. `.as_model()` is a third: `node_args` reads the
-declaration, which is the same information with more punctuation.
+**And a `typed macro` is expanded by the checker**, which is where its arguments have types. Its
+body is the same language an ordinary macro body is, with one name added — `node_ty(e)`, the type
+the checker gave that expression — and what it answers is read through the ordinary record notation
+rather than through a family of builtins:
+
+| Written | Answers |
+|---|---|
+| `t.name` | `"Int"`, `"list"`, `"Todo"` — the head, with no arguments |
+| `t.kind` | `"builtin"`, `"model"`, `"union"`, `"newtype"`, `"fn"`, `"param"`, `"unknown"` |
+| `t.args` | `list[Int]` answers `[Int]`; a function answers its parameter types, and `t.result` its result |
+| `t.fields` | a model's fields, as `{name, ty}` records, with the type's own arguments substituted in — so `Box[Int]`'s field is an `Int` and not a `T` |
+| `t.variants` | a union's variants, as `{name, fields}` records |
+| `t.inner` | what a `newtype` wraps |
+
+`fields`, `variants` and `inner` are read **on access** rather than carried in the value, because a
+model whose field mentions itself would otherwise not be a finite value. Recursion is through the
+**expander**: a typed macro emits a call to itself on something smaller and the checker expands
+that in turn, which is what `lib/json.beck`'s `json_of` does to reach a field of a model of a list.
+A compile-time helper cannot do that job, because it is an ordinary `def` and would have to
+typecheck as ordinary code — and a function over a *type* has no Beck type. And because a macro that
+writes code from a type meets types it has no rule for, **`refuse("…")`** reports the macro
+author's own message at the call site (`B0224`) rather than emitting something that fails to check
+somewhere else.
+
+Two refusals go with it: `node_ty` in an untyped `macro` body says which word to write rather than
+that the name does not exist, and a `typed macro` decorating a *declaration* is `B0223` — a
+declaration has nothing inferred about it, so that is the other flavour's job.
+
+Not built: **the half that wants a run time, and the sugar** — `derive`'s `.as_model()`,
+`inject`/`unsafe_macro`, Salsa-memoised expansion, nested quoting's `(quote depth node)`, and
+§2.5's typed literal macros. The `derive` sketch above is written in two spellings the language does
+not have: a list comprehension (`for` inside `[…]` does not parse, in a macro body or anywhere else
+— a `for` loop that appends is how that is written) and `*traits`, since a parameter list has no
+rest form. `.as_model()` is a third: `node_args` reads the declaration, which is the same
+information with more punctuation.
+
+**Exhaustiveness-aware codegen** — the third thing this section names typed macros for — needs
+nothing further, and the spelling is worth writing down because the obvious one is wrong. A
+constructor a macro computed is written **`case n(at):`** inside a `quote:`, not `case $n(at):`: a
+template head that names bound syntax *is* that syntax, while `$` takes an expression, so the second
+reads as the compile-time call `n(at)` and is refused with the first as its suggestion. A *variable*
+number of arms is built with `node_form`, because a `match` is `(match subject (case pat body)…)`
+like any other form. `macro_interp.rs` generates one arm per variant of a union and then grows the
+union by one, with no edit at the call site.
 
 **And a macro crosses a module boundary**, so a library can ship one — which is what turns every
 mechanism above into a facility. `lib/json.beck` is the first: `import json` and `derive_json:` over
@@ -244,15 +293,72 @@ k  = k8s_patch"""spec: {containers: [{name: app, ...}]}"""
 re = regex"^\d{4}-\d{2}$"                              # compiled, groups typed
 ```
 
-Each is a compile-time macro that parses its own body, reports errors *at the right source offsets
-inside the literal*, and returns typed `Node`s. `sql"..."` returns a `Query[Order]` whose columns are
-checked against the `store` declarations, so a typo is a compile error and interpolation is
-parameter-bound (injection is unrepresentable, as in Ur/Web).
+Each is a compile-time macro that parses its own body and reports errors *at the right source
+offsets inside the literal*.
 
-**Status: none of these exist** — not in the lexer, not in the expander. A typed literal macro is
-a compile-time macro that parses its own body, so the whole section arrives with §2.4's
-interpreter ([`08`](08-roadmap.md) §8.5.4's first item); the `sql`/`html` rows are the mechanism
-the security suite already points at for injection and XSS.
+**The notation is built.** `name"body"` lexes as one token and desugars to `name_sigil(raw="body")`
+— §2.3's table, and the whole of the mechanism: what parses the body is an ordinary macro, so
+nothing in the lexer or the parser knows anything about SQL or dates. Three properties are what
+make it usable, and each is a gate in `macro_interp.rs`:
+
+- **The body is raw.** No escape is processed and nothing else looks at it, so `regex"^\d{4}$"`
+  reaches its macro with the backslash it was written with.
+- **The body has its own span**, the one inside the quotes, and `refuse(msg, raw)` reports there —
+  so a macro's objection underlines the ten characters it is about rather than the whole
+  expression.
+- **A sigil with no macro behind it names the sigil that was written**, because `sql_sigil` is a
+  name that appears in no source file and a bare "cannot find" sends the reader after something
+  they never typed.
+
+A macro body reads its body with **`node_lit`** — the reader `node_head` is for a symbol and there
+was none for a literal — and turns text into numbers with **`str_to_int`**, which at compile time
+is total and refuses, the same shape indexing has and for the same reason (§2.4's sandbox has no
+unions to answer `None` with).
+
+**The first typed literal is `date"YYYY-MM-DD"`**, in [`lib/dates.beck`](../compiler/lib/dates.beck),
+and it is worth saying why that one rather than the four above. A `Date` is a value the language
+has no literal for, so the only way to write one down was `parse_date("2026-08-25")` — which
+**raises**, because it is the door for text a program was *handed*. In this language an effect row
+is part of a type, so one hard-coded date put `raises(CalendarError)` on the signature of whatever
+held it. `date"2026-08-25"` **is** `Date(year=2026, month=8, day=25)` by the time the checker sees
+it: no parse at run time, nothing raised, nothing to handle. What checks it is `is_valid` — the
+function `parse_date` calls — run at compile time on the same three numbers, so `date"2026-02-30"`
+is refused for exactly the reason `parse_date("2026-02-30")` raises, and the two cannot drift
+apart because there are not two of them.
+
+**`sql"..."` and `html"..."` are not next, and the reason is a finding rather than a schedule.**
+They were this section's headline examples because their value was stated as a security property —
+"injection is unrepresentable", "XSS-impossible by construction" — and Beck already has both
+properties by a different route. A program never writes SQL: a `store` is queried through the
+algebra ([`99`](99-the-data-tier-means-of-combination.md)) and the runtime's own statements bind
+their parameters. A program never writes HTML: a view is a tree, text is text, and
+[`beck-core/src/html.rs`](../compiler/crates/beck-core/src/html.rs) escapes it on the way out —
+which is the row [`20`](20-phase-2-report.md) verifies with a todo whose text is a `<script>` tag.
+A sigil for either would be a second way to say something the language already refuses to get
+wrong. So §3.5's "no injection / no XSS" row named a mechanism that does not exist for a property
+the system does have, and now says which mechanism actually delivers it.
+
+What that leaves for a sigil is the case `date"…"` is: **a value the language has no literal
+for**, where the alternative is a run-time parse that can fail. `decimal"1.25"` is the second, in
+[`lib/decimal.beck`](../compiler/lib/decimal.beck), and it is where the pattern's *limit* shows.
+A date's validator is integer arithmetic, so the macro runs `is_valid` as written; this library's
+decides validity through a `Result`, which a macro body has no unions to read. So only the
+**grammar** is shared — `is_decimal_text`, written in the subset both phases run — and the *value*
+is built twice, out of an `Int` at compile time and a `Big` at run time, with a differential in the
+library's own tests holding the two together. That subset is narrower than it looks: `list_get` and
+`str_index_of` answer an `Option`, so a function meant for both phases recovers a split string with
+`str_starts_with`/`str_replace` rather than by indexing what `str_split` returned. **`bignum"…"` is the third, and it is not a convenience at all**: an `Int` literal is
+sixty-four bits, so until it existed there was **no way to write a large integer in Beck** — every
+value past that reached a program through `big_of_str`, which raises. The macro groups the digits
+into base-10,000 limbs at compile time and emits the library's own `normalise`, so
+`bignum"1267650600228229401496703205376"` is the `Big`, in limbs, before the checker sees it.
+`regex"…"` is a fourth, and it wants something this repository does not have — a regex engine —
+rather than anything from this section.
+
+Still unbuilt, and named here because §2.5 has always promised them: a typed literal that returns
+a **typed** `Node` rather than an ordinary one (`sql"..."` returning a `Query[Order]` checked
+against the `store` declarations), **interpolation** inside a body (`{floor}`, which needs a way to
+turn body text into an expression), and a **triple-quoted** body for notation that spans lines.
 
 ## 2.6 Other surface decisions, and their reasons
 

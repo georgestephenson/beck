@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **149 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **151 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -26,7 +26,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0121` | error | **nesting is too deep to read** — The source nests deeper than the front end follows — `beck_diag::depth::MAX_NESTING` levels of brackets, indentation or S-expression lists. The bound is a fixed count rather than a reading of the stack, so the same file is accepted or refused identically in every build; without it, deep enough input aborted the process with no span at all. |
 | `B0122` | error | **an expression chains more operators than the reader will follow** — A left-associative chain — `1 + 1 + 1 + …` — is flat in source and builds a left-leaning tree of the same depth, one level per operator. The Pratt loop that reads it does not recurse, so none of the parser's recursion counters sees the depth, and a long enough chain reached the end of the host stack in whatever walked the tree afterwards. The bound is `beck_diag::depth::MAX_BLOCK` — the same ceiling a block of sequential bindings takes, because it is the same axis: a flat run of things that costs one tree level each. |
 
-## Macro expansion — `B0200–B0222`
+## Macro expansion — `B0200–B0224`
 
 | Code | | Meaning |
 |---|---|---|
@@ -38,7 +38,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0205` | error | **a form is not available in a macro body** — A macro body is pure compile-time computation — bindings, `if`, `for`, `while`, lambdas, calls and `quote:`. `match`, `try:`, `raise`, `parallel:` and declarations belong to the program the macro expands to, not to the expander. |
 | `B0206` | error | **unquoting an unbound name** — `$x` inside a template names something that is bound nowhere in this macro — usually a parameter that was renamed. `$e` evaluates `e` in the macro body's own environment, so anything the body bound is fair game. |
 | `B0207` | error | **a primitive may not be called while expanding a macro** — Macro expansion is capability-restricted (`docs/02` §2.4): it is pure computation over the module's own definitions, so that what a compile produces depends on the source and on nothing else. The primitive named performs an effect — reading the clock, the environment, the network — and is refused *by name* so that reaching for one is a diagnostic rather than a spelling mistake. |
-| `B0208` | error | **cannot find a name at compile time** — The macro interpreter's environment is a whitelist: locals, this module's own `def`s, and the pure builtins. There is no name in it for a file, a socket or a process, which is the sandbox rather than an omission. |
+| `B0208` | error | **cannot find a name at compile time** — The macro interpreter's environment is a whitelist: locals, the `def`s of this module and of the ones it imports, and the pure builtins. There is no name in it for a file, a socket or a process, which is the sandbox rather than an omission. |
 | `B0209` | error | **a macro body computed the wrong kind of value** — A compile-time computation applied an operation to something it does not apply to — adding a Str to an Int, indexing past the end of a list, calling a value that is not a function. Macro bodies are evaluated before the checker runs, so these are caught by running rather than by typing. |
 | `B0210` | error | **`ui` needs an indented block** — Write `ui:` followed by an indented element. |
 | `B0211` | error | **`ui` block is empty** — A view must produce exactly one root element. |
@@ -53,6 +53,8 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0220` | error | **button has no accessible name** — A `button` is named by its own text. One with no children and no `aria_label`, `aria_labelledby` or `title` announces nothing at all, which is the icon-button mistake. Any child is accepted, because whether an expression renders to empty text is not a question this stage can answer. |
 | `B0221` | error | **form control has no label** — An `input`, `select` or `textarea` is named by `aria_label`, `aria_labelledby`, `title`, or a `label(for=…)` pointing at its `id`. A **placeholder is not a label** — it disappears as soon as somebody types, which is WCAG 3.3.2's commonest real failure. An `id` is accepted as evidence of a label elsewhere, because a `ui:` block composes out of functions and this check sees one element at a time. |
 | `B0222` | error | **class is one slip from a utility** — The class vocabulary is **open** — a name this compiler does not know is a name of your own, and is left alone — so this is a warning rather than a refusal. What it says is that the name is within one edit of a utility that would have had a rule, which is what `rounded-ful` is to `rounded-full`. `beck explain style` lists which of a page's classes are utilities and which are the program's own. |
+| `B0223` | error | **typed macro over a declaration** — A `typed macro` is expanded by the **checker**, and what its body is given is what the checker inferred an *expression* to be. A declaration has nothing inferred about it — a model's fields are in its syntax — so a macro that decorates one is an ordinary `macro`, which receives it before checking runs at all. `docs/02` §2.4 is the division, and `lib/json.beck`'s `derive_json` is the shape a declaration macro takes. |
+| `B0224` | error | **refused by a macro** — A macro that reads a type and writes the code a value of it goes through meets types it has no rule for. `refuse("…")` is how it says so: the message is the macro author's, the position is the call, and the second label is the line in the macro body that decided. Without it such a macro emits code that fails to check for a reason nobody can trace back to the macro. |
 
 ## Names, types and effects — `B0300–B0399`
 

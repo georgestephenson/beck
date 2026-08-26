@@ -66,7 +66,7 @@ about a person rather than a count of bullets — see the end of this section.
 
 | Bullet | Status |
 |---|---|
-| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **995<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
+| **Native codegen**: LLVM and Cranelift, differential against the evaluator | **Built** ([`93`](93-the-native-backends-report.md)). `beck native --backend cranelift\|llvm`; the differential is three-way. The heap is whole — records, text, collections, closures, views, failure, generics and the four host-calling primitives — and the fifteen that are a table or somebody else's parser are **linked** rather than emitted (§93.12), so the corpus stands at **997<!--c:native-compiled--> definitions compiled against 144<!--c:native-refused--> refused**. §93.15 names what is left |
 | **Incremental views**: dataflow plans, arrangement sharing, SQL read models, pgwire, query fusion | **Complete** ([`23`](23-incremental-views-report.md)) |
 | **Mode B client**: per-component WASM, optimistic application, freshness-typed pending state, size budget | **Built except codegen** ([`94`](94-the-client-report.md)). The mode, the bundle, the data patch, reconciliation by `seq`, a browser that runs it, an offline queue, `freshness()` and the 150 KB brotli gate. The wasm emitter exists and compiles the **scalar subset** ([`103`](103-the-wasm-emitter-report.md)); a `view` is nothing but heap, so it compiles **0 of the corpus** and the kernel still interprets |
 | **Client polish**: router, forms, focus/scroll preservation, devtools | **Built except lazy routes** ([`94`](94-the-client-report.md)). A route is a field of `Session`, so there is no route table and every route is a real URL. Lazy routes wait on §5.1's per-component boundary |
@@ -533,9 +533,10 @@ rows.
     going to, and the work was four rules made uniform in the **parser** — a block passed to a macro
     *in item position* holds declarations, a `quote:` holds them too, `$` unquotes where a type and
     where a field name go, and a `do` at module level flattens all the way down. Not one line of
-    `check/` or `ty.rs`. `examples/derive.beck` generates a JSON encoder from a model's fields with
-    no reflection in the running program, closing the row [`46`](46-standard-library-report.md)
-    §46.16 and `prelude.rs` have both carried since the standard library was written.
+    `check/` or `ty.rs`. [`lib/json.beck`](../compiler/lib/json.beck)'s `derive_json` generates a
+    JSON encoder from a model's fields with no reflection in the running program, closing the row
+    [`46`](46-standard-library-report.md) §46.16 and `prelude.rs` have both carried since the
+    standard library was written.
   - **A macro crosses a module boundary. Done**, and it is what turned every item in this list from
     a mechanism into a *facility*. Expansion ran per module, on the parsed file, before any import
     was resolved — so a macro was usable where it was declared and nowhere else, and neither
@@ -549,15 +550,59 @@ rows.
     **`lib/json.beck` is the first library file to ship a macro** — `import json`, then
     `derive_json:` over a `model` — which closes [`46`](46-standard-library-report.md) §46.16's
     `@derive` row.
-  - **Typed macros** (Lane A, and now the whole of what `derive` was standing in front of): a
-    `typed macro` receives the AST *with inferred types attached* ([`02`](02-syntax.md) §2.4),
-    which the untyped interpreter runs before. This is the piece that needs the checker's answers
-    to reach a macro body, and it is what retires the compiler-provided `ui:` special case standing
-    in for a user-written macro (D22). `.as_model()` is its spelling half, and so is the `*traits`
-    a parameter list has no rest form for.
-  - **§2.5's typed literal macros** (`sql"…"`, `html"…"`, `regex"…"`) — the DSL escape hatch, and
-    the mechanism the security suite already points at for SQL and HTML. Sugar over a macro call
-    (§2.3's table) plus a parse at compile time, so this one is free of Lane A.
+  - **Typed macros. Built** ([`102`](102-the-macro-interpreter-report.md) §102.9), and the item was
+    in the wrong lane for the *fourth* time: a `typed macro` receives the AST with inferred types
+    attached, so it was filed under Lane A on the reasoning that the checker's answers have to reach
+    a macro body — and they do, through one hook in `check/mod.rs`'s `call` and a projection of
+    `Ty`, with nothing added to `ty.rs` and no rule of the type system changed. The body is the
+    interpreter that already existed; what was missing was a **caller** at a point where the answer
+    exists. `node_ty(e)` is the one name added, `refuse("…")` is how a macro that writes code from a
+    type says it has no rule for one, and `lib/json.beck`'s `json_of` writes a JSON encoder for a
+    model **nobody decorated** — which is what `derive` could not do, because `derive` is handed a
+    declaration and this is handed an expression. The finding is in the probe rather than in the
+    types: inferring an argument to tell the macro what it is must leave behind neither the
+    diagnostics nor the **effects**, since a macro may discard the argument and then nothing
+    performs them. **The cost that probe leaves is a defect and is written down**: an argument that is
+    itself a typed macro call is expanded twice, so nesting `d` deep is charged `2^d` against F17's
+    production budget — which bounds what expansion *produces*, and the probe's output is discarded
+    — and fifteen deep is refused for producing forty-five nodes
+    ([`DEFECTS.md`](../DEFECTS.md)). **Exhaustiveness-aware codegen came with it and needed nothing added**: a macro
+    that read a union's variants generates one `match` arm per variant with `node_form`, and a
+    constructor it computed is written `case n(at):` inside a `quote:` — a template head that names
+    bound syntax *is* that syntax. This list said otherwise for the length of one experiment, on
+    the strength of `case $n(at):` failing, which is `$` taking an expression exactly as §2.4 says
+    it does; the refusal now carries the spelling that works. `.as_model()` is a spelling half that
+    remains, and so is the `*traits` a parameter list has no rest form for.
+  - **§2.5's typed literal macros. Built** — `name"body"` is one token, the body is raw, and it
+    desugars to `name_sigil(raw="body")`, which is §2.3's table and the whole mechanism: what
+    parses a body is an ordinary macro. Two things were missing and neither was syntax. A macro
+    could ask whether its argument was a literal and never find out **which** one, so `node_lit`
+    is the reader `node_head` is for symbols; and turning text into a number needs `str_to_int`,
+    which the sandbox had refused *because it returns an `Option`* — the compile-time half is
+    total and refuses, as indexing already was. The **first** typed literal is `date"YYYY-MM-DD"`,
+    not one of the three named here, and the reason is the finding: `sql"…"` and `html"…"` were
+    the headline examples because their value was a security property, and Beck has both
+    properties already — a program never writes SQL (the algebra queries, the runtime binds) and
+    never writes HTML (a view is a tree and the renderer escapes). What a sigil is actually for is
+    a **value the language has no literal for**, where the alternative is a run-time parse that
+    can fail: `parse_date` raises, so one hard-coded date put `raises(CalendarError)` on the
+    signature holding it, and `date"2026-08-25"` is the `Date` by the time the checker sees it.
+    The compile-time check is `is_valid` — the function `parse_date` calls — so the two doors
+    cannot drift. §3.5's "no injection / no XSS" row named a mechanism that does not exist and now
+    says which one delivers the property. **`decimal"1.25"` is the second sigil and `bignum"…"` the third**
+    — that one a capability rather than a convenience, since an `Int` literal is sixty-four bits
+    and there was no way to write a larger number at all. `decimal"…"` is where
+    the pattern's limit shows: a date's validator is integer arithmetic and runs as written, while
+    this library decides validity through a `Result` a macro body cannot read — so only the
+    *grammar* is shared and the value is built twice, held together by a differential.
+    Interpolation, a triple-quoted body and a literal that returns a *typed* `Node` remain (§2.5).
+  - **A macro body calls the `def`s of the modules its own module imports. Fixed** — this list said
+    it could not, one commit before finding out that it *could*, on a condition nobody could see:
+    the parse kept for crossing an import was decided by looking at the imported file, so an
+    imported `def` was reachable only when that file happened to declare a macro of its own.
+    Adding an unused macro to the other module was the difference between `B0208` and a compile.
+    Which sources are kept is the **importer's** question now, pre-filtered by the same text test
+    that kept the second parse off macro-free builds.
   - **`inject`/`unsafe_macro`**, the deliberate-capture escape, and **nested quoting's
     `(quote depth node)`**.
   - **A `Node` a *running* program can hold**: a `quote` that survives expansion is still `B0332`,
@@ -671,14 +716,19 @@ rows.
 - **The standards ledger** (S — small artefacts, each a day rather than a phase, from
   [`12`](12-standards-and-conformance.md)'s audit; each closes a chartered row, and the row names
   it back). Free now: a JSONTestSuite-class vector run for the JSON library; an Autobahn-class
-  vector run for the WebSocket channel; a test that a TLS-1.2-only peer is refused; **the
+  vector run for the WebSocket channel; **the
   vulnerability matrix**, whose CWE half is **done** ([`43`](43-threat-model.md) §43.8, gated by
   `docs.rs::every_test_the_vulnerability_matrix_names_exists`) and whose ISO/IEC 24772-1 half is
   **blocked on the standard's text** rather than on time — paywalled, not in this tree, and recorded
   as blocked in the matrix itself ([`35`](35-standards-landscape.md) §35.2); a
   Prometheus exposition endpoint beside the JSON dashboard; a Scorecard workflow and REUSE
-  per-file metadata; the CLI exit-status table; a semantic-conventions check over the attributes
-  telemetry actually emits. Blocked, and recorded as blocked rather than listed as free:
+  per-file metadata; a semantic-conventions check over the attributes
+  telemetry actually emits. **A TLS-1.2-only peer is refused** — and that row turned out to be
+  missing its implementation rather than its gate, since rustls's safe defaults are 1.2 and 1.3
+  ([`12`](12-standards-and-conformance.md)). **The CLI exit-status table is done** — generated into
+  [`docs/reference/cli.md`](reference/cli.md) from the compiler's own constant and gated against
+  the binary in both directions ([`35`](35-standards-landscape.md) §35.2's POSIX row, which names
+  it back). Blocked, and recorded as blocked rather than listed as free:
   OpenAPI 3.1 + JSON Schema 2020-12 + RFC 9457 (on the `@public(rest)` emitter, Phase 4); the OCI
   distribution conformance suite (on a registry push — the managed-cloud path's item 2); the
   OpenID Foundation suite (pre-1.0 trigger); the two-independent-runner reproducible release
@@ -716,8 +766,10 @@ rows.
      with a text input had labelled it with a placeholder and nothing else. The events are held to the client's own listener table by a test that reads
      `beck-patch.js`, in both directions
      ([`104`](104-styling-and-the-component-library.md) §104.8). A **table** rather than expander
-     code, because typed macros above retire the compiler-provided `ui:` special case (D22) and a
-     user-written `ui:` has to be held to the same names. Lane C, with a `beck-macro` half.
+     code, because a user-written `ui:` eventually retires the compiler-provided special case (D22)
+     and has to be held to the same names. Typed macros above are built and are **not** enough on
+     their own: a `ui:` block's expansion writes patterns, and `$` does not yet reach a pattern's
+     constructor. Lane C, with a `beck-macro` half.
   3. **`class=` takes a list, and `Class` is a type** (F): the prerequisite for everything else in
      the styling half, and what makes the editor's existing completion, hover and rename answer for
      utilities without an extension ([`65`](65-the-editor-report.md)). **The list and the analysis
@@ -808,7 +860,7 @@ directories.
 
 | Lane | Owns | What is left in it | Collides with |
 |---|---|---|---|
-| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | **Typed macros and `derive`** (§8.5.4's first item — a macro body that receives inferred types is a checker change, whatever crate the body runs in); `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3 and 7 (§8.5.4) — `Class` as a type and focus as an attribute | **Itself, completely** — see below |
+| **A — type system** | `beck-core/src/check/`, `ty.rs`, `core.rs`, `prelude.rs`, `iface.rs` | `Ord` as a trait, which [`54`](54-ordering.md) does not recommend; the styling cluster's items 3 and 7 (§8.5.4) — `Class` as a type and focus as an attribute. **Typed macros and `derive` were this cell's and are done**, and neither belonged in it: `derive` was four rules in the parser, and a typed macro is one hook in `check/mod.rs` plus a projection of `Ty` — `ty.rs` unchanged | **Itself, completely** — see below |
 | **B — runtime and views** | `beck-rt/`, `beck-core/src/{engine,plan,incremental,pmap,signal}.rs` | The render lock, unowned; the styling cluster's item 5 (§8.5.4) — the theme as a Beck value; items 1 and 4 are done | Nothing in A, C, E or F |
 | **C — front end and tooling** | `beck-syntax/`, `beck-cli/`, `beck-diag/` | Code actions ([`65`](65-the-editor-report.md) §65.8); the standards ledger's front-end vectors (§8.5.4). Comment-preserving printing and the `ui:` vocabulary were this lane's and are done | A, if a syntax decision changes what the checker sees |
 | **D — process and supply chain** | `docs/`, `.github/`, `deny.toml`, `SECURITY.md`, `release/`, `install.sh` | Trusted publishing; a registry to push to; a subject `beck sign` can take over a release *listing* ([`adr/0028`](adr/0028-a-release-carries-provenance-and-still-no-signature.md)) | Nothing in code — **except that a release lands in `Cargo.toml`, a `build.rs` and `--version`** |
@@ -834,8 +886,16 @@ they are what the next ordering should assume:
   been answered as two by four phases of implementation; errors and structured concurrency were one
   row with different successors. The classification is about *cost over time*, and it is silent
   about whether an item is one item.
-- **A wave item can be in the wrong lane**, and it has now happened three times — the third being
-  the first where the *item itself* was misread rather than its lane. `derive` was filed under
+- **A wave item can be in the wrong lane**, and it has now happened four times — the fourth being
+  the one this rule was surest about. **Typed macros** were Lane A's headline item and its
+  justification was the strongest of the four: a macro body that receives inferred types needs the
+  checker's answers, which is a checker change. It *is* a checker change — and it is one hook in
+  `check/mod.rs`'s `call`, a probe that rolls itself back, and a projection of `Ty` into a value the
+  macro crate already knew how to hold. **`ty.rs` is untouched, and no rule of the type system
+  moved**, so the file two Lane A branches would have fought over was never opened. Which is the
+  rule again, in its sharpest form yet: an item's lane is the set of files it *edits*, and a correct
+  argument about what an item depends on says nothing about that set. The third
+  was the first where the *item itself* was misread rather than its lane. `derive` was filed under
   Lane A on the reasoning that §2.4 lists it beside `typed macro`, and the reasoning was the
   document's rather than the tree's: a model's fields are in its declaration, so what `derive` needs
   is a **parser** that lets a macro's block hold one. Four rules in `beck-syntax`, not one line of

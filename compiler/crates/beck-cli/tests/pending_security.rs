@@ -3,8 +3,9 @@
 //! [`docs/42-security-assurance.md`](../../../../docs/42-security-assurance.md) §42.6 lists four
 //! findings whose status in [`docs/14`](../../../../docs/14-review-findings.md) is a word and whose
 //! status in the code is silence: the actor is whatever the client says it is (identity), there is
-//! no per-actor quota (F3), no subscription or connection quota (F15), no bounded deploy buffer
-//! (F12) and no macro fuel (F17). §42.11 asks for exactly this file — "`sicp/refusals/`'s pattern
+//! no per-actor quota (F3), no subscription or connection quota (F15) and no bounded deploy buffer
+//! (F12). The fifth, macro fuel (F17), is **built** and its test has left this file — which is the
+//! gate below working. §42.11 asks for exactly this file — "`sicp/refusals/`'s pattern
 //! applied to security debt" — and the gate is the same one that directory had: **the day somebody
 //! builds one of these, its test goes red**, and the person who built it has to come here and to
 //! the documents and say so.

@@ -245,8 +245,14 @@ impl<'a> Parser<'a> {
             self.end_of_line();
             return Some(Node::form(sym::IDENTITY, vec![provider], span));
         }
+        // `typed macro f(x):` — the same item with the checker for an expander (§2.4). Guarded on
+        // the following word rather than on `typed` alone, so a program may still call a value
+        // `typed`: only `typed macro` at the top level is this.
+        if self.at_kw("typed") && matches!(self.peek_raw(1), Some(Raw::Ident(w)) if w == "macro") {
+            return self.macro_item(sym::TYPED_MACRO);
+        }
         if self.at_kw("macro") {
-            return self.macro_item();
+            return self.macro_item(sym::MACRO);
         }
         if self.at_kw("model") {
             return self.model_item();
@@ -381,8 +387,12 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn macro_item(&mut self) -> Option<Node> {
+    /// `macro f(x):` and `typed macro f(x):`, which differ only in who expands them.
+    fn macro_item(&mut self, head: &str) -> Option<Node> {
         let start = self.span();
+        if head == sym::TYPED_MACRO {
+            self.bump(); // typed
+        }
         self.bump(); // macro
         let (name, name_span) = self.ident("a macro name")?;
         let params = self.params()?;
@@ -390,7 +400,7 @@ impl<'a> Parser<'a> {
         let body = self.block()?;
         let span = start.to(body.span());
         Some(Node::form(
-            sym::MACRO,
+            head,
             vec![Node::sym(name, name_span), params, body],
             span,
         ))
@@ -1887,6 +1897,32 @@ impl<'a> Parser<'a> {
             Some(Raw::Str(s)) => {
                 self.bump();
                 Some(Node::lit(Lit::Str(s.into()), span))
+            }
+            // `name"body"` is sugar for `name_sigil(raw="body")`, which is §2.3's table and the
+            // whole of the desugaring: what parses the body is an ordinary macro, so nothing here
+            // knows anything about SQL or dates. The `raw=` argument's span is the **body**, not
+            // the literal, so a macro that objects to what it was given can point inside the
+            // quotes with `refuse(msg, raw)`.
+            Some(Raw::Sigil(t)) => {
+                self.bump();
+                let open = span.start + t.name.len() as u32 + 1;
+                let body = Span {
+                    file: span.file,
+                    start: open,
+                    end: open + t.raw.len() as u32,
+                };
+                let kw = Node::form(
+                    sym::KW_ARG,
+                    vec![
+                        Node::sym("raw", body),
+                        Node::lit(Lit::Str(t.raw.as_str().into()), body),
+                    ],
+                    body,
+                );
+                let mut n = Node::symbol(Symbol::new(format!("{}_sigil", t.name)), span);
+                n.args.push(kw);
+                n.applied = true;
+                Some(n)
             }
             Some(Raw::Keyword(k)) => {
                 self.bump();

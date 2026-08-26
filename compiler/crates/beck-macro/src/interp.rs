@@ -42,9 +42,11 @@
 //!
 //! # What it does not have
 //!
-//! - **Unions**, and therefore no `Option`: the prelude's `str_to_int`, `str_index_of` and
-//!   `list_get` return one, so they are not compile-time builtins. Indexing (`xs[i]`) is, and
-//!   refuses out of range rather than answering `None`.
+//! - **Unions**, and therefore no `Option`: the prelude's `str_index_of` and `list_get` return
+//!   one, so they are not compile-time builtins. Where the operation is needed anyway the
+//!   compile-time half is **total and refuses** rather than answering `None` — indexing (`xs[i]`)
+//!   is that, and so is `str_to_int`, which a macro parsing a typed literal (§2.5) has no other
+//!   way to do.
 //! - **`match`**, for the same reason: its patterns are about variants.
 //! - **The transcendentals.** `sqrt`, `sin` and `cos` would make the compiler's answer depend on
 //!   the host's libm, which is F9's open question ([`docs/35`](../../../../../docs/35-standards-landscape.md)
@@ -58,6 +60,8 @@ use std::sync::Arc;
 use beck_diag::depth::Nesting;
 use beck_diag::{Diagnostic, Diagnostics, Span};
 use beck_syntax::{print, sym, Head, Lit, Node, Symbol};
+
+use crate::typed::{TyRepr, TypeEnv};
 
 /// How many steps one module's macro bodies may take, in total.
 ///
@@ -117,6 +121,10 @@ pub enum Val {
     Record(Arc<Vec<(Arc<str>, Val)>>),
     Syntax(Node),
     Fun(Arc<Lambda>),
+    /// What `node_ty(e)` answers with: the type the checker gave an expression
+    /// ([`crate::typed`]). Only a typed macro's body can hold one, because only there has anything
+    /// been inferred.
+    Type(Arc<TyRepr>),
 }
 
 impl Val {
@@ -132,6 +140,7 @@ impl Val {
             Val::Record(_) => "record",
             Val::Syntax(_) => "syntax",
             Val::Fun(_) => "function",
+            Val::Type(_) => "type",
         }
     }
 
@@ -176,8 +185,25 @@ enum Flow {
     Returned(Val),
 }
 
+/// The step budget's refusal, in one place: the meter reports it, and so does a checker whose
+/// probe discarded the first report ([`crate::typed::TypedExpander::exhausted`]).
+pub(crate) fn ran_too_long(span: Span) -> Diagnostic {
+    Diagnostic::error("B0215", "a macro body ran too long", span)
+        .with_primary_label("the interpreter stopped here")
+        .with_note(format!(
+            "the budget is {MAX_STEPS} steps for the whole module — a bound on how long a compile \
+             takes, which is what answers a macro body that does not terminate"
+        ))
+}
+
 pub struct Interp<'a> {
     defs: &'a HashMap<Arc<str>, FnDef>,
+    /// What the checker inferred about the call being expanded, or `None` in the untyped phase —
+    /// which is what makes `node_ty` a name a typed macro's body has and an ordinary one's has not.
+    types: Option<&'a TypeEnv>,
+    /// Where the macro was called. A body's own errors point into the body; a `refuse` is a message
+    /// *to the caller* and points at the call.
+    call: Span,
     diags: &'a mut Diagnostics,
     /// What is left of [`MAX_STEPS`] for the whole module.
     pub steps: u64,
@@ -200,11 +226,25 @@ impl<'a> Interp<'a> {
     ) -> Interp<'a> {
         Interp {
             defs,
+            types: None,
+            call: Span::NONE,
             diags,
             steps,
             exhausted,
             nesting: Nesting::new(),
         }
+    }
+
+    /// Where the call being expanded was written.
+    pub fn called_at(mut self, span: Span) -> Interp<'a> {
+        self.call = span;
+        self
+    }
+
+    /// The same, with the checker's answers about the call site in reach.
+    pub fn knowing(mut self, types: Option<&'a TypeEnv>) -> Interp<'a> {
+        self.types = types;
+        self
     }
 
     /// Run a macro body, given its parameters already bound to the syntax they were called with.
@@ -242,15 +282,7 @@ impl<'a> Interp<'a> {
         if self.steps == 0 {
             if !self.exhausted {
                 self.exhausted = true;
-                self.diags.push(
-                    Diagnostic::error("B0215", "a macro body ran too long", span)
-                        .with_primary_label("the interpreter stopped here")
-                        .with_note(format!(
-                            "the budget is {MAX_STEPS} steps for the whole module — a bound on how \
-                             long a compile takes, which is what answers a macro body that does \
-                             not terminate"
-                        )),
-                );
+                self.diags.push(ran_too_long(span));
             }
             return Err(Halt);
         }
@@ -271,6 +303,40 @@ impl<'a> Interp<'a> {
             );
         }
         Err(Halt)
+    }
+
+    /// The macro decided it cannot generate for this, and said why.
+    ///
+    /// Distinct from [`Interp::wrong`] because it is not a mistake: a macro that reads a type and
+    /// writes code for it meets types it has no rule for, and the alternative to saying so is
+    /// emitting something that fails to check for a reason nobody can trace back to here.
+    fn refusal(&mut self, msg: Arc<str>, span: Span) -> Halt {
+        let at = match self.call.is_none() {
+            true => span,
+            false => self.call,
+        };
+        self.diags.push(
+            Diagnostic::error("B0224", msg.to_string(), at)
+                .with_primary_label("refused by the macro expanding here")
+                .with_label(span, "the macro said so here"),
+        );
+        Halt
+    }
+
+    /// A refusal that points where the macro said to, rather than at the call.
+    ///
+    /// The fallback matters: a node the macro *built* has no span, and pointing a diagnostic at
+    /// nothing is worse than pointing it at the call site.
+    fn refusal_at(&mut self, msg: Arc<str>, at: Span, span: Span) -> Halt {
+        if at.is_none() {
+            return self.refusal(msg, span);
+        }
+        self.diags.push(
+            Diagnostic::error("B0224", msg.to_string(), at)
+                .with_primary_label("the macro expanding here refused this")
+                .with_label(span, "the macro said so here"),
+        );
+        Halt
     }
 
     fn wrong(&mut self, msg: impl Into<String>, span: Span) -> Halt {
@@ -560,6 +626,9 @@ impl<'a> Interp<'a> {
             let Some(field) = e.args[1].as_var().map(|s| s.name.clone()) else {
                 return Err(self.wrong("a field is a name", e.args[1].span()));
             };
+            if let Val::Type(t) = &subject {
+                return self.type_field(t, &field, e.span());
+            }
             let Val::Record(fields) = &subject else {
                 let msg = format!("{} has no fields", subject.type_name());
                 return Err(self.wrong(msg, e.span()));
@@ -596,6 +665,18 @@ impl<'a> Interp<'a> {
                     && RESTRICTED.iter().any(|(n, _)| *n == name.name.as_ref())
                 {
                     return Err(self.unbound(&name.name.clone(), e.span()));
+                }
+                // Calling *syntax* is never right, and there is one way to write it by accident:
+                // `$n(x)` inside a `quote:`. `$` takes an expression, so that is the call `n(x)`
+                // evaluated in the body — where `x` is a name the *template* has and this
+                // environment does not. Said here, before the arguments are evaluated, because
+                // otherwise the report is about `x` and the reader is looking at the wrong word.
+                if matches!(frame.get(&name.name), Some(Val::Syntax(_))) {
+                    let msg = format!(
+                        "`{name}` is syntax and cannot be called at compile time — inside a \
+                         `quote:`, write `{name}(…)` rather than `${name}(…)`"
+                    );
+                    return Err(self.wrong(msg, e.span()));
                 }
             }
 
@@ -664,10 +745,13 @@ impl<'a> Interp<'a> {
                 format!("cannot find `{name}` at compile time"),
                 span,
             )
-            .with_primary_label("not a local, a `def` in this module, or a compile-time builtin")
+            .with_primary_label(
+                "not a local, a `def` in this module or one it imports, or a compile-time builtin",
+            )
             .with_note(
                 "the macro interpreter's environment is deliberately small: the pure part of the \
-                 prelude, this module's own definitions, and the `node_*` reflection over syntax",
+                 prelude, the definitions of this module and the ones it imports, and the \
+                 `node_*` reflection over syntax",
             ),
         );
         Halt
@@ -877,7 +961,70 @@ impl<'a> Interp<'a> {
                     span,
                 ))
             }
+            Val::Type(t) => {
+                let msg = format!(
+                    "`{t}` is a type and has no syntax — a macro reads a type and writes the code \
+                     that a value of it goes through"
+                );
+                return Err(self.wrong(msg, span));
+            }
         })
+    }
+
+    /// What a type answers when asked about itself: `t.name`, `t.kind`, `t.args`, `t.result`,
+    /// `t.fields`, `t.variants`, `t.inner`.
+    ///
+    /// Read on access rather than carried in the value, because `model Tree: left: Tree` is a type
+    /// whose fields mention itself: a value holding its own fields would not be finite.
+    fn type_field(&mut self, t: &TyRepr, field: &str, span: Span) -> Eval<Val> {
+        let types = self.types;
+        let of = |r: &TyRepr| Val::Type(Arc::new(r.clone()));
+        let pairs = |fs: crate::typed::Fields| {
+            Val::list(
+                fs.into_iter()
+                    .map(|(n, ft)| {
+                        Val::Record(Arc::new(vec![
+                            (Arc::from("name"), Val::Str(n)),
+                            (Arc::from("ty"), Val::Type(Arc::new(ft))),
+                        ]))
+                    })
+                    .collect(),
+            )
+        };
+        match field {
+            "name" => Ok(Val::Str(t.head())),
+            "kind" => Ok(Val::str_(t.kind_name())),
+            "args" => Ok(Val::list(t.args().iter().map(of).collect())),
+            "result" => match t {
+                TyRepr::Fun { result, .. } => Ok(of(result)),
+                _ => {
+                    let msg = format!("`{t}` is not a function, so it has no result type");
+                    Err(self.wrong(msg, span))
+                }
+            },
+            "fields" => Ok(pairs(types.map(|e| e.fields(t)).unwrap_or_default())),
+            "inner" => Ok(of(&types.map(|e| e.inner(t)).unwrap_or(TyRepr::Unknown))),
+            "variants" => {
+                let vs = types.map(|e| e.variants(t)).unwrap_or_default();
+                Ok(Val::list(
+                    vs.into_iter()
+                        .map(|(n, fs)| {
+                            Val::Record(Arc::new(vec![
+                                (Arc::from("name"), Val::Str(n)),
+                                (Arc::from("fields"), pairs(fs)),
+                            ]))
+                        })
+                        .collect(),
+                ))
+            }
+            other => {
+                let msg = format!(
+                    "a type answers `name`, `kind`, `args`, `result`, `fields`, `variants` and \
+                     `inner` — not `{other}`"
+                );
+                Err(self.wrong(msg, span))
+            }
+        }
     }
 
     // --------------------------------------------------------------------------------- builtins
@@ -959,6 +1106,20 @@ impl<'a> Interp<'a> {
             "str_is_empty" => {
                 arity(1, self)?;
                 Ok(Val::Bool(s!(0).is_empty()))
+            }
+            // The prelude's returns an `Option` and this has no unions, so — as with indexing —
+            // the compile-time half is **total and refuses**. A macro parsing a typed literal
+            // needs a number out of text and has no other way to get one.
+            "str_to_int" => {
+                arity(1, self)?;
+                let text = s!(0);
+                match text.trim().parse::<i64>() {
+                    Ok(n) => Ok(Val::Int(n)),
+                    Err(_) => {
+                        let msg = format!("`{text}` is not an integer");
+                        Err(self.wrong(msg, span))
+                    }
+                }
             }
             "str_trim" => {
                 arity(1, self)?;
@@ -1199,6 +1360,25 @@ impl<'a> Interp<'a> {
                 arity(1, self)?;
                 Ok(Val::Bool(n!(0).as_lit().is_some()))
             }
+            // The reader `node_head` is for a symbol; this is its other half. Without it a macro
+            // could ask whether its argument was a literal and never find out *which* one, which
+            // is what a typed literal's body is (§2.5) — the sigil desugaring hands the macro
+            // `raw="…"` and the parse begins by reading that string.
+            "node_lit" => {
+                arity(1, self)?;
+                let node = n!(0);
+                match node.as_lit() {
+                    Some(Lit::Int(n)) => Ok(Val::Int(*n)),
+                    Some(Lit::Float(f)) => Ok(Val::Float(*f)),
+                    Some(Lit::Str(s)) => Ok(Val::Str(s.clone())),
+                    Some(Lit::Bool(b)) => Ok(Val::Bool(*b)),
+                    Some(Lit::Keyword(k)) => Ok(Val::Keyword(k.clone())),
+                    None => Err(self.wrong(
+                        "this node is not a literal and has no value — ask `node_is_lit` first",
+                        span,
+                    )),
+                }
+            }
             "node_sym" => {
                 arity(1, self)?;
                 Ok(Val::Syntax(Node::sym(s!(0).as_ref(), span)))
@@ -1215,6 +1395,57 @@ impl<'a> Interp<'a> {
             "node_str" => {
                 arity(1, self)?;
                 Ok(Val::str_(print::to_sexpr(&n!(0))))
+            }
+            // The one name a `typed macro` body has that an ordinary one does not: what the
+            // checker inferred this expression to be (`docs/02` §2.4).
+            "node_ty" => {
+                arity(1, self)?;
+                let node = n!(0);
+                let Some(types) = self.types else {
+                    return Err(self.wrong(
+                        "`node_ty` needs the checker's answers, which only a `typed macro` has — \
+                         write `typed macro` rather than `macro`",
+                        span,
+                    ));
+                };
+                match types.of(node.span()) {
+                    Some(t) => Ok(Val::Type(Arc::new(t.clone()))),
+                    // Everything the call site *supplied* was inferred before this body ran, so
+                    // what reaches here is syntax the body built itself. Saying which is what
+                    // stops the answer being a plausible-looking `?`.
+                    None => {
+                        let msg = format!(
+                            "`{}` has no inferred type: `node_ty` answers about the expressions \
+                             this macro was called with, and this is syntax the body built",
+                            print::to_sexpr(&node)
+                        );
+                        Err(self.wrong(msg, span))
+                    }
+                }
+            }
+            // A macro that reads a type and writes code for it meets types it has no rule for.
+            // `refuse` is how it says so, at the call site rather than in its own body.
+            "refuse" => {
+                if args.len() != 1 && args.len() != 2 {
+                    let msg = format!(
+                        "`refuse` expects a message, and optionally somewhere to \
+                                       point — {} arguments given",
+                        args.len()
+                    );
+                    return Err(self.wrong(msg, span));
+                }
+                let msg = s!(0);
+                // With a second argument the diagnostic lands on *that* node rather than on the
+                // call. A macro that parses a typed literal has the body's own span (the sigil
+                // desugaring gives `raw=` the span inside the quotes), so this is how §2.5's
+                // "errors at the right offsets inside the literal" is reached.
+                match args.len() {
+                    2 => {
+                        let at = n!(1).span();
+                        Err(self.refusal_at(msg, at, span))
+                    }
+                    _ => Err(self.refusal(msg, span)),
+                }
             }
             // `splice([a, b])` is several forms where one is expected — the shape §2.4's `derive`
             // returns, and the reason `expand_module` flattens a `do` at the top of a module.
@@ -1398,9 +1629,12 @@ pub const BUILTINS: &[&str] = &[
     "node_head",
     "node_is_call",
     "node_is_lit",
+    "node_lit",
     "node_str",
     "node_sym",
+    "node_ty",
     "not",
+    "refuse",
     "splice",
     "str",
     "str_chars",
@@ -1415,6 +1649,7 @@ pub const BUILTINS: &[&str] = &[
     "str_slice",
     "str_split",
     "str_starts_with",
+    "str_to_int",
     "str_trim",
     "str_upper",
     "trunc",
@@ -1452,6 +1687,7 @@ fn display(v: &Val) -> String {
         }
         Val::Syntax(n) => print::to_sexpr(n),
         Val::Fun(_) => "<function>".to_string(),
+        Val::Type(t) => t.to_string(),
     }
 }
 
@@ -1473,6 +1709,9 @@ fn val_eq(a: &Val, b: &Val) -> bool {
                     .all(|((ka, va), (kb, vb))| ka == kb && val_eq(va, vb))
         }
         (Val::Syntax(x), Val::Syntax(y)) => x.structurally_eq(y),
+        // Two types are equal when they are the same type, which is what a macro asking
+        // `node_ty(a) == node_ty(b)` means.
+        (Val::Type(x), Val::Type(y)) => x == y,
         _ => false,
     }
 }

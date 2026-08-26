@@ -296,9 +296,9 @@ pub const INDEX: &[CodeEntry] = &[
         "B0208",
         Stage::Macros,
         "cannot find a name at compile time",
-        "The macro interpreter's environment is a whitelist: locals, this module's own `def`s, \
-         and the pure builtins. There is no name in it for a file, a socket or a process, which \
-         is the sandbox rather than an omission.",
+        "The macro interpreter's environment is a whitelist: locals, the `def`s of this module \
+         and of the ones it imports, and the pure builtins. There is no name in it for a file, a \
+         socket or a process, which is the sandbox rather than an omission.",
     ),
     e(
         "B0209",
@@ -421,6 +421,26 @@ pub const INDEX: &[CodeEntry] = &[
          the name is within one edit of a utility that would have had a rule, which is what \
          `rounded-ful` is to `rounded-full`. `beck explain style` lists which of a page's classes \
          are utilities and which are the program's own.",
+    ),
+    e(
+        "B0223",
+        Stage::Macros,
+        "typed macro over a declaration",
+        "A `typed macro` is expanded by the **checker**, and what its body is given is what the \
+         checker inferred an *expression* to be. A declaration has nothing inferred about it — a \
+         model's fields are in its syntax — so a macro that decorates one is an ordinary `macro`, \
+         which receives it before checking runs at all. `docs/02` §2.4 is the division, and \
+         `lib/json.beck`'s `derive_json` is the shape a declaration macro takes.",
+    ),
+    e(
+        "B0224",
+        Stage::Macros,
+        "refused by a macro",
+        "A macro that reads a type and writes the code a value of it goes through meets types it \
+         has no rule for. `refuse(\"…\")` is how it says so: the message is the macro author's, the \
+         position is the call, and the second label is the line in the macro body that decided. \
+         Without it such a macro emits code that fails to check for a reason nobody can trace back \
+         to the macro.",
     ),
     // ------------------------------------------------------- B03xx: names, types and effects
     e(

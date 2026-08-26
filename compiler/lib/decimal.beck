@@ -314,6 +314,8 @@ def render_at(d: Decimal, scale: Int, rule: Rounding) -> Str uses raises(Decimal
 
 ## Read `"1.25"`, `"-0.5"`, `"42"`. No exponent, and §46.16 says so.
 def decimal_of_str(text: Str) -> Decimal uses raises(DecimalError):
+    if not is_decimal_text(text):
+        raise NotADecimal(text=text)
     parts = str_split(text, ".")
     if list_len(parts) == 1:
         return of_big(whole_of(text, text))
@@ -336,6 +338,62 @@ def strip_sign(whole: Str) -> Str:
     if str_starts_with(whole, "-"):
         return str_slice(whole, 1, str_len(whole) - 1)
     return whole
+
+## Whether `text` is the numeral this library reads: an optional `-`, a run of digits, and at most
+## one point with a run of digits after it. No exponent, no bare `".5"`, no trailing `"1."`.
+##
+## **Written in the part of the language a macro body can also run** (`docs/02` §2.4), which is
+## what lets `decimal"…"` below check a literal with *this* function rather than with a second
+## opinion about what a numeral is. That rules out `list_get` — it answers an `Option`, and a macro
+## body has no unions — so the two halves are recovered with `str_starts_with`/`str_ends_with` and
+## the point removed with `str_replace`, rather than by indexing what `str_split` returned.
+##
+## `is_digit_run` comes from `bignum.beck`, which this file already imports: a macro body resolves
+## the `def`s of the modules its own module imports, so what counts as a digit has one answer for
+## both files and for both phases.
+def is_decimal_text(text: Str) -> Bool:
+    body = strip_sign(text)
+    if str_is_empty(body) or str_starts_with(body, ".") or str_ends_with(body, "."):
+        return false
+    if list_len(str_split(body, ".")) > 2:
+        return false
+    return is_digit_run(str_replace(body, ".", ""))
+
+# ---------------------------------------------------------------------------------------------
+# `decimal"1.25"` — the same numeral, at compile time (`docs/02` §2.5)
+# ---------------------------------------------------------------------------------------------
+
+## A decimal literal, read while the program compiles.
+##
+## The argument `date"…"` makes in `dates.beck` applies here with one difference. `decimal_of_str`
+## raises, so a hard-coded price put `raises(DecimalError)` on the signature holding it; the
+## alternative was `of_units(125, 2)`, which is total and asks the author to count the fractional
+## digits themselves. `decimal"1.25"` **is** `of_units(125, 2)` by the time the checker sees it.
+##
+## The difference is what checks it. A date's validator is `is_valid`, pure integer arithmetic that
+## a macro body runs as written; this library's is not — it decides validity through `big_of_str`,
+## which answers a `Result`. So the *grammar* was factored out into `is_decimal_text` above,
+## written in the subset both phases share, and both doors ask it. The **value** is still built
+## twice, out of an `Int` here and a `Big` there, which is why the tests below run a list of
+## literals through both and demand the same answer.
+macro decimal_sigil(raw):
+    text = node_lit(raw)
+    if not is_decimal_text(text):
+        refuse("a decimal literal is `-?` digits with an optional `.` and more digits", raw)
+    body = strip_sign(text)
+    parts = str_split(body, ".")
+    scale = 0 if list_len(parts) == 1 else str_len(parts[1])
+    if scale > max_scale():
+        refuse("more fractional digits than `max_scale()` allows", raw)
+    figures = str_replace(body, ".", "")
+    # An `Int` holds nineteen digits and not every nineteenth, so eighteen is the bound that needs
+    # no case analysis. Past it the value is a `Big` and `decimal_of_str` is the door.
+    if str_len(figures) > 18:
+        refuse("more than eighteen digits — that is a `Big`, so read it with `decimal_of_str`", raw)
+    units = str_to_int(figures)
+    signed = negate(units) if str_starts_with(text, "-") else units
+    return quote:
+        of_units($signed, $scale)
 
 ## An unsigned run of digits, refusing a sign — so `"1.-5"` is not a number.
 def digits_of(text: Str, whole: Str) -> Big uses raises(DecimalError):
@@ -387,6 +445,22 @@ test "and text that is not a decimal says so":
     expect (try: decimal_of_str("1.-5")) == Err(error=NotADecimal(text="1.-5"))
     expect (try: decimal_of_str("1e6")) == Err(error=NotADecimal(text="1e6"))
     expect (try: decimal_of_str("one")) == Err(error=NotADecimal(text="one"))
+
+## The two doors agree, literal by literal.
+##
+## The grammar is one function (`is_decimal_text`) and cannot disagree with itself. The **value** is
+## built twice — an `Int` at compile time, a `Big` at run time — so this is the differential that
+## holds those two together, and the `try:` on every right-hand side is the cost the notation
+## removes: `decimal_of_str` raises, and a test block's own effect row must be empty.
+test "a decimal literal is the number, with no parse and nothing raised":
+    expect decimal"1.25" == of_units(125, 2)
+    expect (try: decimal_of_str("1.25")) == Ok(value=decimal"1.25")
+    expect (try: decimal_of_str("-0.5")) == Ok(value=decimal"-0.5")
+    expect (try: decimal_of_str("42")) == Ok(value=decimal"42")
+    expect (try: decimal_of_str("1.500")) == Ok(value=decimal"1.500")
+    expect (try: decimal_of_str("0")) == Ok(value=decimal"0")
+    expect decimal"0.1" + decimal"0.2" == decimal"0.3"
+    expect render_decimal(decimal"-0.250") == "-0.25"
 
 ## The number every floating-point tutorial opens with. `0.1 + 0.2` is `0.30000000000000004` as a
 ## real and is `0.3` here, and that difference is the entire reason this type is in the library.

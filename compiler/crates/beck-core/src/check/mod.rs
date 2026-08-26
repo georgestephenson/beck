@@ -328,6 +328,18 @@ pub struct Checker<'a> {
     /// diagnostic that says why the name is absent rather than that it is unknown.
     parallel_siblings: Vec<Arc<str>>,
     mode: Mode,
+    /// The module's `typed macro` declarations, which are the checker's to expand: a body that
+    /// asks what its arguments *are* cannot run before this pass ([`beck_macro::typed`], §2.4).
+    typed: beck_macro::TypedExpander,
+    /// What a typed macro body may ask — the module's declarations, filled once, and the current
+    /// call's expressions, filled by [`Checker::probe`] and cleared between calls.
+    typed_env: beck_macro::TypeEnv,
+    /// Where a probe collects what it inferred. `Some` only while one is running, which is also
+    /// how a nested probe knows to put the outer one back.
+    probe: Option<Vec<(Span, Ty)>>,
+    /// How many typed expansions deep this walk is, so a macro that expands into a call to itself
+    /// is refused rather than run until the stack bound catches it.
+    typed_depth: u32,
 }
 
 /// What kind of file is being checked.
@@ -353,6 +365,22 @@ pub fn check_module_with(
     module: &Node,
     mode: Mode,
     imports: &[(String, Interface)],
+    diags: &mut Diagnostics,
+) -> Program {
+    check_module_importing(module, mode, imports, &[], diags)
+}
+
+/// The same, with the **parsed** modules this one imports, so their typed macros are in scope.
+///
+/// The untyped expander takes the same list for the same reason
+/// ([`beck_macro::expand_module_with`]): a macro is published by a module's source, because it has
+/// no signature for an interface to carry. A typed macro is expanded one phase later and by a
+/// different pass, and neither of those changes where it comes from.
+pub fn check_module_importing(
+    module: &Node,
+    mode: Mode,
+    imports: &[(String, Interface)],
+    macros_from: &[&Node],
     diags: &mut Diagnostics,
 ) -> Program {
     let name = module
@@ -392,6 +420,10 @@ pub fn check_module_with(
         block_nesting: Nesting::with_limit(beck_diag::depth::MAX_BLOCK),
         parallel_siblings: Vec::new(),
         mode,
+        typed: beck_macro::TypedExpander::collect(module, macros_from),
+        typed_env: beck_macro::TypeEnv::new(),
+        probe: None,
+        typed_depth: 0,
     };
     for (name, prim, scheme) in prelude::prims() {
         ck.prims.insert(Arc::from(name), (prim, scheme));
@@ -442,6 +474,12 @@ pub fn check_module_with(
     ck.collect_aliases(&items);
     ck.collect_types(&items);
     ck.register_type_constructors();
+    // What a typed macro body may look into, once the declarations are complete and before any
+    // body is checked. Skipped entirely when the module declares no typed macro, which is every
+    // module in this repository but one.
+    if !ck.typed.is_empty() {
+        ck.declare_types_to_macros();
+    }
     // Traits before impls, and impls before any signature: an `impl` is *desugared* into ordinary
     // definitions, so by the time `collect_signatures` runs there is nothing trait-shaped left for
     // it — or for placement, or for the splitter, or for the evaluator — to know about.
@@ -481,6 +519,23 @@ mod tests_in_beck;
 mod traits;
 
 pub use traits::is_impl_method;
+
+/// The expression a macro argument carries, with the two wrappers the call form puts round it.
+///
+/// `f(x, do=quote(block))` is what `f(x):` parses to (§2.3's block rule), and a macro parameter is
+/// bound to the block rather than to the `quote` marking it as syntax — so this is the same
+/// unwrapping `beck_macro`'s own argument binding does, applied one phase earlier because the
+/// checker has to infer what the macro will be told about.
+fn argument_expr(a: &Node) -> &Node {
+    let a = match a.is_form(sym::KW_ARG) && a.args.len() == 2 {
+        true => &a.args[1],
+        false => a,
+    };
+    match a.is_form(sym::QUOTE) && a.args.len() == 1 {
+        true => &a.args[0],
+        false => a,
+    }
+}
 
 /// `a | b | c` parses as `(| (| a b) c)`; the alternatives are its leaves.
 fn flatten_alts(p: &Node, out: &mut Vec<Node>) {
@@ -1434,10 +1489,13 @@ impl<'a> Checker<'a> {
                 || inner.is_form(sym::IMPL)
                 || inner.is_form(sym::ROW)
                 || inner.is_form(sym::IDENTITY)
+                || inner.is_form(sym::TYPED_MACRO)
             {
                 // Declarations, all of them already collected. A `trait` was read by
                 // `collect_traits` and an `impl` was expanded into the `def`s this loop is
-                // checking, so neither has anything left to do here.
+                // checking, so neither has anything left to do here — and a `typed macro` was
+                // read into [`Checker::typed`] before any body was walked, which is what makes it
+                // callable from every one of them.
             } else {
                 // A call that survived expansion is the shape a *macro* call has, and the reason it
                 // survived is almost always that no module in scope declares one by that name. A
@@ -1445,6 +1503,29 @@ impl<'a> Checker<'a> {
                 // ([`beck_macro::expand_module_with`]), so the fix is a missing `import` far more
                 // often than it is a misplaced statement — and until macros crossed at all the
                 // answer was "they do not", which is no longer the thing to tell somebody.
+                if let Some(name) = inner
+                    .head_sym()
+                    .filter(|_| inner.applied)
+                    .filter(|n| self.typed.declares(n.as_str()))
+                    .cloned()
+                {
+                    self.diags.push(
+                        Diagnostic::error(
+                            "B0223",
+                            format!("`{name}` is a typed macro and cannot decorate a declaration"),
+                            inner.span(),
+                        )
+                        .with_primary_label("a typed macro expands where an expression belongs")
+                        .with_note(
+                            "A typed macro is expanded by the checker, and what it is given is \
+                             what the checker inferred an *expression* to be. A declaration has \
+                             nothing inferred about it — its fields are in its syntax — so a macro \
+                             over one is an ordinary `macro`, which receives it before checking \
+                             runs at all (`docs/02` §2.4).",
+                        ),
+                    );
+                    continue;
+                }
                 let mut d = Diagnostic::error("B0307", "unsupported top-level item", inner.span());
                 if let Some(name) = inner.head_sym().filter(|_| inner.applied) {
                     d = d.with_note(format!(
@@ -2188,6 +2269,12 @@ impl<'a> Checker<'a> {
         }
         let out = self.expr_inner(n, expected);
         self.nesting.leave();
+        // A probe is running: this is what a typed macro's body will be told about this expression.
+        // Recorded on the way *out*, so a parent overwrites a child that borrowed its position —
+        // which is what macro-generated code does with the span it was expanded from.
+        if let Some(rec) = &mut self.probe {
+            rec.push((n.span(), out.ty.clone()));
+        }
         out
     }
 
@@ -2353,6 +2440,10 @@ impl<'a> Checker<'a> {
                     span,
                 )
             }
+            // An expansion that failed, and said why. A **fresh** type variable rather than
+            // `unit`, so that whatever the call site expected unifies and the one error a reader
+            // sees is the refusal — the same shape `typed_macro` uses for the same reason.
+            sym::REFUSED => Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span),
             sym::QUOTE => {
                 self.error("B0332", "a `quote` survived macro expansion", span);
                 Core::new(CoreKind::Const(Const::Unit), Ty::unit(), span)
@@ -3501,8 +3592,175 @@ impl<'a> Checker<'a> {
         }
     }
 
+    // ------------------------------------------------------------------------------ typed macros
+
+    /// Expand one `typed macro` call and check what it produced.
+    ///
+    /// The order is the whole feature: infer the arguments, hand the macro what they are, check
+    /// the code it wrote. The expansion is checked with the *caller's* expectation, so a typed
+    /// macro is an expression like any other and inference flows through it.
+    fn typed_macro(&mut self, n: &Node, expected: Option<&Ty>, span: Span) -> Core {
+        let unit = |ck: &mut Self| Core::new(CoreKind::Const(Const::Unit), ck.subst.fresh(), span);
+        if self.typed_depth >= beck_macro::MAX_DEPTH {
+            self.diags.push(
+                Diagnostic::error("B0201", "macro expansion did not terminate", span)
+                    .with_primary_label("expanded past the depth limit")
+                    .with_note(format!(
+                        "the limit is {} nested expansions, and a typed macro's nest through the \
+                         checker rather than through the expander: each one emits a call the check \
+                         of its own answer meets",
+                        beck_macro::MAX_DEPTH
+                    )),
+            );
+            return unit(self);
+        }
+        // A budget that has run out has already been reported, and everything after it expands to
+        // nothing. Walking further would be spending the rest of the compile on a refused program.
+        if self.typed.exhausted() {
+            return unit(self);
+        }
+        self.probe(&n.args, span);
+        // Three disjoint fields, so the expander is moved out for the call rather than borrowed
+        // beside them.
+        let mut typed = std::mem::take(&mut self.typed);
+        let out = typed.expand(n, &self.typed_env, self.diags);
+        self.typed = typed;
+        let Some(node) = out else {
+            return unit(self);
+        };
+        self.typed_depth += 1;
+        let core = self.expr(&node, expected);
+        self.typed_depth -= 1;
+        core
+    }
+
+    /// Infer a typed macro call's arguments, and forget everything about having done so.
+    ///
+    /// Everything except the types: the diagnostics, the effects and the bindings are rolled back,
+    /// because the arguments are checked again — inside whatever the macro wrote — and a macro that
+    /// *discards* an argument must not leave that argument's effects on the definition's row.
+    /// Inference itself is not rolled back, and cannot be: a unification the arguments force is one
+    /// the real check would force too.
+    fn probe(&mut self, args: &[Node], call: Span) {
+        let outer = self.probe.replace(Vec::new());
+        let exhausted_before = self.typed.exhausted();
+        let diags_mark = self.diags.len();
+        let row_before = self.row.clone();
+        let locals_before = self.locals.len();
+        let siblings_before = self.parallel_siblings.len();
+        for a in args {
+            let _ = self.expr(argument_expr(a), None);
+        }
+        let recorded = std::mem::replace(&mut self.probe, outer).unwrap_or_default();
+        self.parallel_siblings.truncate(siblings_before);
+        self.locals.truncate(locals_before);
+        self.row = row_before;
+        self.diags.truncate(diags_mark);
+        // One report does **not** roll back. An argument that is itself a typed macro call expands
+        // here, and expansion draws on a module-wide budget that is spent once and refused once —
+        // so discarding that refusal would leave the only report there will ever be deleted, every
+        // expansion afterwards producing nothing, and a program silently checked as `unit`.
+        if !exhausted_before && self.typed.exhausted() {
+            let typed = std::mem::take(&mut self.typed);
+            typed.report_exhaustion(call, self.diags);
+            self.typed = typed;
+        }
+
+        self.typed_env.clear_nodes();
+        for (span, ty) in recorded {
+            let ty = self.subst.resolve(&ty);
+            let repr = self.repr(&ty);
+            self.typed_env.record(span, repr);
+        }
+    }
+
+    /// Every declaration in scope, as the projection a macro body reads.
+    ///
+    /// Once per module, because a macro body may ask about a type no call site mentions — the
+    /// element type of a list, the payload of a variant — and because the set is fixed before any
+    /// body is checked.
+    fn declare_types_to_macros(&mut self) {
+        for (name, decl) in self.types.clone() {
+            let params = decl.params();
+            let info = match &decl {
+                TyDecl::Model { fields, .. } => beck_macro::DeclInfo {
+                    fields: self.repr_fields(fields, params),
+                    ..beck_macro::DeclInfo::default()
+                },
+                TyDecl::Union { variants, .. } => beck_macro::DeclInfo {
+                    variants: variants
+                        .iter()
+                        .map(|v| (v.name.clone(), self.repr_fields(&v.fields, params)))
+                        .collect(),
+                    ..beck_macro::DeclInfo::default()
+                },
+                TyDecl::Newtype { inner, .. } => beck_macro::DeclInfo {
+                    inner: Some(self.repr_in(inner, params)),
+                    ..beck_macro::DeclInfo::default()
+                },
+                // An alias is expanded before anything holds one, so a macro never meets its name.
+                TyDecl::Alias { .. } => continue,
+            };
+            self.typed_env.declare(name, info);
+        }
+    }
+
+    fn repr_fields(&self, fields: &[(Arc<str>, Ty)], params: &[Arc<str>]) -> beck_macro::Fields {
+        fields
+            .iter()
+            .map(|(n, t)| (n.clone(), self.repr_in(t, params)))
+            .collect()
+    }
+
+    /// A checked type as a macro body sees it.
+    ///
+    /// What is dropped is what a macro has no use for: a function's effect row, and the identity of
+    /// an unsolved variable — which becomes `unknown` rather than a name, because a body deciding
+    /// what to generate from `?7` would be generating from an accident of inference order.
+    fn repr(&self, t: &Ty) -> beck_macro::TyRepr {
+        self.repr_in(t, &[])
+    }
+
+    /// The same, inside a declaration whose type parameters are `params`.
+    fn repr_in(&self, t: &Ty, params: &[Arc<str>]) -> beck_macro::TyRepr {
+        match t {
+            Ty::Var(v) if *v >= ty::SCHEME_BASE => {
+                let index = (*v - ty::SCHEME_BASE) as usize;
+                match params.get(index) {
+                    Some(name) => beck_macro::TyRepr::Param {
+                        name: name.clone(),
+                        index,
+                    },
+                    None => beck_macro::TyRepr::Unknown,
+                }
+            }
+            Ty::Var(_) => beck_macro::TyRepr::Unknown,
+            Ty::Con(name, args) => beck_macro::TyRepr::Con {
+                name: name.clone(),
+                kind: match self.types.get(name) {
+                    Some(TyDecl::Model { .. }) => beck_macro::TyKind::Model,
+                    Some(TyDecl::Union { .. }) => beck_macro::TyKind::Union,
+                    Some(TyDecl::Newtype { .. }) => beck_macro::TyKind::Newtype,
+                    _ => beck_macro::TyKind::Builtin,
+                },
+                args: args.iter().map(|a| self.repr_in(a, params)).collect(),
+            },
+            Ty::Fun(ps, r, _) => beck_macro::TyRepr::Fun {
+                params: ps.iter().map(|p| self.repr_in(p, params)).collect(),
+                result: Box::new(self.repr_in(r, params)),
+            },
+        }
+    }
+
     fn call(&mut self, n: &Node, expected: Option<&Ty>, span: Span) -> Core {
         let head = n.head_sym().cloned().unwrap_or_else(|| Symbol::new("?"));
+
+        // A typed macro is expanded here rather than in `beck-macro`, and *before* the name is
+        // resolved: the untyped expander left the call alone because there was nothing inferred to
+        // hand it, and this is the first point where there is (§2.4).
+        if self.typed.declares(head.as_str()) {
+            return self.typed_macro(n, expected, span);
+        }
 
         // `(call callee args...)` — a computed callee.
         if head.as_str() == sym::CALL && !n.args.is_empty() {
@@ -3534,7 +3792,27 @@ impl<'a> Checker<'a> {
                 self.apply_fn(func, &n.args, span)
             }
             None => {
-                self.error("B0340", format!("cannot find `{head}` in this scope"), span);
+                // A typed literal is sugar and the name in the message is not the one anybody
+                // typed, so say where it came from. Without this the reader is told about
+                // `sql_sigil` having written `sql"…"` (`docs/02` §2.5).
+                match head.as_str().strip_suffix("_sigil") {
+                    Some(sigil) => {
+                        let d = Diagnostic::error(
+                            "B0340",
+                            format!("cannot find `{head}` in this scope"),
+                            span,
+                        )
+                        .with_note(format!(
+                            "`{sigil}\"…\"` is a typed literal and expands to \
+                             `{head}(raw=\"…\")`, so what is missing is a macro named `{head}` \
+                             — `docs/02` §2.5"
+                        ));
+                        self.diags.push(d);
+                    }
+                    None => {
+                        self.error("B0340", format!("cannot find `{head}` in this scope"), span)
+                    }
+                }
                 Core::new(CoreKind::Const(Const::Unit), self.subst.fresh(), span)
             }
         }
@@ -4080,6 +4358,82 @@ mod tests {
             .iter()
             .map(|e| e.name())
             .collect()
+    }
+
+    /// A typed macro is handed the type the checker inferred, and writes code from it.
+    ///
+    /// The three that matter are asserted together because they are one mechanism: a `model`
+    /// answers its fields, a `union` its variants, and a parameterised builtin its arguments — so
+    /// `list[Shot]` reaches the union through the list.
+    #[test]
+    fn a_typed_macro_reads_what_the_checker_inferred() {
+        let src = "\
+model Point:
+    x: Int
+    y: Int
+
+union Shot:
+    Hit(at: Int)
+    Miss
+
+typed macro shape(v):
+    t = node_ty(v)
+    out = t.kind + \"/\" + t.name
+    for f in t.fields:
+        out = out + \" \" + f.name + \":\" + f.ty.name
+    for e in t.args:
+        out = out + \"<\" + e.kind + \":\" + e.name
+        for va in e.variants:
+            out = out + \"|\" + va.name + str(list_len(va.fields))
+    return out
+
+def a(p: Point) -> Str:
+    return shape(p)
+
+def b(xs: list[Shot]) -> Str:
+    return shape(xs)
+";
+        let (program, d, map) = check_str("t.beck", src);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        let body = |name: &str| format!("{:?}", program.defs.get(name).expect(name).body);
+        assert!(
+            body("a").contains("model/Point x:Int y:Int"),
+            "{}",
+            body("a")
+        );
+        assert!(
+            body("b").contains("builtin/list<union:Shot|Hit1|Miss0"),
+            "{}",
+            body("b")
+        );
+    }
+
+    /// A declaration's type parameters are substituted by the arguments the mention carried.
+    ///
+    /// The half a macro would otherwise get silently wrong: `Box[Int]`'s field is an `Int`, and a
+    /// projection that forgot to substitute would answer `T` — a name, and a plausible one.
+    #[test]
+    fn a_generic_model_answers_with_its_arguments_put_in() {
+        let src = "\
+model Box[T]:
+    held: T
+    label: Str
+
+typed macro held_type(v):
+    t = node_ty(v)
+    return t.fields[0].ty.name
+
+def f(b: Box[Int]) -> Str:
+    return held_type(b)
+";
+        let (program, d, map) = check_str("t.beck", src);
+        assert!(!d.has_errors(), "{}", d.render(&map));
+        let body = format!("{:?}", program.defs.get("f").expect("f").body);
+        assert!(body.contains("Int"), "{body}");
+        assert!(
+            !body.contains("\"T\""),
+            "the parameter was not substituted: {body}"
+        );
     }
 
     fn codes(src: &str) -> Vec<&'static str> {

@@ -44,6 +44,13 @@ pub enum Raw {
     #[regex(r#""([^"\\\n]|\\.)*""#, |lex| unescape(lex.slice()))]
     Str(String),
 
+    // `name"body"` — a typed literal (§2.5). The body is **raw**: no escape is processed and no
+    // `"` may appear, because the notation inside belongs to whatever parses the body and a
+    // regex's `\d` is not this lexer's business. Longest match puts this ahead of an `Ident`
+    // followed by a `Str`, which is a pair no Beck program has ever written adjacent.
+    #[regex(r#"[A-Za-z_][A-Za-z0-9_]*"[^"\n]*""#, sigil)]
+    Sigil(SigilText),
+
     #[token("(")]
     LParen,
     #[token(")")]
@@ -107,6 +114,28 @@ pub enum Raw {
 /// `parse::<f64>` is the correctly-rounded reading of a decimal string, so `1.5e-3` and `0.0015`
 /// give the same `f64` — which is what lets a table of constants be transcribed in the notation it
 /// was published in rather than rewritten.
+/// A typed literal's two halves: the sigil's name, and the body exactly as written.
+///
+/// The body is not unescaped. `regex"^\d{4}$"` must reach its macro with the backslash it was
+/// written with, so the one thing this lexer does to a sigil body is find where it ends.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SigilText {
+    pub name: String,
+    pub raw: String,
+}
+
+fn sigil(lex: &mut logos::Lexer<Raw>) -> SigilText {
+    let s = lex.slice();
+    // The regex guarantees both quotes, and the first one ends the name.
+    let q = s
+        .find('"')
+        .expect("a sigil's regex requires an opening quote");
+    SigilText {
+        name: s[..q].to_string(),
+        raw: s[q + 1..s.len() - 1].to_string(),
+    }
+}
+
 fn float(lex: &mut logos::Lexer<Raw>) -> Option<f64> {
     lex.slice().replace('_', "").parse::<f64>().ok()
 }
@@ -194,6 +223,7 @@ impl Token {
                 Raw::Int(n) => format!("`{n}`"),
                 Raw::Float(n) => format!("`{n}`"),
                 Raw::Str(_) => "a string".into(),
+                Raw::Sigil(t) => format!("`{}\"…\"`", t.name),
                 Raw::Newline => "end of line".into(),
                 other => format!("`{}`", punct(other)),
             },
@@ -296,6 +326,7 @@ pub const KEYWORDS: &[&str] = &[
     "trait",
     "try",
     "type",
+    "typed",
     "union",
     "uses",
     "var",

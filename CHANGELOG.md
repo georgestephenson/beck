@@ -17,6 +17,187 @@ carry the order, so leave them where they land.
 
 ## Unreleased
 
+- **2026-08-26 — TLS 1.3 only, which the row already claimed.**
+  [`docs/12`](docs/12-standards-and-conformance.md)'s "TLS 1.3 (RFC 8446), no legacy downgrade"
+  row, [`docs/08`](docs/08-roadmap.md) §8.5.4's standards ledger. The ledger listed this as a
+  missing *gate*; it was a missing **implementation**. rustls's safe defaults are TLS 1.2 *and*
+  1.3, and both clients — a program's outbound call and the compiler's own `beck fetch` — were
+  built with them, so a peer offering only 1.2 was accepted: exactly the downgrade the row says
+  there is none of. Writing the test first is what showed it, and with the old configuration it
+  fails with the 1.2 peer answering `200`. `beck_rt::outbound::TLS_VERSIONS` is now the one place
+  the versions are named and both clients read it, because a list written twice is a list that can
+  differ. The gate is a real handshake against a 1.2-only server with the 1.3 control beside it —
+  the same certificate, the same trust anchor, the same request, and the only difference is which
+  version the server offers, so the refusal cannot be passing for a closed port or a bad name.
+
+- **2026-08-26 — The CLI's exit statuses are a table, generated and gated.**
+  [`docs/35`](docs/35-standards-landscape.md) §35.2's POSIX row,
+  [`docs/08`](docs/08-roadmap.md) §8.5.4's standards ledger,
+  [`docs/reference/cli.md`](docs/reference/cli.md). Four statuses — `0` did what was asked, `1` ran
+  and the answer is no, `2` the invocation was wrong, `101` a panic and therefore a bug in this
+  binary — written once as a constant in `docs.rs` and generated into the command reference, where
+  a person looking for the contract will find it. Four and not more on purpose: the distinction a
+  script makes is "worked", "worked and said no", "called it wrong", and splitting the middle one
+  between a file that could not be read and a program that does not compile would be inventing a
+  contract nobody asked for. The gate reads the **published** table and drives the binary against
+  it in both directions — a status no row names fails, and a row nothing produces fails — so a
+  `clap` upgrade that moves a usage error off `2` breaks here rather than in somebody's CI. `101`
+  is excused from the second half by name rather than by silence, since a deliberate panic is not
+  something a test suite should arrange. The row in §35.2 said the table lived "in the diagnostic
+  snapshots" and now names where it is.
+
+- **2026-08-26 — A sweep over the typed-literal work, and the fuzzer gets the shape that eats text.**
+  [`docs/13`](docs/13-testing.md), [`docs/82`](docs/82-the-edge-report.md) §82.11,
+  [`docs/11`](docs/11-language-tour.md) §11.9. `grammar_fuzz.rs` gains `Shape::Sigils`: ten shapes
+  built *structure* out of the grammar's own punctuation, and a sigil is the first production that
+  consumes **arbitrary text** — a raw body the lexer takes wholesale and a macro reads with
+  `node_lit` — which is exactly the class `docs/13` calls CVE-shaped. Generated with a real macro
+  behind it so the body reaches the interpreter rather than stopping at `B0340`, over an alphabet
+  that includes `$` and `$*`, and added to the exhaustive ceiling walk beside the property test.
+  §8.5.6's sweep over the same work found four documents behind the code: **`docs/11` §11.9 showed
+  four escape hatches in present tense and not one of them parses** — `external store`, `extern def`
+  and `python_service` are all `B0307`, and `sql"…"` has its notation and not its macro — so the
+  section now says so, in the same shape §11.10 beside it already used. `docs/105`'s regex row said
+  "unblocked" when the notation is built and what is missing is a regex *engine*; `docs/104`'s `css:`
+  row and `docs/82`'s fuzzing row were each one step behind.
+
+- **2026-08-26 — `bignum"…"`, and the half of the import fix its gate had missed.**
+  [`docs/02`](docs/02-syntax.md) §2.5, [`docs/102`](docs/102-the-macro-interpreter-report.md)
+  §102.10. The third typed literal and the first that is a **capability**: an `Int` literal is
+  sixty-four bits, so until now there was no way to write a large integer in Beck at all — every
+  value past that reached a program through `big_of_str`, which raises. The macro groups the digit
+  run into base-10,000 limbs at compile time and emits `normalise(false, […])`, so
+  `bignum"1267650600228229401496703205376"` is the `Big`, in limbs, before the checker sees it.
+  The grouping is written twice (the run-time half reads `str_to_int`'s `Option`) and the
+  differential in `bignum.beck`'s own tests holds them together, against constants that were
+  Python's answers first.
+  **Writing it found the previous change to be half a fix.** Yesterday's gate put the macro in the
+  *root* module and its `def` in an imported one; the case it did not have is the one a library
+  is — a macro declared in `decimal.beck` whose body calls what `decimal.beck` imports, expanded by
+  a program two modules away. A macro body resolves in **its own** module's environment, so what
+  must be reachable is the closure of what *that* module can see, and it was still `B0208`. The
+  environment is that closure now, merged flat, which the flat namespace makes unambiguous
+  (`B0601`) and which is loose in one direction — a body can name what its module reaches
+  transitively. Gated with three modules and the macro in the middle one. `decimal.beck` is what it
+  bought: `is_digit_run` moved to `bignum.beck`, which it already imports, so what counts as a
+  digit has one answer for both files and both phases.
+
+- **2026-08-26 — A macro body calls the `def`s of the modules its own module imports.**
+  [`docs/02`](docs/02-syntax.md) §2.4, [`docs/102`](docs/102-the-macro-interpreter-report.md)
+  §102.10. It could not, and the way it could not is the defect: a macro crosses an import on the
+  imported module's *source*, and which sources the compiler kept was decided by asking whether the
+  **imported** file declared a macro — the right question for finding a macro to expand, the wrong
+  one for finding a `def` to call, because nothing about `dates.beck` says whether the file
+  importing it has a macro. So an imported `def` was reachable only when that other module happened
+  to declare a macro of its own, and adding an unused one to it was the difference between `B0208`
+  and a compile, while `B0208`'s text — "a `def` in this module" — described a rule that was not
+  being applied. The question is the importer's now (`project.rs`), and the interpreter asks "are
+  there macros here at all" of every module in play rather than of the imports alone
+  (`beck-macro/src/lib.rs`). Cost profile unchanged: the same text pre-filter that kept a second
+  parse off macro-free builds still does. Gated three ways in `macro_interp.rs` — the plain pair, the
+  same pair with a decoy macro in the imported file (the case that used to pass for the wrong
+  reason), and a module that is *not* imported still refused. `docs/08` §8.5.4 had this written down
+  as a small unbuilt item one commit earlier; it was a defect, and it is corrected there.
+
+- **2026-08-25 — `decimal"1.25"`, and where the sigil pattern stops sharing.**
+  [`docs/02`](docs/02-syntax.md) §2.5, [`docs/102`](docs/102-the-macro-interpreter-report.md)
+  §102.10. The second typed literal, written in a different library to find out whether the first
+  was a coincidence. The pattern held — `decimal"1.25"` **is** `of_units(125, 2)` by the time the
+  checker sees it, where `decimal_of_str` raises and `of_units` asks the author to count the
+  fractional digits themselves — and the *sharing* did not. A date's validator is integer
+  arithmetic that a macro body runs as written; this library decides validity through a `Result`,
+  which a macro body has no unions to read, so what is factored out is the **grammar**
+  (`is_decimal_text`, asked by both doors) and the *value* is still built twice, out of an `Int` and
+  a `Big`. Two bounds the run-time door does not have: eighteen digits, and `max_scale()`. Writing
+  a function for both phases also showed the compile-time subset is narrower than "no unions"
+  sounds — `list_get` and `str_index_of` both answer one, so the halves of `"1.25"` are recovered
+  with `str_starts_with`/`str_replace` rather than by indexing what `str_split` returned. A smaller
+  limit is now a roadmap line rather than a surprise: **a macro body resolves its own module's
+  `def`s and not an imported module's** (`B0208`), so `dates.beck` and `decimal.beck` carry the same
+  three-line digit predicate under two names. Gates in `macro_interp.rs`: the nine texts
+  `decimal.beck` refuses at run time are the nine the sigil refuses at compile time, with the
+  accepting control beside them, and the two bounds tested from both sides.
+
+- **2026-08-25 — Measured: a nested typed macro is charged for output nobody gets.**
+  [`DEFECTS.md`](DEFECTS.md), [`docs/102`](docs/102-the-macro-interpreter-report.md) §102.9. A
+  `typed macro` whose argument is another one is expanded in the probe and again in the real check,
+  so nesting `d` deep costs `2^d` expansions. §102.9 had recorded that as work "charged honestly
+  against" F17's production budget; it is not honest, because that budget bounds what expansion
+  **produces** and the probe's output is thrown away. Timed through `beck check` on a macro
+  producing three nodes: 97 ms at thirteen deep, 175 ms at fourteen, and at fifteen a `B0214`
+  refusal — `2^15 × 3 ≈ 98,000` against a budget of 100,000 — for a program whose whole expansion is
+  about forty-five nodes, followed by a second error because a spent budget makes the macro's own
+  `refuse` fire on a type it can no longer see. Recorded rather than fixed, with both gates a fix
+  owes: a nesting sweep in `compile_speed.rs`'s shape form, **and** `macro_bomb.rs`'s doubling typed
+  macro still refused — because the probe's charge is exactly what the first version of that work
+  deleted, so the obvious fix reopens the hole the obvious gate was written for.
+
+- **2026-08-25 — Typed literals: `name"body"` is a macro call, and the first one is a date.**
+  [`docs/02`](docs/02-syntax.md) §2.5, [`docs/102`](docs/102-the-macro-interpreter-report.md)
+  §102.10, [`docs/08`](docs/08-roadmap.md) §8.5.4. A sigil lexes as one token and desugars to
+  `name_sigil(raw="body")` — §2.3's table, minus a `span=` argument it promised and nothing could
+  consume — so what parses a body is an ordinary macro and nothing in the front end knows a sigil
+  exists. The body is **raw** (no escape processed, which is what `regex"^\d{4}$"` needs), it
+  carries the span *inside* the quotes so `refuse(msg, raw)` underlines the body rather than the
+  expression, and a sigil with no macro behind it names the sigil that was written instead of the
+  `_sigil` name nobody typed. Two readers were what was actually missing: `node_lit` reads a
+  literal node's value (`node_head` reads a symbol's and refuses a literal, and nothing read the
+  other half), and `str_to_int` is now a compile-time builtin — **total, and refuses** — which is
+  the answer indexing had already settled for an `Option`-returning primitive in a sandbox with no
+  unions. `lib/dates.beck` gains `date"YYYY-MM-DD"`, checked at compile time by `is_valid`, the
+  same function `parse_date` calls: `date"2026-02-30"` is a compile error pointing at the ten
+  characters. The point is the effect row rather than the parse — `parse_date` raises, so one
+  hard-coded date put `raises(CalendarError)` on the signature holding it. Also fixed: a macro that
+  refused was reported **twice**, because the failed call was left for the checker to fail to
+  resolve; what replaces it is `<refused>`, spelled so no program can write it, carrying a fresh
+  type variable so nothing cascades at the call either. F17's second half is closed by the work
+  arriving rather than by anything being built for it — a typed literal's parser *is* a macro body
+  — and [`docs/42`](docs/42-security-assurance.md) §42.6, [`docs/43`](docs/43-threat-model.md)
+  §43.4 and [`docs/14`](docs/14-review-findings.md) say so. §3.5's "no injection / no XSS" row named
+  `sql"…"`/`html"…"` as its mechanism and now names the ones that deliver it, which is the finding:
+  those two examples are the two things this language already removed the need for. Gates:
+  `macro_interp.rs` (the desugaring, the raw body, the caret width inside the literal, the missing
+  macro's note, one error not two, both readers refusing, and `date"…"` across a module boundary)
+  and `macro_bomb.rs` (a sigil that does not terminate and one that produces too much).
+
+- **2026-08-24 — Typed macros: a macro body asks the checker what its arguments are.**
+  [`docs/02`](docs/02-syntax.md) §2.4, [`docs/102`](docs/102-the-macro-interpreter-report.md)
+  §102.9, [`docs/08`](docs/08-roadmap.md) §8.5.4. `typed macro f(x):` is expanded by the **checker**
+  rather than by `beck-macro`, at the call, once the arguments have been inferred — so `node_ty(e)`
+  answers with the type the checker gave that expression, and the value answers `.name`, `.kind`,
+  `.args`, `.result`, `.fields`, `.variants` and `.inner` through the ordinary record notation.
+  Declarations are looked into **on access**, because a model whose field mentions itself would
+  otherwise not be a finite value, and a mention's type arguments are substituted in, so `Box[Int]`'s
+  field is an `Int` and not a `T`. Recursion goes through the expander — a typed macro emits a call
+  to itself on something smaller — because a compile-time helper is an ordinary `def` and a function
+  over a *type* has no Beck type; `B0201` bounds it. `refuse("…")` (`B0224`) is how a macro that
+  writes code from a type says it has no rule for one, at the call site and in the macro author's
+  own words. `lib/json.beck` gains `json_of(e)`, which writes a JSON encoder for a model **nobody
+  decorated**, reached through a list, a `newtype` and a field, with no reflection at run time.
+  Refusals: `node_ty` in an untyped `macro` body says which word to write (`B0209`), and a typed
+  macro over a declaration is `B0223`. The finding is in the **probe** rather than in the types:
+  inferring an argument to tell the macro what it is must leave behind neither the diagnostics nor
+  the effect row, since a macro may *discard* an argument and then nothing performs its effects —
+  gated in `macro_interp.rs` with the control beside it, where the same argument through a macro
+  that keeps it does charge `nondet`. **One report must survive that rollback**: an argument that is
+  itself a typed macro call expands inside the probe, and the production budget is spent once and
+  refused once — so the first version deleted the only refusal there would ever be, every later
+  expansion produced nothing, and a doubling macro checked clean as `unit`. `macro_bomb.rs` gains
+  the typed twin of its own fixture, one word apart, and it went red on that. **Exhaustiveness-aware
+  codegen came with it and needed nothing added**: a macro that has read a union's variants builds
+  `(match subject (case pat body)…)` with `node_form`, and a constructor it computed is written
+  `case n(at):` inside a `quote:` — a template head naming bound syntax already *is* that syntax.
+  This change claimed a `$` rule was missing, on the strength of `case $n(at):` failing, and
+  withdrew it in the same change once the gate was written; `$n(…)` now refuses with the spelling
+  that works rather than with a report about a name the template owns. Twelve gates in
+  `macro_interp.rs`, one in `macro_bomb.rs`, two in `check/mod.rs`; `ty.rs` is
+  untouched, which is the fourth time §8.5.5's lane rule has been got wrong and the first time the
+  argument for the wrong lane was a correct one about dependencies. F17's ceiling is now **two**
+  budgets rather than one, which [`docs/42`](docs/42-security-assurance.md) §42.6 and
+  [`docs/43`](docs/43-threat-model.md) §43.4 say; §8.5.6's sweep, run over this change, also found
+  [`docs/82`](docs/82-the-edge-report.md) and `pending_security.rs`'s own header still calling that
+  fuel unbuilt, and both are corrected in place.
+
 - **2026-08-23 — A test stops writing generated pages into the source tree.**
   `beck-cli/tests/stdlib.rs::every_library_documents` ran `beck doc module` over every file in
   `lib/` with no `--out`, so each run wrote a page into the default output directory — which for a
@@ -242,7 +423,7 @@ carry the order, so leave them where they land.
   stale somewhere different, and twice in one day when programs 38 and 39 landed together.
   **The hard part was never the assertion; it was that a count has to be findable in prose.** A
   test cannot grep for `985` and know which document meant which quantity. So a marked number
-  carries an HTML comment naming it — `995<!--c:native-compiled-->` — invisible where the markdown
+  carries an HTML comment naming it — `997<!--c:native-compiled-->` — invisible where the markdown
   renders and greppable where it is edited, and **the number is read out of the sentence rather
   than out of the marker**: a marker carrying its own value would agree with itself while the prose
   beside it said something else, which is the failure being gated.

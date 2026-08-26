@@ -424,7 +424,7 @@ than it returns. Ranked, with verdicts:
 | **Conditional utilities as library functions** — `when(t.done, "line-through opacity-50")` | **Yes**, and as a library, not syntax. It wants `class=` to accept a list as well as a string, which is one line in the `ui:` macro |
 | **The theme as a Beck value** — tokens as a record, generating both the `@theme` block and the accepted table | **Yes.** Renaming a brand colour becomes a rename, checked. This is the piece that makes a *design system* rather than a stylesheet |
 | **Variants as values** — `hover(bg_rose_500)` instead of `"hover:bg-rose-500"` | **No.** Loses the transfer, gains nothing a checked string does not already have |
-| **A `css:` macro** for what utilities cannot say — keyframes, `@container`, complex selectors | **Later, and now genuinely cheap.** It is a typed literal macro ([`02`](02-syntax.md) §2.5), which used to mean it waited on the macro interpreter; the interpreter is **built** ([`102`](102-the-macro-interpreter-report.md)) and [`08`](08-roadmap.md) §8.5.4 lists typed literal macros among what it unblocked and *free of Lane A*. So the cost argument for deferring it is gone and only the need argument is left, which still holds: nothing in the styling half wants it, and §104.4 works without it |
+| **A `css:` macro** for what utilities cannot say — keyframes, `@container`, complex selectors | **Later, and now genuinely cheap.** It is a typed literal macro ([`02`](02-syntax.md) §2.5), which used to mean it waited on the macro interpreter; both are **built** now ([`102`](102-the-macro-interpreter-report.md)), and three typed literals ship in `lib/`, so writing one is a file rather than a project. The cost argument for deferring it is gone and only the need argument is left, which still holds: nothing in the styling half wants it, and §104.4 works without it |
 | **A `component` keyword** | **No.** §104.7 measures what functions already do, and the answer is everything |
 
 ## 104.7 A component library needs no language feature — measured
@@ -742,8 +742,11 @@ escape hatch for an attribute that is genuinely yours is HTML's own, so there wa
 Three things about the fix are worth more than the table.
 
 - **It is a table in a crate, not a check in the expander.** `ui:` is a compiler-provided special
-  case standing in for a user-written macro, and typed macros retire it
-  ([`10`](10-decisions.md) D22); a vocabulary buried in today's expander would be written twice, and
+  case standing in for a user-written macro, and a user-written one is what eventually retires it
+  ([`10`](10-decisions.md) D22) — typed macros are built now
+  ([`102`](102-the-macro-interpreter-report.md) §102.9), so what stands between the two is this
+  document's own list rather than anything the macro system lacks. A
+  vocabulary buried in today's expander would be written twice, and
   the second copy is the one that drifts. §12.4's three accessibility checks — since built — read this module rather
   than a list of their own, which is what makes them a day's work rather than a table's.
 - **The events are asserted to be the client's, not declared to be.** They are written in different
@@ -759,8 +762,10 @@ Three things about the fix are worth more than the table.
 
 What is **not** refused is an unknown *element*, and that is a limit of today's surface rather than
 a judgement: inside a `ui:` block a lowercase call whose arguments are all keyword arguments is
-indistinguishable from an element, so refusing one would refuse a user's own helper. It is where
-typed macros make a difference rather than a table.
+indistinguishable from an element, so refusing one would refuse a user's own helper. It is where a
+typed macro makes a difference rather than a table: `node_ty` on the call would say whether the
+thing being called is a function the program declared, which is the question the expander cannot
+ask.
 
 ### Wall 3 — focus is not a function of state
 

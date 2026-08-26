@@ -1443,3 +1443,96 @@ fn every_corpus_wide_count_quoted_in_prose_is_the_one_the_tree_has() {
         wrong.join("\n  ")
     );
 }
+
+/// **The exit-status table is what the binary does**, in both directions.
+///
+/// [`docs/35`](../../../../docs/35-standards-landscape.md) §35.2's POSIX row asks for a CLI
+/// exit-status table; `docs/reference/cli.md` carries it, generated from the compiler's own
+/// constant. A table nobody checks is prose, so this reads the *published* one and drives the
+/// binary against it:
+///
+/// * every status the table names is produced by an invocation here, and
+/// * every invocation here produces a status the table names.
+///
+/// The second half is the one that catches a change nobody meant: a command that starts exiting
+/// `3`, or a `clap` upgrade that moves a usage error off `2`, fails here rather than in somebody's
+/// CI script. `101` is asserted from the table's side only — a deliberate panic is not something
+/// this suite should be able to arrange.
+#[test]
+fn the_exit_status_table_is_what_the_binary_does() {
+    let page = std::fs::read_to_string(repo_root().join("docs/reference/cli.md"))
+        .expect("the generated command reference");
+    let documented: Vec<i32> = page
+        .lines()
+        .skip_while(|l| !l.starts_with("## Exit status"))
+        .take_while(|l| !l.starts_with("## `"))
+        .filter_map(|l| l.strip_prefix("| `"))
+        .filter_map(|l| l.split('`').next())
+        .filter_map(|c| c.parse::<i32>().ok())
+        .collect();
+    assert!(
+        documented.len() >= 3,
+        "the exit-status table did not parse out of the reference: {documented:?}"
+    );
+
+    let dir = std::env::temp_dir().join("beck-exit-status");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let write = |name: &str, src: &str| {
+        let p = dir.join(name);
+        std::fs::write(&p, src).expect("a scratch file");
+        p.to_string_lossy().to_string()
+    };
+    let ok = write("ok.beck", "def f() -> Int:\n    return 1\n");
+    let bad = write("bad.beck", "def f() -> Int:\n    return \"x\"\n");
+    let passing = write("passing.beck", "test \"passes\":\n    expect 1 == 1\n");
+    let failing = write("failing.beck", "test \"fails\":\n    expect 1 == 2\n");
+    let missing = dir.join("nope.beck").to_string_lossy().to_string();
+
+    // One invocation per outcome the table distinguishes, and more than one for the middle row —
+    // "the answer is no" covers three different noes and a script must not have to tell them apart.
+    let cases: &[(i32, &[&str])] = &[
+        (0, &["check", &ok]),
+        (0, &["test", &passing]),
+        (1, &["check", &bad]),
+        (1, &["test", &failing]),
+        (1, &["check", &missing]),
+        (2, &["frobnicate"]),
+        (2, &["--no-such-flag"]),
+        (2, &["check"]),
+    ];
+
+    let mut produced: Vec<i32> = Vec::new();
+    for (want, argv) in cases {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_beck"))
+            .args(*argv)
+            .env("RUST_BACKTRACE", "0")
+            .output()
+            .expect("the compiler is built");
+        let got = out.status.code().unwrap_or(-1);
+        assert_eq!(
+            got,
+            *want,
+            "`beck {}` exited {got}, and the reference says {want}:\n{}",
+            argv.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        produced.push(got);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+
+    for code in &produced {
+        assert!(
+            documented.contains(code),
+            "`beck` exits {code} and `docs/reference/cli.md` does not say so"
+        );
+    }
+    // …and the other way, so a row cannot be written for a status nothing produces. `101` is the
+    // exception and is excused by name rather than by silence.
+    for code in &documented {
+        assert!(
+            produced.contains(code) || *code == 101,
+            "the reference documents {code} and no invocation here produces it"
+        );
+    }
+}

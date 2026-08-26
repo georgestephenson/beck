@@ -194,6 +194,14 @@ the program's effects, not declared ([`06`](06-kubernetes-and-packaging.md)).
 
 ## 11.9 Escape hatches, typed
 
+*Not built — none of the four. `external store`, `extern def` and `python_service` are refused by
+the parser (`B0307`, "unsupported top-level item"), and `sql"…"` has its **notation** and not its
+macro: `name"body"` lexes and desugars ([`02`](02-syntax.md) §2.5, built), while a `sql_sigil` that
+checks columns against a `store` and binds parameters does not exist and is not next — §2.5 says
+why, and the short version is that a Beck program never writes SQL. This section is a sketch of
+where each hatch would go, kept because the shapes are still the intended ones. §11.10 below carries
+the same kind of note for the opposite reason: that one is built and the notation moved.*
+
 ```python
 external store legacy = postgres(url=env("LEGACY_DB"))    # existing DB: honest effects, no fold guarantees
 rows = sql"select id, total from invoices where due < {cutoff}"   # checked at compile time, bind-params only

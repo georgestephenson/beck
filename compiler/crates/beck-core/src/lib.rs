@@ -66,7 +66,7 @@ pub use backend::{Backend, Callable, ExecError};
 /// function may share one.
 pub use beck_prim::digest;
 pub use bundle::Bundle;
-pub use check::{check_module, Def, Program, SignalDecl};
+pub use check::{check_module, check_module_importing, Def, Program, SignalDecl};
 pub use compat::{compare, is_breaking, Change};
 pub use core::{digest, Const, Core, CoreKind, Env, Prim, Value, VarId};
 pub use diff::{diff, Op as DiffOp, Path as DiffPath};

@@ -75,7 +75,7 @@ test.
 |---|---|---|
 | **HTTP semantics: RFC 9110/9112, HTTP/2 (9113)** | **Partial** | Hyper (`http1` + `http2`) serves every generated endpoint, exercised across the harnesses. No conformance suite runs; an h2spec-class run is chartered in the standards ledger. **HTTP/3 (9114): no implementation and no QUIC dependency** — the earlier claim of quinn was fiction; watch until a workload demands it |
 | **RFC 6455 (WebSocket)** | **Partial** | The patch/command channel, functionally exercised in five suites (`browser`, `mode_b`, `runtime_edge`, `playground`, `oidc`). An Autobahn-class vector run is chartered in the standards ledger |
-| **TLS 1.3 (RFC 8446), no legacy downgrade** | **Partial** | rustls over aws-lc-rs ([`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md)), real handshakes in tests, certificate verification refusals gated in `beck-cli/src/fetch.rs`'s tests. The "1.3 only" half has no gate — a test that a 1.2-only peer is refused is chartered in the standards ledger |
+| **TLS 1.3 (RFC 8446), no legacy downgrade** | **Verified** | rustls over aws-lc-rs ([`adr/0023`](adr/0023-tls-and-the-signature-it-brings.md)), real handshakes in tests, certificate verification refusals gated in `beck-cli/src/fetch.rs`'s tests. **The "1.3 only" half had no gate and no implementation**: rustls's safe defaults are 1.2 *and* 1.3, so both clients negotiated 1.2 happily — the difference between this row and the configuration was one unnamed argument. `beck_rt::outbound::TLS_VERSIONS` is that argument, read by both clients so the list cannot differ, and `a_peer_that_speaks_only_tls_1_2_is_refused` is a real handshake against a 1.2-only server with the 1.3 control beside it. Written the old way the test fails with the peer answering `200` |
 | **OpenAPI 3.1 + RFC 9457 problem details** | **Chartered** | Blocked on the `@public(rest)` emitter (Phase 4). The three land as one artefact — the generated surface, its schema derived from types, and `application/problem+json` as its error shape ([`35`](35-standards-landscape.md) §35.5 item 3) — with round-trip tests beside them. The family design, what a consumer configures, and the foreign-reader gate are [`101`](101-the-public-surface.md) |
 | **gRPC / Protobuf** | **Chartered** | With `@public(grpc)` — [`101`](101-the-public-surface.md) §101.10 stages it in the second wave (Phase 5), after `rest`. Nothing today; `beck-rt/src/telemetry.rs` deliberately avoids tonic/prost, and the gate's foreign client stays a dev-dependency for the same reason |
 | **Model Context Protocol** | **Chartered** | With `@public(mcp)` (Phase 4, [`101`](101-the-public-surface.md) §101.5): the command union rendered as tools, views as resources, effect rows populating the tool annotations. The gate is the official MCP SDK driving the emitted server |
@@ -262,13 +262,19 @@ A macro body now runs Beck ([`102`](102-the-macro-interpreter-report.md)) and ca
 inspect and return a `Node`, so *programs that compute programs* is backed rather than gestured
 at. What is still not backed is the **run-time** half of code-as-data: a `quote` that survives
 expansion is error `B0332`, so a `Node` is a compile-time value and not yet a value a running
-program holds, and typed macros want the checker's answers, which this interpreter runs before.
+program holds.
 **`derive` is now on the backed side**: a macro takes a `model`, reads its fields out of the
-declaration and emits an `impl` per field (`examples/derive.beck`), which is the shape §2.4's
-sketch has and which needed no reflection at all — a model's fields are in its syntax. So "a
-Python-shaped surface carries Lisp's power" is backed for the notation, the special forms,
-compile-time metaprogramming **and generating code from a declaration**, and **not for run-time
-reflection**.
+declaration and emits an `impl` per field
+([`lib/json.beck`](../compiler/lib/json.beck)'s `derive_json`), which is the shape §2.4's
+sketch has and which needed no reflection at all — a model's fields are in its syntax. **And so is
+generating code from a *type*.** A `typed macro` is expanded by the checker and its body asks
+`node_ty(e)` what an expression was inferred to be, so `json_of` in the same file writes an encoder
+for a model nobody decorated — reached through a list, a `newtype` and a field, with the recursion
+going through the expander rather than through a helper. So "a Python-shaped surface carries Lisp's
+power" is backed for the notation, the special forms, compile-time metaprogramming, **generating
+code from a declaration and from a type**, and **not for run-time reflection**. Exhaustiveness-aware
+codegen is on the backed side too: a macro reads a union's variants and builds the `match`, one arm
+per variant, with the constructors it just read.
 [`08`](08-roadmap.md) §8.5.4 carries what is left.
 
 The counting protocol (§25.5) is part of the standard, because lines of code is a real metric and

@@ -85,11 +85,62 @@ macro derive_json(do):
             def to_json(self):
                 return JsonObject(fields=$fields)
 
+## Write the `Json` for whatever this expression *is*, with no `impl` and no declaration in hand.
+##
+## `derive_json` above is handed a **declaration** and can only be used where one is being written.
+## `json_of` is handed an **expression** and asks the checker what it was inferred to be, which is
+## what a `typed macro` is for (`docs/02` §2.4): a `model` somebody else declared, a field of one, an
+## element of a list — anything with a type is something this can be called on.
+##
+## It recurses through the **expander** rather than through a helper function, because a compile-time
+## helper is an ordinary `def` and would have to typecheck as ordinary code — and a function over a
+## *type* has no Beck type. So each rule emits a `json_of` of something smaller and the checker
+## expands that in turn; `B0201` is what stops a type that contains itself.
+##
+## `here = $v` is why the expression is evaluated once rather than once per field: `here` is
+## introduced by this template, so hygiene makes it a name the caller cannot see and cannot collide
+## with.
+typed macro json_of(v):
+    t = node_ty(v)
+    if t.name == "Int":
+        return quote:
+            JsonNumber(value=float($v))
+    if t.name == "Float":
+        return quote:
+            JsonNumber(value=$v)
+    if t.name == "Str":
+        return quote:
+            JsonStr(value=$v)
+    if t.name == "Bool":
+        return quote:
+            JsonBool(value=$v)
+    if t.name == "Json":
+        return v
+    if t.name == "list":
+        return quote:
+            JsonList(items=map_list($v, lambda each: json_of(each)))
+    if t.kind == "newtype":
+        return quote:
+            here = $v
+            json_of(here.value)
+    if t.kind == "model":
+        fields = quote:
+            {}
+        for f in t.fields:
+            key = f.name
+            named = node_sym(f.name)
+            fields = quote:
+                map_insert($fields, $key, json_of(here.$named))
+        return quote:
+            here = $v
+            JsonObject(fields=$fields)
+    return refuse("`json_of` has no rule for " + t.name + ", which is a " + t.kind)
+
 # The library deliberately derives nothing for itself. A `model` declared here would be a name every
 # program that imports this file could not use — the flat namespace's cost (`README.md`) — and a
-# test fixture is the last thing worth spending it on. What `derive_json` does is asserted from
-# *outside*, in `beck-cli/tests/macro_interp.rs`, which is also where the import it crosses is
-# asserted; these are the base cases, which are this file's own.
+# test fixture is the last thing worth spending it on. What `derive_json` and `json_of` do to a
+# *model* is asserted from *outside*, in `beck-cli/tests/macro_interp.rs`, which is also where the
+# imports they cross are asserted; these are the base cases, which are this file's own.
 
 test "the base cases are what a derived encoder goes through":
     expect json_render(true.to_json()) == "true"
@@ -101,3 +152,12 @@ test "the base cases are what a derived encoder goes through":
 ## surprised by it finds the reason next to the evidence.
 test "an Int is a JSON number, which is a float":
     expect json_render(1.to_json()) == "1.0"
+
+## The same base cases through `json_of`, which needs no `impl` to reach them: what `to_json` gets
+## from a table of instances, this gets from the type the checker inferred.
+test "json_of writes the encoder for what an expression is":
+    expect json_render(json_of(true)) == "true"
+    expect json_render(json_of("x")) == "\"x\""
+    expect json_render(json_of(2.5)) == "2.5"
+    expect json_render(json_of(1)) == "1.0"
+    expect json_render(json_of([1, 2])) == "[1.0,2.0]"

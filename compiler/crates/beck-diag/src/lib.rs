@@ -283,6 +283,17 @@ impl Diagnostics {
         self.items.len()
     }
 
+    /// Drop everything reported after a mark taken with [`Diagnostics::len`].
+    ///
+    /// For a check run only to *learn* something — the checker infers a typed macro call's
+    /// arguments before the macro has decided what to do with them, and the real check of the
+    /// expansion is the one whose diagnostics a reader should see. Truncation rather than a
+    /// separate `Diagnostics` because it catches everything the run reported, including whatever
+    /// pushed without going through the caller.
+    pub fn truncate(&mut self, mark: usize) {
+        self.items.truncate(mark);
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &Diagnostic> {
         self.items.iter()
     }

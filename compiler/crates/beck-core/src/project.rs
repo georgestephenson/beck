@@ -44,7 +44,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use beck_diag::{Diagnostic, Diagnostics, Span};
 
-use crate::check::{check_module_with, Mode, Program};
+use crate::check::{check_module_importing, Mode, Program};
 use crate::iface::Interface;
 use crate::place;
 use crate::split::Placed;
@@ -123,7 +123,7 @@ pub fn check_one_in_with(
 ) -> Checked {
     let parsed = beck_syntax::parse_file(file, name, src, diags);
     let expanded = beck_macro::expand_module_with(&parsed, macros_from, diags);
-    let mut program = check_module_with(&expanded, Mode::Module, imports, diags);
+    let mut program = check_module_importing(&expanded, Mode::Module, imports, macros_from, diags);
     let solution = place::solve(&program, lock);
     place::apply(&mut program, &solution);
     place::check_placement(&program, diags);
@@ -136,6 +136,54 @@ pub fn check_one_in_with(
     crate::style::check_classes(&program, diags);
     let interface = Interface::of(&program);
     Checked { program, interface }
+}
+
+/// Every module imported by a module that declares a macro.
+///
+/// A macro body resolves the `def`s of the modules *its own* module imports, so which sources have
+/// to be kept is decided by the importer rather than by the imported file. Pre-filtered by the same
+/// text test [`parsed_if_it_declares_a_macro`] uses and for the same reason: only a module that
+/// contains the word pays the parse that finds its imports.
+fn imports_of_modules_declaring_a_macro(
+    order: &[String],
+    sources: &BTreeMap<String, (Sources, beck_diag::FileId)>,
+) -> BTreeSet<String> {
+    let imports = |name: &str| -> Vec<String> {
+        let Some((src, file)) = sources.get(name) else {
+            return Vec::new();
+        };
+        let Some(text) = &src.module else {
+            return Vec::new();
+        };
+        let display = src.path.clone().unwrap_or_else(|| format!("{name}.beck"));
+        imports_of(*file, &display, text)
+    };
+
+    let mut pending: Vec<String> = Vec::new();
+    for name in order {
+        let Some((src, _)) = sources.get(name) else {
+            continue;
+        };
+        if src.module.as_deref().is_some_and(|t| t.contains("macro ")) {
+            pending.extend(imports(name));
+        }
+    }
+    // Closed over imports, because a macro body resolves in **its own** module's environment: a
+    // macro declared in `decimal` and used three modules away still calls what `decimal` imports.
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !out.insert(name.clone()) {
+            continue;
+        }
+        pending.extend(imports(&name));
+    }
+    out
+}
+
+/// A parse whose diagnostics are dropped, because the caller has already reported them.
+fn parse_quietly(file: beck_diag::FileId, display: &str, src: &str) -> beck_syntax::Node {
+    let mut quiet = Diagnostics::new();
+    beck_syntax::parse_file(file, display, src, &mut quiet)
 }
 
 /// A module's parse, but only if it declares a macro somebody importing it could use.
@@ -161,7 +209,7 @@ fn parsed_if_it_declares_a_macro(
     parsed
         .args
         .iter()
-        .any(|i| i.is_form(beck_syntax::sym::MACRO))
+        .any(|i| i.is_form(beck_syntax::sym::MACRO) || i.is_form(beck_syntax::sym::TYPED_MACRO))
         .then_some(parsed)
 }
 
@@ -297,11 +345,19 @@ pub fn check_project(
 
     let mut interfaces: BTreeMap<String, Interface> = BTreeMap::new();
     let mut checked: Vec<Checked> = Vec::new();
-    // Every module that declares a macro, parsed, so that a module importing it can expand what it
-    // wrote. Only the ones that declare one: a macro crosses an import the way any declaration
-    // does, and holding a parse of every module in the project to discover that most of them have
-    // nothing to give would be a cost paid by every build for the benefit of the few that do.
+    // The modules whose **source** somebody downstream needs, parsed. Two reasons a module is in
+    // here, and they are different: it declares a macro an importer will expand, or an importer
+    // declares a macro whose *body* calls this module's `def`s. The second is why the set cannot
+    // be decided by looking at the imported module alone — nothing about `dates.beck` says whether
+    // the file importing it has a macro — and it is what `needed_by_a_macro` below answers.
+    //
+    // Still not every module: both questions are pre-filtered by the same cheap text test, so a
+    // build with no macros anywhere parses nothing twice.
     let mut macro_sources: BTreeMap<String, beck_syntax::Node> = BTreeMap::new();
+    let needed_by_a_macro = imports_of_modules_declaring_a_macro(&order, &sources);
+    // What each module imports, filled in as the modules are checked. Dependency order is what
+    // makes a lookup here answer: a module's imports are recorded before anything that imports it.
+    let mut import_names: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for name in &order {
         let Some((src, file)) = sources.get(name) else {
@@ -342,10 +398,26 @@ pub fn check_project(
         // The parsed form of each import that has a macro in it. `deps` is the same list read for
         // interfaces, so a macro is visible exactly where the module that declares it is imported —
         // directly, not through somebody else's import, which is the rule a `def` already follows.
-        let macros_from: Vec<&beck_syntax::Node> = deps
-            .iter()
-            .filter_map(|(d, _)| macro_sources.get(d))
-            .collect();
+        // Closed over imports rather than the direct ones: a macro crosses on its source, and its
+        // body resolves the `def`s **its own** module can see (`docs/02` §2.4). A macro declared in
+        // `decimal` and used by a program that imports `decimal` still calls what `decimal`
+        // imports, and that module is two steps from here. Merging them flat is not a scope
+        // violation — Beck links modules into one namespace and `B0601` refuses a name defined
+        // twice — but it is a looseness in one direction: a body can reach a name its module
+        // reaches only transitively.
+        let mut reach: Vec<String> = deps.iter().map(|(d, _)| d.clone()).collect();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        while let Some(d) = reach.pop() {
+            if !seen.insert(d.clone()) {
+                continue;
+            }
+            if let Some(next) = import_names.get(&d) {
+                reach.extend(next.iter().cloned());
+            }
+        }
+        let macros_from: Vec<&beck_syntax::Node> =
+            seen.iter().filter_map(|d| macro_sources.get(d)).collect();
+        import_names.insert(name.clone(), deps.iter().map(|(d, _)| d.clone()).collect());
         let mut one = check_one_in_with(
             *file,
             &display,
@@ -355,8 +427,14 @@ pub fn check_project(
             lock,
             diags,
         );
-        // Kept only when this module has a macro somebody downstream could use.
-        if let Some(parsed) = parsed_if_it_declares_a_macro(*file, &display, module_src) {
+        // Kept when this module has a macro somebody downstream could use, or when somebody
+        // downstream has a macro whose body will call what this module defines.
+        let kept = parsed_if_it_declares_a_macro(*file, &display, module_src).or_else(|| {
+            needed_by_a_macro
+                .contains(name)
+                .then(|| parse_quietly(*file, &display, module_src))
+        });
+        if let Some(parsed) = kept {
             macro_sources.insert(name.clone(), parsed);
         }
         // A standard-library module's `test` blocks are the *compiler's* tests, not this program's.

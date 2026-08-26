@@ -375,6 +375,12 @@ because a library whose zero has two values is a library whose tests pass and wh
 borrow is the classic way to get subtraction wrong, **and the way not to is to have nowhere to apply
 it.**
 
+That grouping happens at compile time as well. `bignum"…"` ([`02`](02-syntax.md) §2.5) reads the
+digit run into limbs while the program compiles and emits `normalise`, which is what a large
+constant needed: an `Int` literal is sixty-four bits, so every value past that used to reach a
+program through `big_of_str` — a reader that raises, and therefore a `raises(BigError)` on whatever
+signature held the constant. `decimal"…"` is the same trade one floor up.
+
 `impl Num for Big` is the third floor added from outside the compiler, and the first where the type is
 a number in the ordinary sense — **which matters, because a tower whose new floors can only ever be
 domain types is not a tower.** Only `div` can fail, so the row is inferred from it alone and `a + b`
@@ -841,7 +847,7 @@ good enough.
 | Qualified or namespaced imports | **Not built**, and it is the largest thing D23 leaves open. Importing a library reserves its helper names ([`16`](16-packages-and-ecosystem.md) §16.7) |
 | Selective import, a third-party path, an interface cache | **Not built.** There is one implicit source and it is the compiler's own library; every import is checked from source on every build |
 | The LSP resolving imports | **Not built**, unchanged: a file is analysed alone, so a name imported from anywhere is unresolved in the editor. D23 makes that gap easier to hit and does not widen it |
-| `@derive` for JSON | **Built, and in `lib/` where the row wanted it.** `import json` and `derive_json:` over a `model` generates its `ToJson` impl — the fields are read out of the declaration at compile time by a macro ([`02`](02-syntax.md) §2.4, [`102`](102-the-macro-interpreter-report.md)), so **reflection is still not being added**: what runs is an `impl` naming each field, which is what somebody would otherwise have written. It could not ship here until a macro crossed an import, which is the other half of what this row was waiting on and was not written down anywhere. The base cases — `Int`, `Float`, `Str`, `Bool` — are written by hand on purpose, because what `Int` means as JSON is a decision rather than drudgery |
+| `@derive` for JSON | **Built, and in `lib/` where the row wanted it.** `import json` and `derive_json:` over a `model` generates its `ToJson` impl — the fields are read out of the declaration at compile time by a macro ([`02`](02-syntax.md) §2.4, [`102`](102-the-macro-interpreter-report.md)), so **reflection is still not being added**: what runs is an `impl` naming each field, which is what somebody would otherwise have written. It could not ship here until a macro crossed an import, which is the other half of what this row was waiting on and was not written down anywhere. The base cases — `Int`, `Float`, `Str`, `Bool` — are written by hand on purpose, because what `Int` means as JSON is a decision rather than drudgery. **And the row has a second half now**: `json_of(e)` is a *typed* macro in the same file ([`102`](102-the-macro-interpreter-report.md) §102.9), so a `model` nobody decorated — somebody else's, three imports away — gets an encoder from the value rather than from the declaration, reached through a list, a `newtype` and a field, still with no reflection at run time |
 | A set's cost | **A map's.** `Set[T]` is `Map[T, Bool]`, so it is an ordered structure with a comparison at every step and a `Bool` per member nobody reads. No hash set, no bitset. `intersection` and `difference` are linear in the left side, via a list — a map-to-map operation would be a primitive, and the division admits one only for a host's table or grammar, or for a combining form the view engine has to recognise ([`lib/README.md`](../compiler/lib/README.md)). A set operation is neither |
 | Time zones and locale | **Not built, deliberately.** A time zone is a database with a release schedule, and a replay must not disagree with the run it is replaying about what a date is |
 | Weeks, ISO week dates, quarters; parsing a duration; a date-only parse in the host | **Not built.** Reading is where a grammar starts, and a grammar is the host's half |
