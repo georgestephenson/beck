@@ -148,19 +148,34 @@ fn imports_of_modules_declaring_a_macro(
     order: &[String],
     sources: &BTreeMap<String, (Sources, beck_diag::FileId)>,
 ) -> BTreeSet<String> {
-    let mut out: BTreeSet<String> = BTreeSet::new();
-    for name in order {
+    let imports = |name: &str| -> Vec<String> {
         let Some((src, file)) = sources.get(name) else {
-            continue;
+            return Vec::new();
         };
         let Some(text) = &src.module else {
+            return Vec::new();
+        };
+        let display = src.path.clone().unwrap_or_else(|| format!("{name}.beck"));
+        imports_of(*file, &display, text)
+    };
+
+    let mut pending: Vec<String> = Vec::new();
+    for name in order {
+        let Some((src, _)) = sources.get(name) else {
             continue;
         };
-        if !text.contains("macro ") {
+        if src.module.as_deref().is_some_and(|t| t.contains("macro ")) {
+            pending.extend(imports(name));
+        }
+    }
+    // Closed over imports, because a macro body resolves in **its own** module's environment: a
+    // macro declared in `decimal` and used three modules away still calls what `decimal` imports.
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !out.insert(name.clone()) {
             continue;
         }
-        let display = src.path.clone().unwrap_or_else(|| format!("{name}.beck"));
-        out.extend(imports_of(*file, &display, text));
+        pending.extend(imports(&name));
     }
     out
 }
@@ -340,6 +355,9 @@ pub fn check_project(
     // build with no macros anywhere parses nothing twice.
     let mut macro_sources: BTreeMap<String, beck_syntax::Node> = BTreeMap::new();
     let needed_by_a_macro = imports_of_modules_declaring_a_macro(&order, &sources);
+    // What each module imports, filled in as the modules are checked. Dependency order is what
+    // makes a lookup here answer: a module's imports are recorded before anything that imports it.
+    let mut import_names: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for name in &order {
         let Some((src, file)) = sources.get(name) else {
@@ -380,10 +398,26 @@ pub fn check_project(
         // The parsed form of each import that has a macro in it. `deps` is the same list read for
         // interfaces, so a macro is visible exactly where the module that declares it is imported —
         // directly, not through somebody else's import, which is the rule a `def` already follows.
-        let macros_from: Vec<&beck_syntax::Node> = deps
-            .iter()
-            .filter_map(|(d, _)| macro_sources.get(d))
-            .collect();
+        // Closed over imports rather than the direct ones: a macro crosses on its source, and its
+        // body resolves the `def`s **its own** module can see (`docs/02` §2.4). A macro declared in
+        // `decimal` and used by a program that imports `decimal` still calls what `decimal`
+        // imports, and that module is two steps from here. Merging them flat is not a scope
+        // violation — Beck links modules into one namespace and `B0601` refuses a name defined
+        // twice — but it is a looseness in one direction: a body can reach a name its module
+        // reaches only transitively.
+        let mut reach: Vec<String> = deps.iter().map(|(d, _)| d.clone()).collect();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        while let Some(d) = reach.pop() {
+            if !seen.insert(d.clone()) {
+                continue;
+            }
+            if let Some(next) = import_names.get(&d) {
+                reach.extend(next.iter().cloned());
+            }
+        }
+        let macros_from: Vec<&beck_syntax::Node> =
+            seen.iter().filter_map(|d| macro_sources.get(d)).collect();
+        import_names.insert(name.clone(), deps.iter().map(|(d, _)| d.clone()).collect());
         let mut one = check_one_in_with(
             *file,
             &display,

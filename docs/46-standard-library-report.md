@@ -375,6 +375,12 @@ because a library whose zero has two values is a library whose tests pass and wh
 borrow is the classic way to get subtraction wrong, **and the way not to is to have nowhere to apply
 it.**
 
+That grouping happens at compile time as well. `bignum"…"` ([`02`](02-syntax.md) §2.5) reads the
+digit run into limbs while the program compiles and emits `normalise`, which is what a large
+constant needed: an `Int` literal is sixty-four bits, so every value past that used to reach a
+program through `big_of_str` — a reader that raises, and therefore a `raises(BigError)` on whatever
+signature held the constant. `decimal"…"` is the same trade one floor up.
+
 `impl Num for Big` is the third floor added from outside the compiler, and the first where the type is
 a number in the ordinary sense — **which matters, because a tower whose new floors can only ever be
 domain types is not a tower.** Only `div` can fail, so the row is inferred from it alone and `a + b`

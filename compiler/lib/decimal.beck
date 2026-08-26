@@ -347,6 +347,10 @@ def strip_sign(whole: Str) -> Str:
 ## opinion about what a numeral is. That rules out `list_get` — it answers an `Option`, and a macro
 ## body has no unions — so the two halves are recovered with `str_starts_with`/`str_ends_with` and
 ## the point removed with `str_replace`, rather than by indexing what `str_split` returned.
+##
+## `is_digit_run` comes from `bignum.beck`, which this file already imports: a macro body resolves
+## the `def`s of the modules its own module imports, so what counts as a digit has one answer for
+## both files and for both phases.
 def is_decimal_text(text: Str) -> Bool:
     body = strip_sign(text)
     if str_is_empty(body) or str_starts_with(body, ".") or str_ends_with(body, "."):
@@ -354,15 +358,6 @@ def is_decimal_text(text: Str) -> Bool:
     if list_len(str_split(body, ".")) > 2:
         return false
     return is_digit_run(str_replace(body, ".", ""))
-
-## A non-empty run of digits, with no sign.
-##
-## `dates.beck` has the same three lines under the name `all_digits`, and they stay apart on a
-## trade rather than a rule. The library namespace is flat, so one definition means one file and an
-## `import` in the other — and a library file that imports another is skipped by the sweep the
-## native backends are measured against, which is a worse thing to lose than three lines.
-def is_digit_run(text: Str) -> Bool:
-    return not str_is_empty(text) and list_all(str_chars(text), lambda c: c >= "0" and c <= "9")
 
 # ---------------------------------------------------------------------------------------------
 # `decimal"1.25"` — the same numeral, at compile time (`docs/02` §2.5)

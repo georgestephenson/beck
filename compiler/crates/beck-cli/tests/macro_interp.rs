@@ -1554,6 +1554,110 @@ def f() -> Int:
         &[("app.beck", unimported), ("helper.beck", helper)],
         &["check"],
     );
-    let _ = std::fs::remove_dir_all(&dir);
     assert!(!ok && text.contains("B0208"), "{text}");
+
+    // **The macro is not in the module that uses it.** This is the case the first version of this
+    // gate did not have, and it is the one a *library* is: `decimal.beck` declares a macro whose
+    // body calls what `decimal.beck` imports, and a program three modules away expands it. The
+    // body resolves in its own module's environment, so what has to be reachable is the closure of
+    // what that module can see — not the closure of what the call site can.
+    let mid = "\
+import helper
+
+macro four_sigil(raw):
+    n = twice(str_to_int(node_lit(raw)))
+    return quote:
+        $n
+";
+    let app_uses_mid = "\
+import mid
+
+test \"a macro from another module still calls that module's imports\":
+    expect four\"2\" == 4
+";
+    let (ok, text) = beck_in(
+        &dir,
+        &[
+            ("app.beck", app_uses_mid),
+            ("mid.beck", mid),
+            ("helper.beck", helper),
+        ],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
+}
+
+/// **`bignum"…"` is the only way to write a large integer**, which is what makes it more than a
+/// convenience.
+///
+/// An `Int` literal is sixty-four bits, and every value past that reached a program through
+/// `big_of_str` — which raises, so a constant put `raises(BigError)` on the signature holding it.
+/// The first half of this test is that cost being absent: a `def` with an empty effect row
+/// returning a number no `Int` can hold.
+///
+/// The second half is the two doors agreeing. `bignum.beck` groups digits into limbs twice — once
+/// at run time reading `str_to_int`'s `Option`, once at compile time where there are no unions —
+/// so the four texts the run-time door refuses are aimed at the compile-time one here, and the
+/// library's own tests hold the values against Python's answers.
+#[test]
+fn a_big_integer_literal_is_the_only_way_to_write_one() {
+    let dir = scratch("sigil-bignum");
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            "\
+import bignum
+
+def two_to_the_hundred() -> Big:
+    return bignum\"1267650600228229401496703205376\"
+
+test \"a value no Int can hold, in a row that declares nothing\":
+    expect render_big(two_to_the_hundred()) == \"1267650600228229401496703205376\"
+    expect bignum\"2\" * bignum\"1267650600228229401496703205376\" == bignum\"2535301200456458802993406410752\"
+",
+        )],
+        &["test"],
+    );
+    assert!(ok && text.contains("1 passed"), "{text}");
+
+    for bad in ["", "-", "12 34", "twelve", "1.5", "+5"] {
+        let src = format!(
+            "\
+import bignum
+
+def f() -> Big:
+    return bignum\"{bad}\"
+"
+        );
+        let (ok, text) = beck_in(&dir, &[("app.beck", &src)], &["check"]);
+        assert!(
+            !ok,
+            "`{bad}` is not an integer, and `big_of_str` says so: {text}"
+        );
+        assert!(
+            text.contains("B0224") && text.contains("a big-integer literal is"),
+            "`{bad}`: {text}"
+        );
+    }
+
+    // Leading zeros are a way of writing a number rather than a different number, which is what
+    // `big_of_str` documents — so the sigil must not be stricter than the door it mirrors.
+    let (ok, text) = beck_in(
+        &dir,
+        &[(
+            "app.beck",
+            "\
+import bignum
+
+test \"leading zeros normalise away, as they do through the reader\":
+    expect bignum\"0000000123\" == big(123)
+    expect bignum\"-0\" == zero()
+",
+        )],
+        &["test"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok && text.contains("1 passed"), "{text}");
 }

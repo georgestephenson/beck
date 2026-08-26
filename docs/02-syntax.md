@@ -347,9 +347,13 @@ decides validity through a `Result`, which a macro body has no unions to read. S
 is built twice, out of an `Int` at compile time and a `Big` at run time, with a differential in the
 library's own tests holding the two together. That subset is narrower than it looks: `list_get` and
 `str_index_of` answer an `Option`, so a function meant for both phases recovers a split string with
-`str_starts_with`/`str_replace` rather than by indexing what `str_split` returned. `bignum"…"` is a
-third of the same shape. `regex"…"` is a fourth, and it wants something this repository does not
-have — a regex engine — rather than anything from this section.
+`str_starts_with`/`str_replace` rather than by indexing what `str_split` returned. **`bignum"…"` is the third, and it is not a convenience at all**: an `Int` literal is
+sixty-four bits, so until it existed there was **no way to write a large integer in Beck** — every
+value past that reached a program through `big_of_str`, which raises. The macro groups the digits
+into base-10,000 limbs at compile time and emits the library's own `normalise`, so
+`bignum"1267650600228229401496703205376"` is the `Big`, in limbs, before the checker sees it.
+`regex"…"` is a fourth, and it wants something this repository does not have — a regex engine —
+rather than anything from this section.
 
 Still unbuilt, and named here because §2.5 has always promised them: a typed literal that returns
 a **typed** `Node` rather than an ordinary one (`sql"..."` returning a `Query[Order]` checked

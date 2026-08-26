@@ -451,15 +451,39 @@ invisible: adding an unused macro to the other module was the difference between
 compile, and `B0208`'s own text — "a `def` in this module" — described a rule the compiler was not
 applying.
 
-The question is asked of the importer now, and both directions are gated: the module with the
-macro reaching a plain module's `def`, the same pair with a decoy macro in the imported file (the
-case that passed for the wrong reason), and a module that is *not* imported still refused. The cost
-profile is kept by the text test that was already there — a build with no macros anywhere parses
-nothing twice.
+The question is asked of the importer now. The cost profile is kept by the text test that was
+already there — a build with no macros anywhere parses nothing twice.
 
-The two predicates stay as they are. Sharing one would put it in a third file, which means an
-`import` in `dates.beck`, and a library file that imports another is skipped by the sweep the
-native backends are measured against — three duplicated lines is the cheaper side of that trade.
+**And the first fix was half of one**, which is worth more than the fix. Its gate put the macro in
+the *root* module and its `def` in an imported one, and passed. The case it did not have is the one
+a **library** is: the macro is declared in `decimal.beck`, its body calls what `decimal.beck`
+imports, and the program expanding it is two modules away. A macro body resolves in **its own**
+module's environment — that is what "compile-time callable as it was written" means — so what must
+be reachable is the closure of what *that* module can see, not the closure of what the call site
+can. Written the other way it was still `B0208`, and the second gate is the shape of that gap:
+three modules, the macro in the middle one.
+
+The environment is that closure now, merged flat. Merging is not a scope violation here, because
+the language does not have scopes to violate: Beck links modules into one namespace with no
+qualified reference, so a name has exactly one definition and `B0601` refuses a second. It *is* a
+looseness in one direction, and saying so is cheaper than pretending — a macro body can name
+something its module reaches only transitively, where a `def` in the same file could not.
+
+`decimal.beck` is what the fix bought: `is_digit_run` lives in `bignum.beck`, which it already
+imports, and answers what a digit is for both files and both phases. `dates.beck` imports nothing
+and keeps `all_digits` — a third copy would have cost it its place in the sweep the native backends
+are measured against, which is worth more than three lines.
+
+### The third sigil is a capability
+
+`bignum"…"` is not a convenience. An `Int` literal is sixty-four bits, so until it existed **there
+was no way to write a large integer in Beck**: every value past that reached a program through
+`big_of_str`, which raises, and the library's own tests are full of the `try:` that costs. The macro
+groups the digit run into base-10,000 limbs at compile time — a `while` in the compile-time subset,
+because the run-time grouping reads `str_to_int`'s `Option` — and emits `normalise(false, […])`, the library's own constructor, with the limbs as a literal list. What is shared is
+`is_digit_run`; what is duplicated is the grouping; and the differential in `bignum.beck`'s tests
+holds the two against each other, against constants that were Python's answers before they were
+this file's.
 
 ### One error, not two
 

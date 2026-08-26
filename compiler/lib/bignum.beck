@@ -478,6 +478,47 @@ def group_from(
                 raise NotANumber(text=whole)
             return group_from(digits, start, list_append(done, value), whole)
 
+## A non-empty run of digits, with no sign.
+##
+## Here rather than beside either caller because `decimal.beck` imports this file and needs the
+## same question answered, at run time *and* inside its `decimal"…"` macro — a macro body resolves
+## the `def`s of the modules its own module imports (`docs/02` §2.4), so one definition serves
+## both files and both phases. `dates.beck` imports nothing and keeps its own.
+def is_digit_run(text: Str) -> Bool:
+    return not str_is_empty(text) and list_all(str_chars(text), lambda c: c >= "0" and c <= "9")
+
+# ---------------------------------------------------------------------------------------------
+# `bignum"…"` — an integer literal larger than an `Int` (`docs/02` §2.5)
+# ---------------------------------------------------------------------------------------------
+
+## A big-integer literal, grouped into limbs while the program compiles.
+##
+## This one is not a convenience. **There is no other way to write a large integer in Beck**: an
+## `Int` literal is sixty-four bits, and every value past that reached a program through
+## `big_of_str`, which raises — so a constant a mathematician would write down put
+## `raises(BigError)` on the signature holding it, and the library's own tests are full of the
+## `try:` that costs. `bignum"1267650600228229401496703205376"` is the `Big`, already in limbs,
+## by the time the checker sees it.
+##
+## The grouping is written twice — `group_from` above reads a `Str` at run time and this reads it
+## at compile time — because the run-time half needs `str_to_int`'s `Option` and a macro body has
+## no unions to read one with. What is shared is `is_digit_run`, the question of what a digit is,
+## and the tests below run a list of literals through both doors and demand the same `Big`.
+macro bignum_sigil(raw):
+    text = node_lit(raw)
+    negative = str_starts_with(text, "-")
+    figures = str_slice(text, 1, str_len(text) - 1) if negative else text
+    if not is_digit_run(figures):
+        refuse("a big-integer literal is an optional `-` and a run of digits", raw)
+    limbs = []
+    at = str_len(figures)
+    while at > 0:
+        start = at - limb_digits() if at > limb_digits() else 0
+        limbs = list_append(limbs, str_to_int(str_slice(figures, start, at - start)))
+        at = start
+    return quote:
+        normalise($negative, $limbs)
+
 # ---------------------------------------------------------------------------------------------
 # The library's own tests, in the language (`docs/21` §21.2)
 #
@@ -487,6 +528,25 @@ def group_from(
 # half, because they check this implementation against the one the language already has: for every
 # pair of `Int`s the generator produces, `big` arithmetic and `Int` arithmetic agree.
 # ---------------------------------------------------------------------------------------------
+
+## The two doors agree, literal by literal.
+##
+## The oracle is the same one the constants above use — these are Python's own arbitrary-precision
+## answers — and the differential is against `big_of_str`, which is the *other* implementation of
+## the grouping. Every `try:` here is the cost the notation removes.
+test "a big-integer literal is the number, with no parse and nothing raised":
+    expect render_big(bignum"1267650600228229401496703205376") == "1267650600228229401496703205376"
+    expect (try: big_of_str("1267650600228229401496703205376")) == Ok(value=bignum"1267650600228229401496703205376")
+    expect (try: big_of_str("-98765432109876543210")) == Ok(value=bignum"-98765432109876543210")
+    expect (try: big_of_str("0000000123")) == Ok(value=bignum"0000000123")
+    expect (try: big_of_str("-0")) == Ok(value=bignum"-0")
+    expect bignum"0" == zero()
+    expect bignum"10000" == big(10000)
+    # A limb is four digits, so the boundaries are where a grouping bug would live.
+    expect bignum"9999" == big(9999)
+    expect bignum"10001" == big(10001)
+    expect bignum"100000000" == big(100000000)
+    expect bignum"2" * bignum"170141183460469231731687303715884105728" == bignum"340282366920938463463374607431768211456"
 
 test "a big renders as the number it is, and reads back":
     expect render_big(zero()) == "0"
