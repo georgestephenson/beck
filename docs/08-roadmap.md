@@ -716,14 +716,16 @@ rows.
 - **The standards ledger** (S — small artefacts, each a day rather than a phase, from
   [`12`](12-standards-and-conformance.md)'s audit; each closes a chartered row, and the row names
   it back). Free now: a JSONTestSuite-class vector run for the JSON library; an Autobahn-class
-  vector run for the WebSocket channel; a test that a TLS-1.2-only peer is refused; **the
+  vector run for the WebSocket channel; **the
   vulnerability matrix**, whose CWE half is **done** ([`43`](43-threat-model.md) §43.8, gated by
   `docs.rs::every_test_the_vulnerability_matrix_names_exists`) and whose ISO/IEC 24772-1 half is
   **blocked on the standard's text** rather than on time — paywalled, not in this tree, and recorded
   as blocked in the matrix itself ([`35`](35-standards-landscape.md) §35.2); a
   Prometheus exposition endpoint beside the JSON dashboard; a Scorecard workflow and REUSE
   per-file metadata; a semantic-conventions check over the attributes
-  telemetry actually emits. **The CLI exit-status table is done** — generated into
+  telemetry actually emits. **A TLS-1.2-only peer is refused** — and that row turned out to be
+  missing its implementation rather than its gate, since rustls's safe defaults are 1.2 and 1.3
+  ([`12`](12-standards-and-conformance.md)). **The CLI exit-status table is done** — generated into
   [`docs/reference/cli.md`](reference/cli.md) from the compiler's own constant and gated against
   the binary in both directions ([`35`](35-standards-landscape.md) §35.2's POSIX row, which names
   it back). Blocked, and recorded as blocked rather than listed as free:

@@ -75,14 +75,27 @@ fn client_config() -> &'static Arc<ClientConfig> {
     })
 }
 
+/// The TLS versions this project offers, named rather than defaulted.
+///
+/// `docs/12`'s row is "TLS 1.3 (RFC 8446), no legacy downgrade" and rustls's safe defaults are 1.2
+/// *and* 1.3, so a client built with them accepts exactly the downgrade the row says there is none
+/// of — which is what it did until this constant existed.
+///
+/// Public, and read by `beck-cli`'s `fetch.rs`, because there are **two** clients — a program's
+/// outbound call and the compiler's own fetch — and a version list written twice is a version list
+/// that can differ. One decision, and `a_peer_that_speaks_only_tls_1_2_is_refused` below is the
+/// handshake that holds it.
+pub const TLS_VERSIONS: &[&tokio_rustls::rustls::SupportedProtocolVersion] =
+    &[&tokio_rustls::rustls::version::TLS13];
+
 /// The provider is named rather than defaulted: rustls picks one for you only when exactly one is
 /// compiled in, and "exactly one" is a property of somebody else's feature unification.
 fn config_for(roots: tokio_rustls::rustls::RootCertStore) -> ClientConfig {
     let mut config = ClientConfig::builder_with_provider(Arc::new(
         tokio_rustls::rustls::crypto::aws_lc_rs::default_provider(),
     ))
-    .with_safe_default_protocol_versions()
-    .expect("the default protocol versions are supported by the provider")
+    .with_protocol_versions(TLS_VERSIONS)
+    .expect("TLS 1.3 is supported by the provider")
     .with_root_certificates(roots)
     .with_no_client_auth();
     // The exchange is one request over HTTP/1.1 (`beck_core::net::Outbound`), so say so: a peer
@@ -466,6 +479,19 @@ mod tests {
         issuer: &rcgen::Issuer<'static, rcgen::KeyPair>,
         claims: &str,
     ) -> SocketAddr {
+        tls_echo_once_speaking(issuer, claims, &[&tokio_rustls::rustls::version::TLS13]).await
+    }
+
+    /// The same, offering exactly the protocol versions it is given.
+    ///
+    /// A parameter rather than a second server, because the pair only means something if the two
+    /// halves differ in *one* way: the same certificate, the same trust anchor, the same request,
+    /// and a peer that speaks 1.2 where the other speaks 1.3.
+    async fn tls_echo_once_speaking(
+        issuer: &rcgen::Issuer<'static, rcgen::KeyPair>,
+        claims: &str,
+        versions: &[&'static tokio_rustls::rustls::SupportedProtocolVersion],
+    ) -> SocketAddr {
         let params =
             rcgen::CertificateParams::new(vec![claims.to_string()]).expect("a subject alt name");
         let key = rcgen::KeyPair::generate().expect("a key pair");
@@ -474,8 +500,8 @@ mod tests {
         let config = tokio_rustls::rustls::ServerConfig::builder_with_provider(Arc::new(
             tokio_rustls::rustls::crypto::aws_lc_rs::default_provider(),
         ))
-        .with_safe_default_protocol_versions()
-        .expect("the default protocol versions")
+        .with_protocol_versions(versions)
+        .expect("the protocol versions are supported by the provider")
         .with_no_client_auth()
         .with_single_cert(
             vec![leaf.der().clone()],
@@ -517,6 +543,41 @@ mod tests {
             headers: Vec::new(),
             body: Arc::from(""),
         }
+    }
+
+    /// **A peer that speaks only TLS 1.2 is refused**, which is `docs/12`'s "no legacy downgrade".
+    ///
+    /// The row said that half had no gate. It had no *implementation* either: rustls's safe
+    /// defaults are 1.2 and 1.3, so a client built with them negotiates 1.2 happily, and the
+    /// difference between the claim and the configuration was one unnamed argument. Both clients
+    /// name the version now — this one and `beck-cli`'s `fetch.rs` — and this is the test that
+    /// says so.
+    ///
+    /// The control is the point. A refusal on its own proves nothing: the certificate could be
+    /// wrong, the port could be closed, the name could mismatch. So the same certificate, the same
+    /// trust anchor and the same request go to a 1.3 server and come back with the body, and the
+    /// only difference between the two halves is which version the *server* offers.
+    #[test]
+    fn a_peer_that_speaks_only_tls_1_2_is_refused() {
+        let (issuer, roots) = certificate_authority();
+        let client = HttpOutbound::trusting(roots).expect("a client");
+
+        let legacy = client.runtime.block_on(tls_echo_once_speaking(
+            &issuer,
+            "127.0.0.1",
+            &[&tokio_rustls::rustls::version::TLS12],
+        ));
+        let refused = client.fetch(&secure_request("127.0.0.1", legacy.port()), &Stop::never());
+        assert!(
+            refused.is_err(),
+            "a 1.2-only peer was accepted: {refused:?}"
+        );
+
+        let modern = client.runtime.block_on(tls_echo_once(&issuer, "127.0.0.1"));
+        let reply = client
+            .fetch(&secure_request("127.0.0.1", modern.port()), &Stop::never())
+            .expect("the same certificate over 1.3 is fine");
+        assert_eq!(reply.body.as_ref(), "ok, privately");
     }
 
     /// A real handshake, with the name verified.
