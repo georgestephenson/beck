@@ -722,8 +722,11 @@ rows.
   **blocked on the standard's text** rather than on time — paywalled, not in this tree, and recorded
   as blocked in the matrix itself ([`35`](35-standards-landscape.md) §35.2); a
   Prometheus exposition endpoint beside the JSON dashboard; a Scorecard workflow and REUSE
-  per-file metadata; the CLI exit-status table; a semantic-conventions check over the attributes
-  telemetry actually emits. Blocked, and recorded as blocked rather than listed as free:
+  per-file metadata; a semantic-conventions check over the attributes
+  telemetry actually emits. **The CLI exit-status table is done** — generated into
+  [`docs/reference/cli.md`](reference/cli.md) from the compiler's own constant and gated against
+  the binary in both directions ([`35`](35-standards-landscape.md) §35.2's POSIX row, which names
+  it back). Blocked, and recorded as blocked rather than listed as free:
   OpenAPI 3.1 + JSON Schema 2020-12 + RFC 9457 (on the `@public(rest)` emitter, Phase 4); the OCI
   distribution conformance suite (on a registry push — the managed-cloud path's item 2); the
   OpenID Foundation suite (pre-1.0 trigger); the two-independent-runner reproducible release

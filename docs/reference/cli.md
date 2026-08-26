@@ -4,6 +4,16 @@
 
 One binary serves the whole toolchain (§4.6), so this is the complete surface. Every entry below is read from the same command tree that parses the arguments.
 
+## Exit status
+
+| Status | Meaning |
+|---|---|
+| `0` | The command did what was asked. |
+| `1` | The command ran and the answer is no: a program that does not compile, a test that failed, a file that could not be read. |
+| `2` | The invocation was wrong — an unknown subcommand, an unknown flag, a missing argument. `clap`'s, and the POSIX convention. |
+| `101` | The compiler panicked. That is a bug in this binary rather than in the program it was given, and it is Rust's own status for one. |
+
+
 ## `beck check`
 
 Typecheck, infer and verify placement, and slice the signal graph
