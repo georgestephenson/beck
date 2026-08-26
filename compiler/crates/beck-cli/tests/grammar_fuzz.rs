@@ -59,6 +59,15 @@ enum Shape {
     Operators,
     /// Nested `ui:` blocks, which are a macro and expand into more structure than was written.
     Ui,
+    /// Typed literals (`docs/02` §2.5) — the one production that consumes **arbitrary text**
+    /// rather than structure.
+    ///
+    /// Every other shape here builds a tree out of the grammar's own punctuation. A sigil's body
+    /// is whatever is between the quotes: the lexer takes it raw, with no escape processed, and
+    /// hands it to a macro that reads it with `node_lit`. That is exactly `docs/13`'s "consumes
+    /// adversarial input (any text file)", so the axis is *length* and the alphabet is everything
+    /// the notation permits — including the characters Beck's own template syntax is made of.
+    Sigils,
 }
 
 fn program(shape: Shape, n: usize) -> String {
@@ -125,6 +134,20 @@ fn program(shape: Shape, n: usize) -> String {
             src
         }
         Shape::Operators => format!("def f() -> Int:\n    return 1{}\n", " + 1".repeat(n.max(1))),
+        Shape::Sigils => {
+            // Expanded by a real macro rather than left undefined, so the body reaches the
+            // interpreter: `node_lit` reading arbitrary text is the half a `B0340` would skip.
+            let mut out = String::from(
+                "macro tag_sigil(raw):\n    return quote:\n        $(str_len(node_lit(raw)))\n\n                 def f() -> Int:\n    return 0",
+            );
+            for i in 0..n.max(1) {
+                out.push_str(" + tag\"");
+                out.push_str(&SIGIL_ALPHABET.repeat(i % 8 + 1));
+                out.push('"');
+            }
+            out.push('\n');
+            out
+        }
         Shape::Ui => {
             let mut src = String::from("def f() -> Html:\n    return ui:\n");
             for i in 0..n {
@@ -142,6 +165,12 @@ fn program(shape: Shape, n: usize) -> String {
 ///
 /// Runs on the declared front-end stack, because the thing under test recurses over the structure
 /// the generator chose and this is a harness rather than the CLI.
+/// Everything a sigil body may contain, which is every byte except `"` and a newline.
+///
+/// `$` and `$*` are in here deliberately: they are what a `quote:` template is made of, and a body
+/// that reaches the interpreter must not be read as one.
+const SIGIL_ALPHABET: &str = "$*{}\\[]():#-.,;=<>|&!?~^%@/'`abc 012";
+
 fn front_end_answers(src: &str) -> bool {
     beck_diag::depth::on_the_front_end_stack(|| {
         let (_, d, _) = beck_core::compile_or_library_str("fuzz.beck", src);
@@ -160,6 +189,10 @@ fn front_end_answers(src: &str) -> bool {
 fn size_for(shape: Shape, raw: usize) -> usize {
     match shape {
         Shape::Blocks | Shape::Matches | Shape::Ui => raw % 400,
+        // Quadratic in bytes for the same reason the indented shapes are: the `i`th body is `i`
+        // alphabets long, so `n` sigils is `O(n²)` characters *and* `O(n²)` of interpreter steps
+        // reading them. A few hundred spans the interesting range and the rest is string building.
+        Shape::Sigils => raw % 300,
         _ => raw,
     }
 }
@@ -176,6 +209,7 @@ fn shapes() -> impl Strategy<Value = Shape> {
         Just(Shape::FlatBlock),
         Just(Shape::Operators),
         Just(Shape::Ui),
+        Just(Shape::Sigils),
     ]
 }
 
@@ -243,13 +277,18 @@ fn every_shape_answers_on_both_sides_of_every_ceiling() {
         Shape::FlatBlock,
         Shape::Operators,
         Shape::Ui,
+        Shape::Sigils,
     ] {
         for n in sizes {
-            // The indentation-based shapes make a line per level *and* indent it, so a deep one is
-            // quadratic in source bytes; past a few hundred levels that is a file nobody would
-            // write and a test that measures string building.
-            let deep_indent = matches!(shape, Shape::Blocks | Shape::Matches | Shape::Ui);
-            if deep_indent && n > nesting + 1 {
+            // The shapes that are quadratic in source bytes: the indentation-based ones make a
+            // line per level *and* indent it, and `Sigils` makes the `i`th body `i` alphabets
+            // long. Past a few hundred either is a file nobody would write and a test that
+            // measures string building.
+            let quadratic = matches!(
+                shape,
+                Shape::Blocks | Shape::Matches | Shape::Ui | Shape::Sigils
+            );
+            if quadratic && n > nesting + 1 {
                 continue;
             }
             assert!(
