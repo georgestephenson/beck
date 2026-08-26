@@ -1492,3 +1492,68 @@ def f() -> Decimal:
     let _ = std::fs::remove_dir_all(&dir);
     assert!(ok, "eighteen digits is inside the bound: {text}");
 }
+
+/// **A macro body calls the `def`s of the modules its own module imports.**
+///
+/// It did not, and the way it did not is the point: whether an imported `def` was reachable
+/// depended on whether *that* module happened to declare a macro of its own, because the parse
+/// kept for crossing an import was decided by looking at the imported file. So adding an unused
+/// macro to the other file was the difference between `B0208` and a compile — and `B0208` states
+/// the rule "a `def` in this module", which was not the rule being applied.
+///
+/// Three programs, and the middle one is the regression: it passed before the fix, for a reason
+/// that had nothing to do with it.
+#[test]
+fn a_macro_body_calls_a_def_from_a_module_it_imports() {
+    let helper = "\
+def twice(n: Int) -> Int:
+    return n * 2
+";
+    let app = "\
+import helper
+
+macro four_sigil(raw):
+    n = twice(str_to_int(node_lit(raw)))
+    return quote:
+        $n
+
+test \"an imported def runs at compile time\":
+    expect four\"2\" == 4
+";
+    let dir = scratch("macro-imported-def");
+    let (ok, text) = beck_in(
+        &dir,
+        &[("app.beck", app), ("helper.beck", helper)],
+        &["test"],
+    );
+    assert!(ok && text.contains("1 passed"), "{text}");
+
+    // The same, with a macro in the imported module that nobody calls. This is what used to make
+    // the difference, and now makes none.
+    let with_a_macro = format!("{helper}\nmacro unused(x):\n    return quote:\n        $x\n");
+    let (ok, text) = beck_in(
+        &dir,
+        &[("app.beck", app), ("helper.beck", &with_a_macro)],
+        &["test"],
+    );
+    assert!(ok && text.contains("1 passed"), "{text}");
+
+    // And the limit is unchanged: a module this one does not import is not in scope, at compile
+    // time any more than at run time.
+    let unimported = "\
+macro four_sigil(raw):
+    n = twice(str_to_int(node_lit(raw)))
+    return quote:
+        $n
+
+def f() -> Int:
+    return four\"2\"
+";
+    let (ok, text) = beck_in(
+        &dir,
+        &[("app.beck", unimported), ("helper.beck", helper)],
+        &["check"],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!ok && text.contains("B0208"), "{text}");
+}

@@ -296,9 +296,9 @@ pub const INDEX: &[CodeEntry] = &[
         "B0208",
         Stage::Macros,
         "cannot find a name at compile time",
-        "The macro interpreter's environment is a whitelist: locals, this module's own `def`s, \
-         and the pure builtins. There is no name in it for a file, a socket or a process, which \
-         is the sandbox rather than an omission.",
+        "The macro interpreter's environment is a whitelist: locals, the `def`s of this module \
+         and of the ones it imports, and the pure builtins. There is no name in it for a file, a \
+         socket or a process, which is the sandbox rather than an omission.",
     ),
     e(
         "B0209",

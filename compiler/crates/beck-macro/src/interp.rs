@@ -745,10 +745,13 @@ impl<'a> Interp<'a> {
                 format!("cannot find `{name}` at compile time"),
                 span,
             )
-            .with_primary_label("not a local, a `def` in this module, or a compile-time builtin")
+            .with_primary_label(
+                "not a local, a `def` in this module or one it imports, or a compile-time builtin",
+            )
             .with_note(
                 "the macro interpreter's environment is deliberately small: the pure part of the \
-                 prelude, this module's own definitions, and the `node_*` reflection over syntax",
+                 prelude, the definitions of this module and the ones it imports, and the \
+                 `node_*` reflection over syntax",
             ),
         );
         Halt

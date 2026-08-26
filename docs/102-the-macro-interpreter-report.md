@@ -435,12 +435,31 @@ The two halves of `"1.25"` are recovered with `str_starts_with`, `str_ends_with`
 instead. That is a real constraint on how much of a library a sigil can reuse, and it is the reason
 to expect *some* duplication rather than none.
 
-A smaller limit came out of the same work and is a line in [`08`](08-roadmap.md) §8.5.4 rather than
-a defect, because the compiler says so plainly (`B0208`, with the rule in its note): **a macro body
-resolves its own module's `def`s and not an imported module's.** A macro crosses a module boundary;
-the definitions its body calls do not. So a helper two library files share cannot be used by either
-one's macro, and `dates.beck` and `decimal.beck` carry the same three-line digit predicate under two
-names — `all_digits` and `is_digit_run` — for exactly that reason.
+### A limit that turned out to be a defect
+
+Writing the same digit predicate into `dates.beck` and `decimal.beck` under two names looked like a
+cost of the design: a macro body resolves its own module's `def`s, `B0208` says so plainly, and a
+helper two library files share could not be used by either one's macro. That went into
+[`08`](08-roadmap.md) §8.5.4 as a small item and was wrong within the commit.
+
+**It was reachable all along, on a condition nobody could see.** A macro crosses an import on the
+imported module's *source*, so the compiler keeps a parse of the modules an importer might need —
+and it decided which ones by asking whether the **imported** file declared a macro. That is the
+right question for finding a macro to expand and the wrong one for finding a `def` to call, because
+nothing about `dates.beck` says whether the file importing it has a macro. The consequence was
+invisible: adding an unused macro to the other module was the difference between `B0208` and a
+compile, and `B0208`'s own text — "a `def` in this module" — described a rule the compiler was not
+applying.
+
+The question is asked of the importer now, and both directions are gated: the module with the
+macro reaching a plain module's `def`, the same pair with a decoy macro in the imported file (the
+case that passed for the wrong reason), and a module that is *not* imported still refused. The cost
+profile is kept by the text test that was already there — a build with no macros anywhere parses
+nothing twice.
+
+The two predicates stay as they are. Sharing one would put it in a third file, which means an
+`import` in `dates.beck`, and a library file that imports another is skipped by the sweep the
+native backends are measured against — three duplicated lines is the cheaper side of that trade.
 
 ### One error, not two
 

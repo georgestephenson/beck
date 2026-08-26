@@ -186,7 +186,13 @@ fn expand_module_inner(module: &Node, imported: &[&Node], diags: &mut Diagnostic
     let mut ex = Expander::collecting(diags);
     // The imports first, so a macro this module declares shadows nothing silently: `B0200` fires on
     // the second definition of a name, and the second one is this module's.
-    let brings_macros = imported.iter().any(|m| declares_a_macro(m));
+    //
+    // "Are there macros here at all" is asked of **every** module in play, this one included. Asked
+    // of the imports alone it made whether a macro body could call an imported `def` depend on
+    // whether that other module happened to declare a macro of its own — so adding an unused macro
+    // to the imported file was the difference between `B0208` and a compile, and `B0208` states a
+    // rule ("a `def` in this module") that was not the one being applied.
+    let brings_macros = declares_a_macro(module) || imported.iter().any(|m| declares_a_macro(m));
     for m in imported {
         ex.collect_macros_from(m, brings_macros);
     }

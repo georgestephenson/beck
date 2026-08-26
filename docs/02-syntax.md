@@ -191,9 +191,9 @@ these.** Built: hygiene by sets of scopes from the first commit, `$x` unquotes a
 expanded to a fixpoint, four independent resource bounds (`B0201` expansion depth, `B0213`
 nesting, `B0214` production budget, `B0215` the interpreter's step budget), and **a macro body
 that is ordinary Beck, evaluated at compile time** ([`102`](102-the-macro-interpreter-report.md)):
-bindings, `if`, `for`, `while`, lambdas, calls to the module's own `def`s and to the pure part of
-the prelude, `node_*` reflection over syntax, and `splice([…])` returning several definitions where
-one was written. `$e` is an expression whose *value* is reflected into the template, so `$x` is the
+bindings, `if`, `for`, `while`, lambdas, calls to the `def`s of this module and of the ones it
+imports and to the pure part of the prelude, `node_*` reflection over syntax, and `splice([…])`
+returning several definitions where one was written. `$e` is an expression whose *value* is reflected into the template, so `$x` is the
 caller's code and `$(n * 2)` is a literal. The environment is capability-restricted as this section
 demands, and `macro_sandbox.rs` is what says so: a whitelist, the effectful primitives refused by
 name (`B0207`), and an enumeration over the prelude that fails when a new one appears. Where a

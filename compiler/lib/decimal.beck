@@ -357,10 +357,10 @@ def is_decimal_text(text: Str) -> Bool:
 
 ## A non-empty run of digits, with no sign.
 ##
-## `dates.beck` has the same three lines under the name `all_digits`, and they stay apart: the
-## library namespace is flat, so one definition would have to live in one of the two files and be
-## imported by the other — and a macro body resolves the *module's own* defs, so an imported one
-## would not be callable from the sigil that needs it.
+## `dates.beck` has the same three lines under the name `all_digits`, and they stay apart on a
+## trade rather than a rule. The library namespace is flat, so one definition means one file and an
+## `import` in the other — and a library file that imports another is skipped by the sweep the
+## native backends are measured against, which is a worse thing to lose than three lines.
 def is_digit_run(text: Str) -> Bool:
     return not str_is_empty(text) and list_all(str_chars(text), lambda c: c >= "0" and c <= "9")
 

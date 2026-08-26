@@ -594,11 +594,13 @@ rows.
     this library decides validity through a `Result` a macro body cannot read — so only the
     *grammar* is shared and the value is built twice, held together by a differential.
     Interpolation, a triple-quoted body and a literal that returns a *typed* `Node` remain (§2.5).
-  - **A macro body that can call an imported `def`.** It cannot today — `B0208`, honestly, with the
-    rule in its note — so a helper two library files share cannot be used by either one's macro,
-    and `dates.beck` and `decimal.beck` carry the same three-line digit predicate under two names
-    for exactly that reason. Small, and it is the difference between a macro being written where
-    its helpers are and being written where it is needed.
+  - **A macro body calls the `def`s of the modules its own module imports. Fixed** — this list said
+    it could not, one commit before finding out that it *could*, on a condition nobody could see:
+    the parse kept for crossing an import was decided by looking at the imported file, so an
+    imported `def` was reachable only when that file happened to declare a macro of its own.
+    Adding an unused macro to the other module was the difference between `B0208` and a compile.
+    Which sources are kept is the **importer's** question now, pre-filtered by the same text test
+    that kept the second parse off macro-free builds.
   - **`inject`/`unsafe_macro`**, the deliberate-capture escape, and **nested quoting's
     `(quote depth node)`**.
   - **A `Node` a *running* program can hold**: a `quote` that survives expansion is still `B0332`,
