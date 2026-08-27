@@ -309,13 +309,19 @@ struct Entry {
 ///
 /// # Why `--check` does not demand a complete file
 ///
-/// It demands that every entry `CHANGELOG.md` carries is the entry its file says, in the order the
-/// directory gives — and it *allows* the newest entries to be missing. That asymmetry is the whole
-/// point rather than a hole in the gate: a check that failed until the assembly were up to date
-/// would make regenerating it part of recording a change, and then two branches would once more be
-/// adding lines at the same place in one file — the shape whose merge GitHub reports as a conflict,
-/// because it reads no merge driver, on every pull request open across another one's merge. So the
-/// assembled copy may lag, and cannot disagree.
+/// It demands that the entries `CHANGELOG.md` carries are a **subsequence** of the directory's:
+/// each one the entry its file says, in the order the directory gives, with any entry allowed to
+/// be missing. That asymmetry is the whole point rather than a hole in the gate: a check that
+/// failed until the assembly were up to date would make regenerating it part of recording a
+/// change, and then two branches would once more be adding lines at the same place in one file —
+/// the shape whose merge GitHub reports as a conflict, because it reads no merge driver, on every
+/// pull request open across another one's merge. So the assembled copy may lag, and cannot
+/// disagree.
+///
+/// *Any* entry and not just the newest, because entries sharing a date are ordered by file name: a
+/// change recorded today lands wherever its name falls among today's, which is as often after an
+/// already-assembled entry as before it. A check that expected what it is missing to be a prefix
+/// would go red on a correct branch, and did — on the second entry written under this scheme.
 ///
 /// Assembling is therefore a change of its own and lands on its own. Recording one must not do it.
 pub fn changelog(dir: &Path, out: &Path, check: bool) -> Result<()> {
@@ -327,33 +333,54 @@ pub fn changelog(dir: &Path, out: &Path, check: bool) -> Result<()> {
 
     if check {
         let have = blocks(&existing[head.len()..]);
-        if have.len() > want.len() {
-            bail!(
-                "{} carries {} entries and {} holds {} — an entry cannot outlive its file",
-                out.display(),
-                have.len(),
-                dir.display(),
-                want.len()
-            );
-        }
-        // The oldest are the ones both have: what an assembly that has not run yet is missing is
-        // the newest, so the checked-in list is a tail of the directory's.
-        let behind = want.len() - have.len();
-        for (i, block) in have.iter().enumerate() {
-            if block != &want[behind + i] {
-                bail!(
-                    "{} does not say what {}/{} says.\n\
-                     Entries are assembled, not edited: correct the entry and reassemble with \
-                     `beck doc changelog --dir {} --out {}`",
-                    out.display(),
-                    dir.display(),
-                    entries[behind + i].file,
-                    dir.display(),
-                    out.display()
-                );
+        let mut cursor = 0;
+        let mut pending: Vec<&str> = Vec::new();
+        for block in &have {
+            // The first entry from here on that this one is: everything skipped over is an entry
+            // recorded since the list was assembled.
+            match want[cursor..].iter().position(|w| w == block) {
+                Some(k) => {
+                    pending.extend(entries[cursor..cursor + k].iter().map(|e| e.file.as_str()));
+                    cursor += k + 1;
+                }
+                None => {
+                    let title = block.lines().next().unwrap_or_default();
+                    // An entry the directory holds under the same title is the ordinary mistake —
+                    // the list edited where the entry should have been — and worth naming.
+                    let edited = entries
+                        .iter()
+                        .zip(&want)
+                        .find(|(_, w)| w.lines().next().unwrap_or_default() == title)
+                        .map(|(e, _)| e.file.as_str());
+                    match edited {
+                        Some(file) => bail!(
+                            "{} does not say what {}/{file} says.\n\
+                             Entries are assembled, not edited: correct the entry and reassemble \
+                             with `beck doc changelog --dir {} --out {}`",
+                            out.display(),
+                            dir.display(),
+                            dir.display(),
+                            out.display()
+                        ),
+                        None => bail!(
+                            "{} carries an entry no file in {} holds, or holds out of order:\n  \
+                             {title}\n\
+                             The next entry the directory has from there is {}. An entry cannot \
+                             outlive its file — it is recorded by adding one and assembled from \
+                             there.",
+                            out.display(),
+                            dir.display(),
+                            entries
+                                .get(cursor)
+                                .map(|e| format!("{}/{}", dir.display(), e.file))
+                                .unwrap_or_else(|| "none — the list runs past the end".to_string())
+                        ),
+                    }
+                }
             }
         }
-        match behind {
+        pending.extend(entries[cursor..].iter().map(|e| e.file.as_str()));
+        match pending.len() {
             0 => println!(
                 "{} is assembled from all {} entries",
                 out.display(),
@@ -364,11 +391,7 @@ pub fn changelog(dir: &Path, out: &Path, check: bool) -> Result<()> {
                 out.display(),
                 have.len(),
                 want.len(),
-                entries[..n]
-                    .iter()
-                    .map(|e| e.file.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n  ")
+                pending.join("\n  ")
             ),
         }
         return Ok(());

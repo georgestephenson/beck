@@ -506,9 +506,10 @@ enum Doc {
         /// The list to assemble. Everything above `## Unreleased` is written by hand and kept.
         #[arg(long, short, default_value = "../CHANGELOG.md")]
         out: PathBuf,
-        /// Check what is checked in instead of writing it: every entry it carries must be the
-        /// entry its file says, in order. The newest may be missing — demanding otherwise would
-        /// put every branch back on the same line of the same file.
+        /// Check what is checked in instead of writing it: the entries it carries must be a
+        /// subsequence of the directory's — each the entry its file says, in order. Any may be
+        /// missing, because demanding otherwise would make reassembling part of recording a
+        /// change and put every branch back on the same line of the same file.
         #[arg(long)]
         check: bool,
     },

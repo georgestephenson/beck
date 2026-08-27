@@ -357,7 +357,7 @@ A change records itself by adding a file there and editing nothing else, so two 
 |---|---|---|
 | `--dir` | DIR | The directory of entries, one file per change |
 | `-o, --out` | OUT | The list to assemble. Everything above `## Unreleased` is written by hand and kept |
-| `--check` | true \| false | Check what is checked in instead of writing it: every entry it carries must be the entry its file says, in order. The newest may be missing — demanding otherwise would put every branch back on the same line of the same file |
+| `--check` | true \| false | Check what is checked in instead of writing it: the entries it carries must be a subsequence of the directory's — each the entry its file says, in order. Any may be missing, because demanding otherwise would make reassembling part of recording a change and put every branch back on the same line of the same file |
 
 
 ## `beck doc reference`

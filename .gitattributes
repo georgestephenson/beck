@@ -1,18 +1,15 @@
-# This driver applies to a merge git performs, and to nothing else. GitHub does not read this file:
-# neither the mergeability it reports on a pull request nor the merge its button performs consults
-# a merge driver, so a branch that both sides have touched in a file named here reads as conflicting
-# on GitHub while `git merge` on a clone resolves it silently and correctly. That is why it is not
-# what keeps parallel branches apart in `changelog/`, where a change records itself in a file of its
-# own and there is nothing for either merge to resolve.
-
-# DEFECTS.md is appended to by any branch that finds one, and each entry is a whole section under
-# its own heading, so two branches adding entries have nothing in common to conflict over. Union
-# merge keeps both. Deletion is the other half of the file's rule — an entry leaves in the change
-# that fixes it — and union merge does not resolve a delete against an edit, so a branch that fixes
-# a defect while another edits the same entry conflicts there, which is the right outcome: somebody
-# has to read both sides.
+# No merge driver, on purpose.
 #
-# On GitHub none of that applies, and the report is the misleading one described above. It is a
-# smaller version of the same defect the changelog had — DEFECTS.md::defects-entries-share-one-file
-# holds it, with the gate its fix owes.
-DEFECTS.md merge=union
+# A driver here applies to a merge git performs and to nothing else. GitHub reads none of them:
+# neither the mergeability it reports on a pull request nor the merge its button performs consults
+# one. So a driver is in force exactly where nobody is looking and absent where everybody is, and
+# the file it is meant to keep mergeable reads as conflicting on every pull request open across
+# another one's merge — while `git merge` on a clone resolves it silently, which is what keeps the
+# report from being believed.
+#
+# Both files that had one — `CHANGELOG.md` and `DEFECTS.md` — record a change in a file of its own
+# now, under `changelog/` and `defects/`, so two branches never write the same line and there is
+# nothing for either merge to resolve. That is the fix a driver could only paper over locally.
+#
+# `docs.rs::no_merge_driver_is_what_keeps_two_branches_apart` asserts this file names none, because
+# the reliance is easier to add back than to notice.

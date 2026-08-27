@@ -21,7 +21,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`docs/reference/`](docs/reference/README.md) | **Generated** by `beck doc reference`. Never edit by hand |
 | [`docs/adr/`](docs/adr/) | Engineering decisions — a dependency taken or refused, a gate's shape, an upgrade path |
 | [`changelog/`](changelog/README.md) | **Where a change records itself** — one file per change, assembled into [`CHANGELOG.md`](CHANGELOG.md) by `beck doc changelog`. A file of its own, because two branches cannot both write one |
-| [`DEFECTS.md`](DEFECTS.md) | **What is wrong right now.** Something that behaves wrongly — silent, misleading, or contrary to what a document says. An entry is deleted by the change that fixes it, so the file is always the current list; something merely *absent* is a line in [`docs/08`](docs/08-roadmap.md) §8.5 instead |
+| [`defects/`](defects/), [`DEFECTS.md`](DEFECTS.md) | **What is wrong right now** — one file per defect in the directory, the rules it is kept by in the file. Something that behaves wrongly: silent, misleading, or contrary to what a document says. An entry is **deleted by the change that fixes it**, so the directory is always the current list; something merely *absent* is a line in [`docs/08`](docs/08-roadmap.md) §8.5 instead |
 | [`compiler/`](compiler/) | The compiler, the runtime, and the standard library. Where new work goes |
 | [`compiler/lib/`](compiler/lib/README.md) | The standard library's Beck half |
 | [`compiler/corpus/`](compiler/corpus/) | 39<!--c:corpus-programs--> programs carrying **no placement annotations** — Phase 2's exit measurement |
@@ -34,12 +34,13 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 
 ### Most work is a changelog entry; a report is for a phase or a subsystem
 
-**A defect you are not fixing goes in [`DEFECTS.md`](DEFECTS.md), now, with the gate its fix owes.**
+**A defect you are not fixing goes in [`defects/`](defects/), now, with the gate its fix owes.**
 Writing down what would have to go red is a job for whoever is looking at the defect, not for
 whoever eventually fixes it — that is the difference between the gates in this repository that have
 caught something and the four that could not have
-([`docs/82`](docs/82-the-edge-report.md) §82.10). The entry leaves the file in the change that fixes
-it, and that change's changelog entry is the record.
+([`docs/82`](docs/82-the-edge-report.md) §82.10). One file per defect, `defects/<id>.md`, opening
+with `` ## `<id>` `` — [`DEFECTS.md`](DEFECTS.md) holds the rules the register is kept by. The entry
+is **deleted** in the change that fixes it, and that change's changelog entry is the record.
 
 **Default to a changelog entry**: a few lines saying what changed, what it measured, and what gate
 holds it. A faster binding, one benchmark ported, a primitive added, a bug fixed — these are

@@ -838,12 +838,12 @@ fn two_branches_recording_a_change_merge_with_no_gitattributes() {
     };
 
     assert!(
-        merges_cleanly("a-file-each", &recorded),
+        merges_cleanly("a-file-each", &|_| {}, &recorded),
         "two branches each recording a change conflicted with no `.gitattributes` in the tree — \
          which is what GitHub reports on every pull request"
     );
     assert!(
-        !merges_cleanly("one-shared-list", &prepended),
+        !merges_cleanly("one-shared-list", &|_| {}, &prepended),
         "two branches each prepending a bullet to one list merged cleanly with no \
          `.gitattributes` in the tree, so this gate cannot tell the two shapes apart and the one \
          above passed for a reason that is not the one it names"
@@ -855,17 +855,21 @@ fn two_branches_recording_a_change_merge_with_no_gitattributes() {
 ///
 /// The repository is the real `CHANGELOG.md` and the real `changelog/`, so the property is about
 /// this project's convention rather than about a shape invented here.
-fn merges_cleanly(case: &str, record: &dyn Fn(&Path, &str)) -> bool {
+fn merges_cleanly(case: &str, seed: &dyn Fn(&Path), record: &dyn Fn(&Path, &str)) -> bool {
     let root = repo_root();
-    let dir = std::env::temp_dir().join(format!("beck-changelog-{case}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("beck-merge-{case}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("changelog")).expect("the scratch tree is made");
-    std::fs::copy(root.join("CHANGELOG.md"), dir.join("CHANGELOG.md")).expect("the list is copied");
-    for item in std::fs::read_dir(root.join("changelog")).expect("the entries are readable") {
-        let from = item.expect("a directory entry").path();
-        let name = from.file_name().expect("a file has a name").to_owned();
-        std::fs::copy(&from, dir.join("changelog").join(name)).expect("an entry is copied");
+    std::fs::create_dir_all(&dir).expect("the scratch tree is made");
+    for (list, entries) in [("CHANGELOG.md", "changelog"), ("DEFECTS.md", "defects")] {
+        std::fs::copy(root.join(list), dir.join(list)).expect("the list is copied");
+        std::fs::create_dir_all(dir.join(entries)).expect("the directory is made");
+        for item in std::fs::read_dir(root.join(entries)).expect("the entries are readable") {
+            let from = item.expect("a directory entry").path();
+            let name = from.file_name().expect("a file has a name").to_owned();
+            std::fs::copy(&from, dir.join(entries).join(name)).expect("an entry is copied");
+        }
     }
+    seed(&dir);
     assert!(
         !dir.join(".gitattributes").exists(),
         "the scratch tree has a .gitattributes, so it is not the configuration GitHub runs"
@@ -927,6 +931,148 @@ fn merges_cleanly(case: &str, record: &dyn Fn(&Path, &str)) -> bool {
     let merged = git(&["merge", "--no-edit", "b"]);
     let _ = std::fs::remove_dir_all(&dir);
     merged
+}
+
+/// **Two branches each recording a defect merge cleanly, and so do two branches each fixing one.**
+///
+/// The twin of the gate above, on the register rather than the changelog, and the defect it closes
+/// was what that one left behind: `DEFECTS.md` was one list every branch that found something
+/// appended a section to, kept mergeable by the same `merge=union` driver, and reported as
+/// conflicting in the same place for the same reason.
+///
+/// **Deletion is the half worth having**, and it is why the register is the directory itself rather
+/// than a file assembled from it. It is this register's own rule that an entry leaves in the change
+/// that fixes it, so a fix must be able to land beside another fix — and a deleted file merges
+/// against another branch's deleted file with nothing to resolve, where union merge does not
+/// resolve a delete against an edit at all. Both operations are asserted, because a shape that only
+/// admitted new defects would be half a register.
+#[test]
+fn two_branches_recording_a_defect_merge_with_no_gitattributes() {
+    let recorded = |dir: &Path, name: &str| {
+        std::fs::write(
+            dir.join("defects")
+                .join(format!("branch-{name}-found-this.md")),
+            format!("## `branch-{name}-found-this`\n\n**What is wrong.** Something.\n"),
+        )
+        .expect("an entry is written");
+    };
+    // Two defects to fix, put there before the branches so that both are fixing something the base
+    // commit has. Fixing one is deleting its file.
+    let two_to_fix = |dir: &Path| {
+        for name in ["a", "b"] {
+            std::fs::write(
+                dir.join("defects").join(format!("already-known-{name}.md")),
+                format!("## `already-known-{name}`\n\n**What is wrong.** Something.\n"),
+            )
+            .expect("an entry is written");
+        }
+    };
+    let fixed = |dir: &Path, name: &str| {
+        std::fs::remove_file(dir.join("defects").join(format!("already-known-{name}.md")))
+            .expect("the entry leaves with its fix");
+    };
+    // The shape this replaced: a section appended to the one list, which is the end of the same
+    // file for every branch that finds anything.
+    let appended = |dir: &Path, name: &str| {
+        let path = dir.join("DEFECTS.md");
+        let text = std::fs::read_to_string(&path).expect("the list is readable");
+        std::fs::write(
+            &path,
+            format!(
+                "{text}\n---\n\n## `branch-{name}-found-this`\n\n**What is wrong.** Something.\n"
+            ),
+        )
+        .expect("the list is written");
+    };
+
+    assert!(
+        merges_cleanly("a-defect-each", &|_| {}, &recorded),
+        "two branches each recording a defect conflicted with no `.gitattributes` in the tree — \
+         which is what GitHub reports on every pull request"
+    );
+    assert!(
+        merges_cleanly("a-fix-each", &two_to_fix, &fixed),
+        "two branches each fixing a defect conflicted with no `.gitattributes` in the tree, so a \
+         fix cannot land beside another fix — which is the half of the register's rule that says \
+         an entry leaves in the change that fixes it"
+    );
+    assert!(
+        !merges_cleanly("one-shared-register", &|_| {}, &appended),
+        "two branches each appending a section to one register merged cleanly with no \
+         `.gitattributes` in the tree, so this gate cannot tell the two shapes apart and the two \
+         above passed for a reason that is not the one they name"
+    );
+}
+
+/// **A defect is a file named for the entry it holds.** `defects/<id>.md` opens with `` ## `<id>` ``.
+///
+/// The id is the whole of a defect's identity: it is the file's name, the heading a reader lands
+/// on, and the `DEFECTS.md::<id>` a code comment cites years later. Two of those disagreeing is a
+/// defect nobody can find from a citation, which is the register failing at the one job it has.
+#[test]
+fn every_defect_is_a_file_named_for_the_entry_it_holds() {
+    let dir = repo_root().join("defects");
+    let mut wrong = Vec::new();
+    let mut seen = 0;
+    for item in std::fs::read_dir(&dir).expect("the register is readable") {
+        let path = item.expect("a directory entry").path();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if !name.ends_with(".md") {
+            continue;
+        }
+        seen += 1;
+        let text = std::fs::read_to_string(&path).expect("an entry is readable");
+        let want = format!("## `{}`", name.trim_end_matches(".md"));
+        match text.lines().next() {
+            Some(first) if first.starts_with(&want) => {}
+            Some(first) => wrong.push(format!("defects/{name}: opens `{first}`, not `{want}`")),
+            None => wrong.push(format!("defects/{name} is empty")),
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} entr(ies) are not named for what they hold:\n  {}",
+        wrong.len(),
+        wrong.join("\n  ")
+    );
+    // A floor, so that a register nobody could read would not pass by being unreadable.
+    assert!(
+        seen > 0,
+        "no entries found in {} — the listing is wrong",
+        dir.display()
+    );
+    println!("{seen} defects, each in a file named for its id");
+}
+
+/// **No merge driver is what keeps two branches apart.** `.gitattributes` names none.
+///
+/// The reliance is far easier to add back than to notice, and it comes back looking like a fix: a
+/// file two branches both write, a `merge=union` beside it, a clone that merges silently, and a
+/// forge that has been reporting a conflict the whole time. The two gates above would still pass
+/// with a driver in the tree — they model its absence — so this is the one that says the tree
+/// itself has stopped depending on one.
+#[test]
+fn no_merge_driver_is_what_keeps_two_branches_apart() {
+    let path = repo_root().join(".gitattributes");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return; // No file at all is the property this asserts, arrived at from the other side.
+    };
+    let drivers: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#') && l.contains("merge="))
+        .collect();
+    assert!(
+        drivers.is_empty(),
+        "`.gitattributes` sets a merge driver, which git honours and GitHub reads nowhere — so the \
+         file it names reads as conflicting on every pull request open across another one's \
+         merge:\n  {}",
+        drivers.join("\n  ")
+    );
 }
 
 /// **`CHANGELOG.md` says what the entries say.** Every entry it carries is the entry its file in
