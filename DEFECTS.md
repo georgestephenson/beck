@@ -132,40 +132,35 @@ delete the check.
 
 ---
 
-## `union-merge-is-local-only` — every pull request that touches `CHANGELOG.md` reads as conflicting
+## `defects-entries-share-one-file` — a pull request that records a defect reads as conflicting
 
-**What is wrong.** [`.gitattributes`](.gitattributes) sets `merge=union` on
-[`CHANGELOG.md`](CHANGELOG.md) so that two branches each prepending a bullet under `## Unreleased`
-do not conflict. Git honours it. **GitHub does not read the file at all** — neither the
-`mergeable_state` it reports on a pull request nor the merge its button performs consults a merge
-driver — so the driver is in force exactly where nobody is looking and absent where everybody is.
-Since every change is required to add a bullet at the top of that list, and the list has no topic
-headings on purpose, *every* pull request open across another one's merge is reported as conflicting.
+**What is wrong.** This file is one list, and a branch that finds a defect adds a section to it. Two
+branches that each add one are editing the same file, and on GitHub that is reported as a conflict:
+[`.gitattributes`](.gitattributes) sets `merge=union` here so that `git merge` on a clone keeps both
+sections, but **GitHub reads no merge driver** — neither for the mergeability it reports on a pull
+request nor for the merge its button performs. So the report is the misleading one again: a reviewer
+told the branch "has conflicts that must be resolved" cannot tell this file from a real disagreement
+in the compiler, and resolving it by hand is the work the union driver was added to make
+unnecessary.
 
-**Why it is a defect rather than an inconvenience.** The report is not merely noisy, it is
-**misleading in the direction that costs the most**: a reviewer reading "this branch has conflicts
-that must be resolved" has no way to tell the one file the driver would have settled from a real
-disagreement in the compiler, and the honest response to the message — resolve the conflict by hand
-— is the one thing the flat-list design was built to make unnecessary. The comment in
-`.gitattributes` asserted the conflict was solved; it is solved on a clone and not on the forge, and
-that comment has been corrected in place.
+**Why it is smaller than what it is left over from.** The changelog had the same defect and it fired
+on *every* pull request, because every change records one; this fires only when two open branches
+both find a defect, which is rare. That is a difference in how often, not in kind. The changelog's
+fix was to stop relying on the driver — a change records itself in a file of its own under
+[`changelog/`](changelog/README.md), so two branches never write the same line — and the same shape
+is available here: one file per defect, assembled into this list. Deletion is the half worth
+checking, because it is this file's own rule that an entry leaves in the change that fixes it, and a
+deleted file merges against another branch's added file with nothing to resolve, where union merge
+does not resolve a delete against an edit at all.
 
-**The workaround, which is not the fix.** Merge the base branch down into the branch locally, where
-the driver applies, and push the merge. The pull request then has nothing left to merge and reports
-clean. This works and is what has been done, but it puts a merge commit on every branch that
-outlives one other merge, and it requires somebody to know why.
-
-**The gate a fix owes**, and it is the half that will be forgotten: a real fix removes the *reliance*
-on the driver rather than teaching the forge about it, most likely by giving each change its own
-file so two branches never write the same line. So the gate is **not** "the union driver keeps both
-bullets" — that passes today and pins the defect in place. It is that two branches each recording a
-change merge cleanly **in a tree with no `.gitattributes` at all**, which is the configuration
-GitHub runs: build the two branches, drop the file, merge, and assert no conflict.
-
-**Model the absent driver by removing the file, not by configuration.** `core.attributesFile` names
-the *global* attributes file and does not suppress the one in the tree, so a gate written that way
-runs with the driver still in force and passes for the wrong reason — [`docs/82`](docs/82-the-edge-report.md)
-§82.10's pattern, arrived at from the other direction. Checked both ways while this entry was
-written: two branches each prepending a bullet conflict with the file absent and merge clean with it
-present, so the gate goes red today and green on a fix.
-
+**The gate a fix owes.** The changelog's gate is
+`docs.rs::two_branches_recording_a_change_merge_with_no_gitattributes`, and this one is its twin,
+written the same way: two branches each **recording a defect**, and a third case that two branches
+each **fixing** one — deleting entries — merge cleanly **in a tree with no `.gitattributes` at all**,
+which is the configuration GitHub runs. Model the absent driver by removing the file and not by
+configuration: `core.attributesFile` names the *global* file and does not suppress the one in the
+tree, so a gate written that way passes for the wrong reason. And keep the negative half: two
+branches recording a defect the way they do today must **conflict** in that same tree, or the gate
+cannot tell the two shapes apart. Checked while this entry was written — with the file absent, two
+branches each adding a section here conflict, and with it present they merge — so the gate goes red
+today and green on a fix.

@@ -494,6 +494,24 @@ enum Doc {
         #[arg(long)]
         stdout: bool,
     },
+    /// The changelog, assembled from `changelog/` — one file per change.
+    ///
+    /// A change records itself by adding a file there and editing nothing else, so two branches
+    /// never write the same line and their merge has nothing to resolve. This assembles those
+    /// files into the flat newest-first list under `CHANGELOG.md`'s hand-written head.
+    Changelog {
+        /// The directory of entries, one file per change.
+        #[arg(long, default_value = "../changelog")]
+        dir: PathBuf,
+        /// The list to assemble. Everything above `## Unreleased` is written by hand and kept.
+        #[arg(long, short, default_value = "../CHANGELOG.md")]
+        out: PathBuf,
+        /// Check what is checked in instead of writing it: every entry it carries must be the
+        /// entry its file says, in order. The newest may be missing — demanding otherwise would
+        /// put every branch back on the same line of the same file.
+        #[arg(long)]
+        check: bool,
+    },
     /// The language reference: the error index, the command reference, the effect and tier
     /// matrix, the prelude, and the forms.
     ///
@@ -712,6 +730,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 repo,
                 check,
             } => docs::reference(&out, format, check, repo.as_deref()),
+            Doc::Changelog { dir, out, check } => docs::changelog(&dir, &out, check),
         },
         Cmd::Bench { what } => match what {
             Bench::Log { url, dir } => {

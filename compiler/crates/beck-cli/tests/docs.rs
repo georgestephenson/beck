@@ -793,6 +793,164 @@ fn every_shell_command_in_the_instructions_runs() {
     );
 }
 
+/// **Two branches each recording a change merge cleanly in a tree with no `.gitattributes`.**
+///
+/// This is the configuration the forge runs. `.gitattributes` set `merge=union` on `CHANGELOG.md`
+/// so that two branches prepending a bullet to one flat list did not conflict, and git honoured it
+/// — but **GitHub reads no merge driver**, neither for the mergeability it reports on a pull
+/// request nor for the merge its button performs, so the driver was in force exactly where nobody
+/// was looking and absent where everybody was. Every pull request open across another one's merge
+/// was reported as conflicting, and a reviewer had no way to tell that report from a real
+/// disagreement in the compiler.
+///
+/// So the property is not "the union driver keeps both bullets" — that passed the whole time the
+/// defect stood, and pinned it in place. It is that a change is recorded in a **file of its own**,
+/// which two branches cannot both write. The driver is modelled as absent by **not putting the
+/// file in the tree**, and not by configuration: `core.attributesFile` names the *global* file and
+/// does not suppress the one in the tree, so a gate written that way would run with the driver
+/// still in force and pass for the wrong reason. `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` are
+/// pointed at nothing for the same reason from the other side — an attributes file on the machine
+/// running the test must not be able to decide the answer.
+///
+/// The second half is what keeps this from being a ceremony: **the same two branches, recording
+/// the same two changes the old way, must conflict** in the same repository. Without it a merge
+/// that could not fail — a harness that resolved everything, a git that merged anything — would
+/// read as a pass.
+#[test]
+fn two_branches_recording_a_change_merge_with_no_gitattributes() {
+    let recorded = |dir: &Path, name: &str| {
+        std::fs::write(
+            dir.join("changelog").join(format!("2026-01-01-{name}.md")),
+            format!("- **2026-01-01 — Branch {name} changed something.**\n  And said so here.\n"),
+        )
+        .expect("an entry is written");
+    };
+    // The shape this replaced: a bullet at the top of the one flat list, which is the same line of
+    // the same file for every branch that records anything.
+    let prepended = |dir: &Path, name: &str| {
+        let path = dir.join("CHANGELOG.md");
+        let text = std::fs::read_to_string(&path).expect("the list is readable");
+        let at = text.find("\n- **").expect("the list has entries");
+        let bullet =
+            format!("\n- **2026-01-01 — Branch {name} changed something.**\n  And said so here.\n");
+        std::fs::write(&path, format!("{}{bullet}{}", &text[..at], &text[at..]))
+            .expect("the list is written");
+    };
+
+    assert!(
+        merges_cleanly("a-file-each", &recorded),
+        "two branches each recording a change conflicted with no `.gitattributes` in the tree — \
+         which is what GitHub reports on every pull request"
+    );
+    assert!(
+        !merges_cleanly("one-shared-list", &prepended),
+        "two branches each prepending a bullet to one list merged cleanly with no \
+         `.gitattributes` in the tree, so this gate cannot tell the two shapes apart and the one \
+         above passed for a reason that is not the one it names"
+    );
+}
+
+/// Two branches, each recording a change with `record`, merged in a repository with no
+/// `.gitattributes` in it. `true` if the merge had nothing to resolve.
+///
+/// The repository is the real `CHANGELOG.md` and the real `changelog/`, so the property is about
+/// this project's convention rather than about a shape invented here.
+fn merges_cleanly(case: &str, record: &dyn Fn(&Path, &str)) -> bool {
+    let root = repo_root();
+    let dir = std::env::temp_dir().join(format!("beck-changelog-{case}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("changelog")).expect("the scratch tree is made");
+    std::fs::copy(root.join("CHANGELOG.md"), dir.join("CHANGELOG.md")).expect("the list is copied");
+    for item in std::fs::read_dir(root.join("changelog")).expect("the entries are readable") {
+        let from = item.expect("a directory entry").path();
+        let name = from.file_name().expect("a file has a name").to_owned();
+        std::fs::copy(&from, dir.join("changelog").join(name)).expect("an entry is copied");
+    }
+    assert!(
+        !dir.join(".gitattributes").exists(),
+        "the scratch tree has a .gitattributes, so it is not the configuration GitHub runs"
+    );
+
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(&dir)
+            // No global or system configuration: an attributes file on this machine must not be
+            // able to decide the answer, in either direction.
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .args([
+                "-c",
+                "user.name=beck",
+                "-c",
+                "user.email=beck@example.invalid",
+            ])
+            .args(args)
+            .output()
+            .expect("git runs");
+        out.status.success()
+    };
+
+    assert!(
+        git(&["init", "-q"]),
+        "the scratch repository is initialised"
+    );
+    assert!(
+        git(&["add", "-A"]) && git(&["commit", "-qm", "base"]),
+        "the base commit is made"
+    );
+    let base = String::from_utf8(
+        Command::new("git")
+            .current_dir(&dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("git runs")
+            .stdout,
+    )
+    .expect("a commit id is text");
+    let base = base.trim();
+
+    for branch in ["a", "b"] {
+        assert!(
+            git(&["checkout", "-q", "-b", branch, base]),
+            "the branch is made"
+        );
+        record(&dir, branch);
+        assert!(
+            git(&["add", "-A"]) && git(&["commit", "-qm", branch]),
+            "the change is recorded"
+        );
+    }
+    assert!(
+        git(&["checkout", "-q", "a"]),
+        "the first branch is checked out"
+    );
+    let merged = git(&["merge", "--no-edit", "b"]);
+    let _ = std::fs::remove_dir_all(&dir);
+    merged
+}
+
+/// **`CHANGELOG.md` says what the entries say.** Every entry it carries is the entry its file in
+/// `changelog/` holds, in the order the directory gives.
+///
+/// This is the other half of the property above, and the half that catches a *regression* rather
+/// than proving the shape: an entry written straight into the assembled list — the old convention,
+/// arriving by habit — is an entry no file holds, and this fails naming it.
+///
+/// What it deliberately allows is the newest entries being missing, because assembling is a change
+/// of its own: a check that demanded a complete file would make regenerating it part of recording
+/// a change, and then two branches would once more be adding lines at the same place in one file.
+#[test]
+fn the_assembled_changelog_says_what_the_entries_say() {
+    let result = beck(&["doc", "changelog", "--check"]);
+    assert!(
+        result.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    println!("{}", String::from_utf8_lossy(&result.stdout));
+}
+
 /// The leading number of `92-supply-chain-and-release-report.md`, or of `104 — the release`.
 ///
 /// `None` where the text does not begin with a number: `README.md` is an index rather than a

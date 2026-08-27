@@ -288,6 +288,197 @@ pub fn guide(
     Ok(())
 }
 
+// --------------------------------------------------------------------------------- the changelog
+
+/// The heading the assembled entries begin under. Everything above it, this line included, is
+/// written by hand and left where it is.
+const CHANGELOG_HEAD: &str = "## Unreleased";
+
+/// One recorded change: the file it was read from, the date it carries, and its text.
+struct Entry {
+    file: String,
+    date: String,
+    block: String,
+}
+
+/// `beck doc changelog` — the flat list, assembled from one file per change.
+///
+/// A change records itself by **adding a file** to `changelog/` and editing nothing else, which is
+/// what keeps two branches from ever writing the same line. `CHANGELOG.md` is the assembly of that
+/// directory: the same entries, newest first, under the hand-written head.
+///
+/// # Why `--check` does not demand a complete file
+///
+/// It demands that every entry `CHANGELOG.md` carries is the entry its file says, in the order the
+/// directory gives — and it *allows* the newest entries to be missing. That asymmetry is the whole
+/// point rather than a hole in the gate: a check that failed until the assembly were up to date
+/// would make regenerating it part of recording a change, and then two branches would once more be
+/// adding lines at the same place in one file — the shape whose merge GitHub reports as a conflict,
+/// because it reads no merge driver, on every pull request open across another one's merge. So the
+/// assembled copy may lag, and cannot disagree.
+///
+/// Assembling is therefore a change of its own and lands on its own. Recording one must not do it.
+pub fn changelog(dir: &Path, out: &Path, check: bool) -> Result<()> {
+    let entries = entries(dir)?;
+    let existing = std::fs::read_to_string(out)
+        .with_context(|| format!("reading {} — it carries the head", out.display()))?;
+    let head = head_of(&existing, out)?;
+    let want: Vec<String> = entries.iter().map(|e| into_root(&e.block)).collect();
+
+    if check {
+        let have = blocks(&existing[head.len()..]);
+        if have.len() > want.len() {
+            bail!(
+                "{} carries {} entries and {} holds {} — an entry cannot outlive its file",
+                out.display(),
+                have.len(),
+                dir.display(),
+                want.len()
+            );
+        }
+        // The oldest are the ones both have: what an assembly that has not run yet is missing is
+        // the newest, so the checked-in list is a tail of the directory's.
+        let behind = want.len() - have.len();
+        for (i, block) in have.iter().enumerate() {
+            if block != &want[behind + i] {
+                bail!(
+                    "{} does not say what {}/{} says.\n\
+                     Entries are assembled, not edited: correct the entry and reassemble with \
+                     `beck doc changelog --dir {} --out {}`",
+                    out.display(),
+                    dir.display(),
+                    entries[behind + i].file,
+                    dir.display(),
+                    out.display()
+                );
+            }
+        }
+        match behind {
+            0 => println!(
+                "{} is assembled from all {} entries",
+                out.display(),
+                want.len()
+            ),
+            n => println!(
+                "{} agrees with {} of {} entries; {n} recorded since it was assembled:\n  {}",
+                out.display(),
+                have.len(),
+                want.len(),
+                entries[..n]
+                    .iter()
+                    .map(|e| e.file.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            ),
+        }
+        return Ok(());
+    }
+
+    let assembled = format!("{head}\n\n{}\n", want.join("\n\n"));
+    std::fs::write(out, &assembled).with_context(|| format!("writing {}", out.display()))?;
+    println!("assembled {} entries into {}", want.len(), out.display());
+    Ok(())
+}
+
+/// Every entry in the directory, newest first.
+///
+/// The date is read out of the entry rather than off the file name, because the entry is what a
+/// reader sees; the file name is then held to it, so the two cannot drift apart. Entries sharing a
+/// date are ordered by file name — a total order that does not depend on when anything was merged,
+/// which is the property this whole shape is for.
+fn entries(dir: &Path) -> Result<Vec<Entry>> {
+    let listing = std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))?;
+    let mut out = Vec::new();
+    for item in listing {
+        let path = item?.path();
+        let file = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if !file.ends_with(".md") || file == "README.md" {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let block = text.trim_end_matches('\n').to_string();
+        let date = block
+            .strip_prefix("- **")
+            .map(|rest| rest.chars().take(10).collect::<String>())
+            .filter(|d| {
+                d.len() == 10
+                    && d.chars().enumerate().all(|(i, c)| {
+                        if i == 4 || i == 7 {
+                            c == '-'
+                        } else {
+                            c.is_ascii_digit()
+                        }
+                    })
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{}: an entry opens `- **YYYY-MM-DD — ` and this one opens `{}`",
+                    path.display(),
+                    block
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(24)
+                        .collect::<String>()
+                )
+            })?;
+        if !file.starts_with(&format!("{date}-")) {
+            bail!(
+                "{}: the entry is dated {date} and the file is not — the name carries the date so \
+                 the directory reads in order",
+                path.display()
+            );
+        }
+        out.push(Entry { file, date, block });
+    }
+    if out.is_empty() {
+        bail!("{} holds no entries", dir.display());
+    }
+    out.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| a.file.cmp(&b.file)));
+    Ok(out)
+}
+
+/// Everything up to and including the heading the entries go under.
+fn head_of(text: &str, out: &Path) -> Result<String> {
+    let mut end = 0;
+    for line in text.lines() {
+        end += line.len() + 1;
+        if line == CHANGELOG_HEAD {
+            return Ok(text[..end - 1].to_string());
+        }
+    }
+    bail!(
+        "{} has no `{CHANGELOG_HEAD}` line, so there is nowhere to assemble under",
+        out.display()
+    )
+}
+
+/// The entry blocks in an assembled list: each runs from its bullet to the next one.
+fn blocks(body: &str) -> Vec<String> {
+    let lines: Vec<&str> = body.lines().collect();
+    let starts: Vec<usize> = (0..lines.len())
+        .filter(|&i| lines[i].starts_with("- **"))
+        .collect();
+    let mut out = Vec::new();
+    for (n, &s) in starts.iter().enumerate() {
+        let e = starts.get(n + 1).copied().unwrap_or(lines.len());
+        out.push(lines[s..e].join("\n").trim_end().to_string());
+    }
+    out
+}
+
+/// A link in an entry is written from `changelog/`, so that the file reads correctly where it
+/// lives; the assembled list is at the root, one directory up.
+fn into_root(block: &str) -> String {
+    block.replace("](../", "](")
+}
+
 // ------------------------------------------------------------------------------- the error index
 
 fn errors_page() -> Page {

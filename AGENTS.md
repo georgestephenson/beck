@@ -20,6 +20,7 @@ holds the *rules*; that file holds the *state*, and it is the one that stays cur
 | [`docs/`](docs/README.md) | The design and the plan. Everything derives from, and defers to, [`docs/00-original-idea.md`](docs/00-original-idea.md) |
 | [`docs/reference/`](docs/reference/README.md) | **Generated** by `beck doc reference`. Never edit by hand |
 | [`docs/adr/`](docs/adr/) | Engineering decisions — a dependency taken or refused, a gate's shape, an upgrade path |
+| [`changelog/`](changelog/README.md) | **Where a change records itself** — one file per change, assembled into [`CHANGELOG.md`](CHANGELOG.md) by `beck doc changelog`. A file of its own, because two branches cannot both write one |
 | [`DEFECTS.md`](DEFECTS.md) | **What is wrong right now.** Something that behaves wrongly — silent, misleading, or contrary to what a document says. An entry is deleted by the change that fixes it, so the file is always the current list; something merely *absent* is a line in [`docs/08`](docs/08-roadmap.md) §8.5 instead |
 | [`compiler/`](compiler/) | The compiler, the runtime, and the standard library. Where new work goes |
 | [`compiler/lib/`](compiler/lib/README.md) | The standard library's Beck half |
@@ -38,11 +39,22 @@ Writing down what would have to go red is a job for whoever is looking at the de
 whoever eventually fixes it — that is the difference between the gates in this repository that have
 caught something and the four that could not have
 ([`docs/82`](docs/82-the-edge-report.md) §82.10). The entry leaves the file in the change that fixes
-it, and that change's changelog bullet is the record.
+it, and that change's changelog entry is the record.
 
-**Default to [`CHANGELOG.md`](CHANGELOG.md)**: a few lines saying what changed, what it measured, and
-what gate holds it. A faster binding, one benchmark ported, a primitive added, a bug fixed — these
-are changelog entries, however interesting the number.
+**Default to a changelog entry**: a few lines saying what changed, what it measured, and what gate
+holds it. A faster binding, one benchmark ported, a primitive added, a bug fixed — these are
+changelog entries, however interesting the number.
+
+**An entry is a file of its own** — `changelog/YYYY-MM-DD-a-few-words.md`, dated the day it merges,
+holding one bullet and written with its links relative to that directory
+([`changelog/README.md`](changelog/README.md) has the shape). Add the file and edit nothing else.
+Two branches recording a change then write two different files and their merge has nothing to
+resolve, which is the point: the flat list this replaced was the same line of the same file for
+every branch, and the `merge=union` driver that kept them apart is one **GitHub does not read**, so
+every pull request open across another one's merge was reported as conflicting.
+[`CHANGELOG.md`](CHANGELOG.md) is the assembly of that directory — `beck doc changelog` from
+`compiler/` — and reassembling it is a change of its own that lands on its own. **Do not reassemble
+it in the change that records one**, or every branch is back on the same line of one file.
 
 **A report is for a phase or a subsystem**: work a reader would need a chapter to understand, that
 established a property somebody will later depend on, or that changed a claim a design document

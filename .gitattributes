@@ -1,17 +1,9 @@
-# These drivers apply to a merge git performs, and to nothing else. GitHub does not read this file:
+# This driver applies to a merge git performs, and to nothing else. GitHub does not read this file:
 # neither the mergeability it reports on a pull request nor the merge its button performs consults
-# a merge driver, so a branch that both sides have touched here reads as conflicting on GitHub
-# while `git merge` on a clone resolves it silently and correctly. Merging the base branch down
-# into the branch locally, and pushing that, is what clears it — see DEFECTS.md::union-merge-
-# is-local-only, which holds the gate a real fix owes.
-
-# CHANGELOG.md is the one file every branch touches, always at the same place — the top of the
-# list under "## Unreleased" — so two branches merged in parallel conflict there every time.
-# Union merge keeps both sides' bullets instead of conflicting. The file is a flat bullet list
-# with no topic headings precisely so this is safe: there is no shared header line for two
-# branches to both add, and a bullet that lands out of date order is left where it lands —
-# the date and PR number on each entry carry the order.
-CHANGELOG.md merge=union
+# a merge driver, so a branch that both sides have touched in a file named here reads as conflicting
+# on GitHub while `git merge` on a clone resolves it silently and correctly. That is why it is not
+# what keeps parallel branches apart in `changelog/`, where a change records itself in a file of its
+# own and there is nothing for either merge to resolve.
 
 # DEFECTS.md is appended to by any branch that finds one, and each entry is a whole section under
 # its own heading, so two branches adding entries have nothing in common to conflict over. Union
@@ -19,4 +11,8 @@ CHANGELOG.md merge=union
 # that fixes it — and union merge does not resolve a delete against an edit, so a branch that fixes
 # a defect while another edits the same entry conflicts there, which is the right outcome: somebody
 # has to read both sides.
+#
+# On GitHub none of that applies, and the report is the misleading one described above. It is a
+# smaller version of the same defect the changelog had — DEFECTS.md::defects-entries-share-one-file
+# holds it, with the gate its fix owes.
 DEFECTS.md merge=union
