@@ -140,6 +140,13 @@ jobs:
       # changes what the reference says has to land with the regenerated file.
       - name: the checked-in reference is what the compiler generates
         run: ./target/debug/beck doc reference --out ../docs/reference --check
+      # `CHANGELOG.md` is assembled from `changelog/`, where a change records itself in a file of
+      # its own. This holds every entry the list carries to the file that holds it. It deliberately
+      # does not demand that the list be up to date: a check that did would make reassembling part
+      # of recording a change, and two branches would once more be adding lines at the same place
+      # in one file — `changelog/README.md` has the reasoning.
+      - name: the assembled changelog says what the entries say
+        run: ./target/debug/beck doc changelog --check
       # Belt and braces: the same property as a test, plus the error-index completeness check and
       # `beck doc` over the whole corpus.
       - name: the documentation gates

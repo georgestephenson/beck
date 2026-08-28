@@ -316,7 +316,7 @@ for a program whose total expansion is about **forty-five nodes**. The message a
 error, because after the budget is spent every expansion produces nothing and the macro's own
 `refuse` fires on a type it can no longer see.
 
-It is in [`DEFECTS.md`](../DEFECTS.md) with the two gates a fix owes, and the second is the
+It is in [the register](../defects/a-typed-macro-nested-in-its-own-argument-is-charged-for-output-nobody-gets.md) with the two gates a fix owes, and the second is the
 interesting one: whatever stops charging the probe must keep `macro_bomb.rs`'s doubling typed macro
 refused, and the probe's charge is precisely what the first version of this work deleted. Memoising
 the expansion on `(call span, argument types)` would fix the *charge*; it would not make the shape
