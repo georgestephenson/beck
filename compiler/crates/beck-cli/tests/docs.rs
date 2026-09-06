@@ -1545,23 +1545,19 @@ fn derive_counts() -> Vec<Count> {
     out.push(n("corpus-folds", folds));
     out.push(n("corpus-pages", pages));
 
-    // What the WebAssembly emitter is measured against, and how much of it is one shape.
-    let (mut wasm_refused, mut one_shape) = (0usize, 0usize);
+    // What the WebAssembly emitter compiles and refuses over the same corpus.
+    let (mut wasm_compiled, mut wasm_refused) = (0usize, 0usize);
     for path in &corpus {
         let name = path.display().to_string();
         let src = std::fs::read_to_string(path).expect("readable");
         let (placed, diags, map) = beck_core::compile_str(&name, &src);
         assert!(!diags.has_errors(), "{name}:\n{}", diags.render(&map));
         let module = beck_wasmgen::module(&placed.expect("the corpus compiles").program);
+        wasm_compiled += module.functions.len();
         wasm_refused += module.refusals.len();
-        one_shape += module
-            .refusals
-            .iter()
-            .filter(|r| r.reason.starts_with("parameter "))
-            .count();
     }
-    out.push(n("wasm-corpus", wasm_refused));
-    out.push(n("wasm-one-shape", one_shape));
+    out.push(n("wasm-compiled", wasm_compiled));
+    out.push(n("wasm-refused", wasm_refused));
 
     // Where the corpus places — `measure_phase2.rs`'s table, which is Phase 2's exit measurement.
     let mut tiers: std::collections::BTreeMap<&str, usize> = Default::default();

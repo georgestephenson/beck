@@ -1,15 +1,15 @@
 # 103 — The WebAssembly emitter
 
-**Built, for the scalar subset.** A third emitter — `Core` → WebAssembly, bytes written by hand,
-held to the tree-walker by a differential of **12,852 calls run in a real WebAssembly engine**, with
-a million-deep tail recursion proving `return_call` is a jump.
+**Built.** A third emitter — `Core` → WebAssembly, bytes written by hand, held to the tree-walker
+by a differential run in a real WebAssembly engine, with a million-deep tail recursion proving
+`return_call` is a jump.
 
-**What it does not establish, said first because it is the number that matters**: it compiles
-**0 of the corpus's 237<!--c:wasm-corpus--> definitions**. An application is records, lists and a page; the heap is not
-laid out on this target, so [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) is **not
-reversed** — Mode B still ships the interpreter, and this buys a running program nothing yet. What
-it is, is the half of a Mode B code generator that has no heap in it, and the half where everything
-was new.
+This chapter is the half of it that is **not** the heap: the binary format, the structured control
+flow, the trap that cannot be a signal, and the tail call that is a proposal. When it was written
+that was the whole emitter and it compiled **none of the corpus**, because an application is
+records, lists and a page. [`106`](106-the-wasm-heap-report.md) is the heap, and the number this
+section used to carry is there: the corpus stands at
+**212<!--c:wasm-compiled--> definitions compiled against 25<!--c:wasm-refused--> refused**.
 
 ## 103.1 What was new, and it was not the code generation
 
@@ -98,20 +98,18 @@ Two details of that harness are decisions:
 
 | | Compiled | Refused |
 |---|---|---|
-| [`corpus/`](../compiler/corpus/) — 39<!--c:corpus-programs--> applications | **0** | 237<!--c:wasm-corpus--> |
-| [`awfy/`](../compiler/awfy/) — Are We Fast Yet | 58 | 344 |
+| [`corpus/`](../compiler/corpus/) — 39<!--c:corpus-programs--> applications | **212**<!--c:wasm-compiled--> | 25<!--c:wasm-refused--> |
+| [`awfy/`](../compiler/awfy/) — Are We Fast Yet | 348 | 54 |
 
-The corpus row is the finding, and it is [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)'s
-argument arriving as a measurement rather than a forecast: "a component's `view` is nothing but
-heap… the work that would let it — a value representation, an allocator, string and collection
-primitives, closures through an indirect call table, and a collector or a refcounting discipline —
-is the work that is missing on *both* targets." It still is. **232<!--c:wasm-one-shape--> of the corpus's 237<!--c:wasm-corpus--> refusals are
-one shape**: a parameter that lives on the heap. The other five are three definitions that *return*
-one, a `now`, and a definition generic over a type parameter.
+Both rows were **0 and 237**, and 58 and 344, for as long as this emitter had no heap in it — which
+was [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)'s argument arriving as a measurement
+rather than a forecast: "a component's `view` is nothing but heap… the work that would let it — a
+value representation, an allocator, string and collection primitives, closures through an indirect
+call table, and a collector or a refcounting discipline — is the work that is missing on *both*
+targets." [`106`](106-the-wasm-heap-report.md) is that work, and these are the numbers after it.
 
-So this emitter is a foundation and not a feature, and the two rows say which. It is also why the
-tally is printed by its own test rather than gated: a threshold on a number nobody is optimising
-would be a threshold about nothing.
+The tally is printed by its own test rather than gated, because a threshold on a number nobody is
+optimising would be a threshold about nothing.
 
 ## 103.7 Two opcodes, and what they cost to get wrong
 
@@ -131,11 +129,6 @@ order §93.3 complains about and the same fix — each now has a case that fails
 
 ## 103.8 What is not built
 
-- **The heap**, which is the whole of the remaining work and is what §103.6 measures. Records,
-  strings, lists, maps, closures and `Html`, in a browser's linear memory, with §5.1's unanswered
-  question about the GC proposal in front of it.
-- **The host effects.** `now`, `uuid`, `secret_env` and `http_fetch` are upcalls on the native
-  backends; here they would be imports the loader supplies, and nothing supplies them yet.
 - **`sin` and `cos`**, refused for the link line rather than for effort. Nothing pins their
   digits, so no backend emits them: the other two **call** `beck-prim`, which computes one answer
   ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)), and a
@@ -146,10 +139,8 @@ order §93.3 complains about and the same fix — each now has a case that fails
 - **A fuel or a depth ceiling.** Neither native backend has one either (§93.15), and the one thing
   that is better here is that an engine's stack exhaustion is a catchable exception rather than a
   dead process.
-- **A place in Mode B.** Nothing loads this module: `beck-wasm`'s kernel still interprets, the
-  bundle format is unchanged, and a component bundle carrying compiled code needs bundle format 2
-  and a type table, which [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) already
-  anticipated.
+- **A place in Mode B**, which is [`106`](106-the-wasm-heap-report.md)'s remainder rather than this
+  chapter's.
 - **The WebAssembly spec-suite obligation** [`12`](12-standards-and-conformance.md) §12.3 pins to
   core 3.0. What exists is a differential against the *language's* semantics, which is a different
   claim from conformance to the format; the emitter's output is validated by a real engine on every
