@@ -347,6 +347,19 @@ The reference is derived from the compiler; a guide is written by a person and *
 | `--stdout` | true \| false | Print it instead of writing it |
 
 
+## `beck doc changelog`
+
+The changelog, assembled from `changelog/` — one file per change.
+
+A change records itself by adding a file there and editing nothing else, so two branches never write the same line and their merge has nothing to resolve. This assembles those files into the flat newest-first list under `CHANGELOG.md`'s hand-written head.
+
+| Argument | | |
+|---|---|---|
+| `--dir` | DIR | The directory of entries, one file per change |
+| `-o, --out` | OUT | The list to assemble. Everything above `## Unreleased` is written by hand and kept |
+| `--check` | true \| false | Check what is checked in instead of writing it: the entries it carries must be a subsequence of the directory's — each the entry its file says, in order. Any may be missing, because demanding otherwise would make reassembling part of recording a change and put every branch back on the same line of the same file |
+
+
 ## `beck doc reference`
 
 The language reference: the error index, the command reference, the effect and tier matrix, the prelude, and the forms.
