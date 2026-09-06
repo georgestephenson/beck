@@ -38,12 +38,14 @@ use std::sync::Arc;
 
 use beck_core::backend::Backend;
 use beck_core::{Program, Value};
-use beck_llvm::{Repr, Trap};
+use beck_llvm::heap::{self, Heap, Repr};
+use beck_llvm::Trap;
 
 mod support;
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
 };
+use support::{clofix, genfix, heapfix, listfix, mapfix, textfix, viewfix};
 
 fn require_run() -> bool {
     std::env::var("BECK_REQUIRE_WASM_RUN").is_ok_and(|v| v == "1")
@@ -91,6 +93,14 @@ macro_rules! engine {
 /// Written by the test rather than checked in, so it cannot drift from the protocol the Rust half
 /// encodes. It is the whole of the host this backend has — there is no worker and no pipe, because
 /// a WebAssembly module is loaded by whoever is going to call it.
+///
+/// # The heap crosses as the memory itself
+///
+/// [`adr/0032`](../../../../docs/adr/0032-the-webassembly-heap-is-the-arena-in-linear-memory.md)
+/// is what makes this eleven lines rather than a marshalling layer: the module's linear memory *is*
+/// [`beck_llvm::heap`]'s arena, and byte `i` of what `Heap::encode_args` produces is offset `i`. So
+/// the driver writes that blob at address zero, moves the bump pointer past it, calls, and hands
+/// back the used prefix of the memory. Nothing here knows what a record or a list is.
 const DRIVER: &str = r#"
 const fs = require('fs');
 const [, , wasmPath, callsPath] = process.argv;
@@ -103,10 +113,19 @@ const fromF64 = (f) => { view.setFloat64(0, f); return view.getBigUint64(0).toSt
 const calls = JSON.parse(fs.readFileSync(callsPath, 'utf8'));
 const out = [];
 for (const c of calls) {
+  const blob = Buffer.from(c.blob, 'base64');
+  if (e.memory) {
+    const pages = Math.ceil((blob.length + 1) / 65536);
+    const have = e.memory.buffer.byteLength / 65536;
+    if (pages > have) e.memory.grow(pages - have);
+    if (blob.length) new Uint8Array(e.memory.buffer).set(blob, 0);
+  }
   const args = c.args.map((a) =>
     a.k === 'i' ? BigInt(a.v) : a.k === 'f' ? toF64(a.v) : (a.v ? 1 : 0));
   e.beck_trap.value = 0;
+  e.beck_trap_span.value = 0;
   e.beck_trap_payload.value = 0n;
+  e.beck_heap.value = BigInt(c.hp);
   let r;
   try {
     r = e[c.fn](...args);
@@ -118,10 +137,15 @@ for (const c of calls) {
     out.push({ trap: e.beck_trap.value, payload: e.beck_trap_payload.value.toString() });
     continue;
   }
+  // The used prefix of the memory *is* the arena the host reads the answer out of.
+  const used = Number(e.beck_heap.value);
+  const heap = e.memory
+    ? Buffer.from(new Uint8Array(e.memory.buffer, 0, used)).toString('base64')
+    : '';
   out.push(
-    c.ret === 'i' ? { k: 'i', v: r.toString() }
-    : c.ret === 'f' ? { k: 'f', v: fromF64(r) }
-    : { k: 'b', v: r !== 0 });
+    c.ret === 'i' ? { k: 'i', v: r.toString(), heap }
+    : c.ret === 'f' ? { k: 'f', v: fromF64(r), heap }
+    : { k: 'b', v: r !== 0, heap });
 }
 process.stdout.write(JSON.stringify(out));
 "#;
@@ -207,16 +231,28 @@ impl Both {
             .signature(name)
             .unwrap_or_else(|| panic!("`{name}` did not compile"));
         let ret = kind(sig.ret);
-        let calls: Vec<serde_json::Value> = tuples
-            .iter()
-            .map(|args| {
-                serde_json::json!({
-                    "fn": name,
-                    "ret": ret,
-                    "args": args.iter().map(encode).collect::<Vec<_>>(),
-                })
-            })
-            .collect();
+        let heap = &self.module.heap;
+        // Where the arena starts, which is past the pool the module's own data segment holds.
+        let pool = heap::FIRST + heap.pool_bytes();
+        let mut encoded = Vec::with_capacity(tuples.len());
+        let mut calls: Vec<serde_json::Value> = Vec::new();
+        for args in tuples {
+            let (cells, blob) = heap
+                .encode_args(args, &sig.params)
+                .unwrap_or_else(|e| panic!("`{name}{}` does not encode: {e}", render(args)));
+            calls.push(serde_json::json!({
+                "fn": name,
+                "ret": ret,
+                "hp": (blob.len() as u64).max(pool).to_string(),
+                "blob": base64(&blob),
+                "args": cells
+                    .iter()
+                    .zip(&sig.params)
+                    .map(|(w, r)| cell(*w, *r))
+                    .collect::<Vec<_>>(),
+            }));
+            encoded.push(blob);
+        }
         let calls_path = self.dir.join(format!("{name}.json"));
         std::fs::write(
             &calls_path,
@@ -242,7 +278,7 @@ impl Both {
                     String::from_utf8_lossy(&out.stdout)
                 )
             });
-        answers.iter().map(decode).collect()
+        answers.iter().map(|a| decode(a, sig.ret, heap)).collect()
     }
 
     /// Assert the two agree on every tuple, and answer how many were compared.
@@ -267,6 +303,32 @@ impl Both {
         }
         tuples.len()
     }
+
+    fn refusals(&self) -> Vec<String> {
+        self.module
+            .refusals
+            .iter()
+            .map(|r| format!("{}: {}", r.name, r.reason))
+            .collect()
+    }
+
+    /// One call on both, for a case that wants to look at the outcome rather than only compare it.
+    fn call(&self, name: &str, args: &[Value]) -> (Outcome, Outcome) {
+        let theirs = self.in_wasm(name, std::slice::from_ref(&args.to_vec()));
+        (
+            self.evaluated(name, args),
+            theirs.into_iter().next().expect("one answer per call"),
+        )
+    }
+
+    /// What the *evaluator* answers, for a case that needs a value only it can build.
+    fn evaluated(&self, name: &str, args: &[Value]) -> Outcome {
+        let def = &self.program.defs[name];
+        beck_eval::on_the_evaluator_stack(|| {
+            let f = self.evaluator.function(&def.body).expect("prepares");
+            outcome(f(args.to_vec()))
+        })
+    }
 }
 
 impl Drop for Both {
@@ -276,29 +338,26 @@ impl Drop for Both {
 }
 
 fn kind(r: Repr) -> &'static str {
-    match r {
-        Repr::Int => "i",
-        Repr::Float => "f",
-        Repr::Bool => "b",
-        other => unreachable!("{other:?} is not a scalar and cannot have compiled"),
+    match r.machine() {
+        beck_llvm::Scalar::Int => "i",
+        beck_llvm::Scalar::Float => "f",
+        beck_llvm::Scalar::Bool => "b",
     }
 }
 
-fn encode(v: &Value) -> serde_json::Value {
-    match v {
-        Value::Int(n) => serde_json::json!({ "k": "i", "v": n.to_string() }),
-        Value::Bool(b) => serde_json::json!({ "k": "b", "v": b }),
-        // The *bit pattern* of the canonicalised real, so nothing goes through a decimal printer
-        // on the way to the engine.
-        Value::Float(_) => serde_json::json!({
-            "k": "f",
-            "v": v.as_f64().expect("a real").to_bits().to_string(),
-        }),
-        other => panic!("{other:?} is not a scalar argument"),
+/// One argument cell, as the JSON the driver turns into a WebAssembly value.
+///
+/// The cell is `Heap::encode_args`' — an `i64` for a number or an offset, the *bit pattern* of a
+/// real, and `0`/`1` for a `Bool` — so nothing goes through a decimal printer on the way in.
+fn cell(word: u64, r: Repr) -> serde_json::Value {
+    match r.machine() {
+        beck_llvm::Scalar::Float => serde_json::json!({ "k": "f", "v": word.to_string() }),
+        beck_llvm::Scalar::Bool => serde_json::json!({ "k": "b", "v": word != 0 }),
+        beck_llvm::Scalar::Int => serde_json::json!({ "k": "i", "v": (word as i64).to_string() }),
     }
 }
 
-fn decode(answer: &serde_json::Value) -> Outcome {
+fn decode(answer: &serde_json::Value, ret: Repr, heap: &Heap) -> Outcome {
     if let Some(crash) = answer.get("crash").and_then(|c| c.as_str()) {
         return Err(format!("the engine threw: {crash}"));
     }
@@ -313,16 +372,63 @@ fn decode(answer: &serde_json::Value) -> Outcome {
         return Err(trap.message(payload));
     }
     let v = answer.get("v").expect("an answer carries a value");
-    Ok(match answer.get("k").and_then(|k| k.as_str()) {
-        Some("i") => Value::Int(v.as_str().expect("a decimal").parse().expect("an Int")),
-        Some("b") => Value::Bool(v.as_bool().expect("a Bool")),
-        // Through `Value::float`, which is what a host does on the way in: §93.2's "a real is
-        // normalised on the way into a field", and the reason `signed_zero` is a case at all.
-        Some("f") => Value::float(f64::from_bits(
-            v.as_str().expect("a bit pattern").parse().expect("bits"),
-        )),
+    let word = match answer.get("k").and_then(|k| k.as_str()) {
+        Some("i") => v
+            .as_str()
+            .expect("a decimal")
+            .parse::<i64>()
+            .expect("an i64") as u64,
+        Some("b") => u64::from(v.as_bool().expect("a Bool")),
+        Some("f") => v.as_str().expect("a bit pattern").parse().expect("bits"),
         other => panic!("`{other:?}` is not a kind this protocol has"),
-    })
+    };
+    let blob = unbase64(answer.get("heap").and_then(|h| h.as_str()).unwrap_or(""));
+    // `Heap::decode` is the host half the two native backends already use, unchanged: what the
+    // module left in its memory is what a worker would have sent down the pipe.
+    heap.decode(word, ret, &blob).map_err(|e| e.to_string())
+}
+
+/// Base64, both ways, in twenty lines — the driver speaks it and `serde_json` does not.
+fn base64(bytes: &[u8]) -> String {
+    const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ABC[((n >> (18 - 6 * i)) & 0x3f) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+fn unbase64(text: &str) -> Vec<u8> {
+    const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in text.bytes() {
+        if c == b'=' {
+            break;
+        }
+        let Some(v) = ABC.iter().position(|a| *a == c) else {
+            continue;
+        };
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -482,34 +588,694 @@ fn a_tail_recursion_a_million_deep_does_not_grow_a_stack() {
 // What it refuses, and the control beside it
 // ---------------------------------------------------------------------------------------------
 
-/// The heap is refused **by name, with the reason** — which is the honest statement of where this
-/// emitter is, and the sentence [`adr/0022`](../../../../docs/adr/0022-mode-b-ships-the-backend-it-has.md)
-/// said would still be true: "the heap is still the whole of the remaining work".
+/// What the heap is, held to the tree-walker: records and unions, their comparisons, and the
+/// layout rules two of these fixtures exist to catch.
+///
+/// The programs are [`support::heapfix`]'s, which `native.rs` and `cranelift.rs` already point at.
+/// A variant's tag is its rank **by name** and a record's fields are compared in name order, so
+/// `Ranked` is declared out of alphabetical order and `Key`'s fields are too: a backend that made
+/// either one a declaration index answers those two definitions backwards and nothing else.
 #[test]
-fn the_heap_is_refused_by_name_and_the_scalars_are_not() {
+fn the_evaluator_and_webassembly_agree_on_records_and_unions() {
     let js = engine!();
-    let both = Both::over("reals.beck", REALS, js);
-    // The control first: a list of refusals with nothing on the other side of it would pass
-    // against an emitter that refused everything.
-    assert!(both.compiled("rplus"), "the scalar subset compiles");
+    let both = Both::over("records.beck", heapfix::RECORDS, js);
+    let ps = heapfix::records();
+    let mut n = 0;
+    n += both.agree("origin", &[vec![]]);
+    n += both.agree("make", &pairs(&ints(0x5eed_0011, 12)));
+    n += both.agree("sum_of", &heapfix::singles(&ps));
+    n += both.agree("swapped", &heapfix::singles(&ps));
+    for name in ["same_point", "point_order"] {
+        n += both.agree(name, &heapfix::pairs(&ps));
+    }
+    n += both.agree("key_order", &heapfix::pairs(&heapfix::keys()));
+    for name in ["heavier", "same_weight"] {
+        n += both.agree(name, &heapfix::pairs(&heapfix::weighted()));
+    }
+    for name in ["negated", "negated_is_zero"] {
+        n += both.agree(name, &heapfix::singles(&heapfix::weighted()));
+    }
+    for name in ["span_of", "segment_order"] {
+        n += both.agree(name, &heapfix::pairs(&ps));
+    }
+    let with_dx: Vec<Vec<Value>> = ps
+        .iter()
+        .flat_map(|p| [-1i64, 0, 1, i64::MAX].map(|d| vec![p.clone(), Value::Int(d)]))
+        .collect();
+    n += both.agree("moved", &with_dx);
+    n += both.agree("scaled", &with_dx);
+    // The set has to *contain* a failure, or this passed by never reaching one: a field expression
+    // that overflows means the record is never built, and the message is the evaluator's.
+    let (walked, compiled) = both.call("scaled", &[heapfix::point(i64::MAX, 0), Value::Int(2)]);
+    assert_eq!(walked, compiled);
+    assert!(walked.is_err(), "an overflow in a field has to fail");
+    println!("{n} record calls agreed, in a WebAssembly engine");
+}
 
-    let heap = "\
-def joins(a: Str, b: Str) -> Str:
-    return a + b
+/// A variant's tag is its rank **by name** and a record's fields are compared in name order, so
+/// `Ranked` is declared out of alphabetical order and `Key`'s fields are too: a backend that made
+/// either one a declaration index answers those two definitions backwards and nothing else.
+#[test]
+fn the_evaluator_and_webassembly_agree_on_unions() {
+    let js = engine!();
+    let both = Both::over("unions.beck", heapfix::UNIONS, js);
+    let rs = heapfix::ranked();
+    let ts = heapfix::trees();
+    let mut n = 0;
+    for name in ["rank", "guarded", "either", "whole", "n_or_zero"] {
+        n += both.agree(name, &heapfix::singles(&rs));
+    }
+    for name in ["ranked_order", "same_ranked"] {
+        n += both.agree(name, &heapfix::pairs(&rs));
+    }
+    n += both.agree("bigger", &singles(&ints(0x5eed_0012, 10)));
+    for name in ["total", "left_leaf", "first_number"] {
+        n += both.agree(name, &heapfix::singles(&ts));
+    }
+    n += both.agree("tree_order", &heapfix::pairs(&ts));
+    n += both.agree("spine", &singles(&(0..12).collect::<Vec<_>>()));
+    n += both.agree(
+        "chain",
+        &(0..12)
+            .map(|k| vec![Value::Int(k), heapfix::leaf(0)])
+            .collect::<Vec<_>>(),
+    );
+    n += both.agree("wrap", &singles(&ints(0x5eed_0013, 8)));
+    n += both.agree(
+        "unwrap",
+        &heapfix::singles(&[heapfix::id(0), heapfix::id(7)]),
+    );
+    n += both.agree("maybe", &singles(&ints(0x5eed_0014, 8)));
+    n += both.agree(
+        "or_else",
+        &heapfix::options()
+            .iter()
+            .map(|o| vec![o.clone(), Value::Int(-1)])
+            .collect::<Vec<_>>(),
+    );
+    println!("{n} union calls agreed, in a WebAssembly engine");
+}
 
-def counts(xs: list[Int]) -> Int:
-    return list_len(xs)
-";
-    let both = Both::over("heap.beck", heap, engine().expect("checked above"));
-    for name in ["joins", "counts"] {
-        let why = both
-            .refusal(name)
-            .unwrap_or_else(|| panic!("`{name}` should be refused"));
-        assert!(
-            why.contains("heap"),
-            "a refusal says what it refused and why: {why}"
+/// Text, compared against the tree-walker over every string in [`textfix`] and every clamp.
+///
+/// The point of the sweep is the *pairs*: a three-way comparison can be right for `<` and wrong for
+/// `<=`, and a byte comparison over the shorter length answers `0` for `"ab"` against `"abc"` — so
+/// every operator is asked about every ordered pair rather than about a sample.
+#[test]
+fn the_evaluator_and_webassembly_agree_on_text() {
+    let js = engine!();
+    let both = Both::over("text.beck", textfix::TEXT, js);
+    let ss = textfix::strings();
+    let mut n = 0;
+    for name in [
+        "size", "empty", "first", "rest", "greeting", "is_yes", "echoed", "which", "tag",
+    ] {
+        n += both.agree(name, &textfix::singles(&ss));
+    }
+    for name in [
+        "joined",
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+        "inside",
+        "opens",
+        "closes",
+        "at",
+    ] {
+        n += both.agree(name, &textfix::pairs(&ss));
+    }
+    n += both.agree("thrice", &textfix::singles(&ss));
+    n += both.agree("cut", &textfix::slices(&ss));
+    n += both.agree("count_of", &textfix::with_char(&ss));
+    n += both.agree(
+        "at_or",
+        &textfix::pairs(&ss)
+            .into_iter()
+            .map(|mut t| {
+                t.push(Value::Int(-1));
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
+    n += both.agree("repeat", &textfix::repeats(&ss));
+    n += both.agree("shown", &textfix::integers());
+    n += both.agree(
+        "shown_bool",
+        &[vec![Value::Bool(true)], vec![Value::Bool(false)]],
+    );
+    n += both.agree("shown_str", &textfix::singles(&ss));
+    n += both.agree(
+        "repeated",
+        &textfix::repeats(&ss)
+            .into_iter()
+            .map(|mut t| {
+                t.truncate(2);
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
+    n += both.agree("glued", &textfix::joins(&ss));
+    for name in ["or_else", "present"] {
+        n += both.agree(
+            name,
+            &textfix::options()
+                .into_iter()
+                .map(|mut t| {
+                    if name == "present" {
+                        t.truncate(1);
+                    }
+                    t
+                })
+                .collect::<Vec<_>>(),
         );
     }
+    n += both.agree(
+        "sliced_or",
+        &textfix::with_char(&ss)
+            .into_iter()
+            .map(|mut t| {
+                t.remove(1);
+                t
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    // Text inside a record and inside a union, so a `Str` in a field is compared, rebuilt by
+    // `with`, read back out and ordered against another record's.
+    let named: Vec<Value> = ss
+        .iter()
+        .map(|s| heapfix::record("Named", &[("label", s.clone()), ("rank", Value::Int(1))]))
+        .collect();
+    n += both.agree("label_of", &textfix::singles(&named));
+    for name in ["named_below", "named_same"] {
+        n += both.agree(name, &textfix::pairs(&named));
+    }
+    n += both.agree(
+        "relabel",
+        &named
+            .iter()
+            .flat_map(|x| ss.iter().map(move |s| vec![x.clone(), s.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    let tagged: Vec<Value> = ss
+        .iter()
+        .map(|s| heapfix::variant("Tagged", "Word", &[("text", s.clone())]))
+        .chain([heapfix::variant(
+            "Tagged",
+            "Number",
+            &[("n", Value::Int(3))],
+        )])
+        .collect();
+    n += both.agree("untag", &textfix::singles(&tagged));
+
+    // The trim, over the strings written for it, and then every code point Rust calls whitespace —
+    // the list is `char::is_whitespace` itself, so this asks about a new one the day Rust learns
+    // about it.
+    let sp = textfix::spaced();
+    for name in ["trimmed", "trimmed_len", "blank"] {
+        n += both.agree(name, &textfix::singles(&sp));
+    }
+    n += both.agree("trimmed_up", &textfix::repeats(&sp));
+    let ws = textfix::every_whitespace();
+    for name in ["trimmed", "trimmed_len", "blank"] {
+        n += both.agree(name, &ws);
+    }
+
+    // Splitting, which answers with a **list** — so the differential reads the length *and* an
+    // element, because a backend that counted the pieces correctly and allocated them wrongly
+    // passes the first and fails the second.
+    let cuts = textfix::separators(&ss);
+    for name in ["parts", "split_len", "rejoined"] {
+        n += both.agree(name, &cuts);
+    }
+    n += both.agree("split_at", &textfix::indexed(&cuts));
+    for name in ["letters", "letter_count"] {
+        n += both.agree(name, &textfix::singles(&ss));
+    }
+    n += both.agree("letter_at", &textfix::indexed(&textfix::singles(&ss)));
+    println!("{n} text calls agreed, in a WebAssembly engine");
+}
+
+#[test]
+fn the_evaluator_and_webassembly_agree_on_lists() {
+    let js = engine!();
+    let both = Both::over("lists.beck", listfix::LISTS, js);
+    let xs = listfix::lists();
+    let mut n = 0;
+    for name in ["size", "empty", "flipped", "held"] {
+        n += both.agree(name, &listfix::singles(&xs));
+    }
+    for name in [
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+    ] {
+        n += both.agree(name, &listfix::pairs(&xs));
+    }
+    for name in ["nth", "nth_or"] {
+        n += both.agree(name, &listfix::indexed(&xs));
+    }
+    for name in ["has", "at_of"] {
+        n += both.agree(name, &listfix::searched(&xs));
+    }
+    n += both.agree("middle", &listfix::ranges(&xs));
+    for name in ["front", "back"] {
+        n += both.agree(name, &listfix::counted(&xs));
+    }
+    n += both.agree("three", &[vec![]]);
+    n += both.agree("none_at_all", &[vec![]]);
+    // Growing one: the operation, the fork onto a shared block, and the accumulator.
+    for name in ["appended", "forked"] {
+        n += both.agree(name, &listfix::searched(&xs));
+    }
+    for name in ["doubled_up", "sum_of"] {
+        n += both.agree(name, &listfix::singles(&xs));
+    }
+    n += both.agree(
+        "named",
+        &listfix::texts()
+            .iter()
+            .flat_map(|v| {
+                ["", "z", "aa"]
+                    .iter()
+                    .map(move |s| vec![v.clone(), Value::str_(s)])
+            })
+            .collect::<Vec<_>>(),
+    );
+    n += both.agree("doubled", &singles(&ints(0x5eed_0031, 12)));
+    n += both.agree(
+        "total",
+        &xs.iter()
+            .map(|v| vec![v.clone(), Value::Int(0), Value::Int(0)])
+            .collect::<Vec<_>>(),
+    );
+    n += both.agree(
+        "walked",
+        &xs.iter()
+            .map(|v| vec![v.clone(), Value::Int(0), Value::list(Vec::new())])
+            .collect::<Vec<_>>(),
+    );
+
+    // An element that is itself an offset, one kind each.
+    let ts = listfix::texts();
+    for name in ["texts_below", "texts_same"] {
+        n += both.agree(name, &listfix::pairs(&ts));
+    }
+    let ns = listfix::nested();
+    for name in ["nested_below", "nested_same"] {
+        n += both.agree(name, &listfix::pairs(&ns));
+    }
+    n += both.agree("nested_first", &listfix::singles(&ns));
+
+    // A list inside a record and inside a union.
+    let bags: Vec<Value> = xs
+        .iter()
+        .map(|v| heapfix::record("Bag", &[("items", v.clone()), ("rank", Value::Int(1))]))
+        .collect();
+    n += both.agree("bag_items", &listfix::singles(&bags));
+    for name in ["bag_below", "bag_same"] {
+        n += both.agree(name, &listfix::pairs(&bags));
+    }
+    n += both.agree(
+        "rebagged",
+        &bags
+            .iter()
+            .flat_map(|bag| xs.iter().map(move |v| vec![bag.clone(), v.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    n += both.agree(
+        "bagged",
+        &xs.iter()
+            .map(|v| vec![v.clone(), Value::Int(3)])
+            .collect::<Vec<_>>(),
+    );
+    let holdings: Vec<Value> = xs
+        .iter()
+        .map(|v| heapfix::variant("Holding", "Some_", &[("xs", v.clone())]))
+        .chain([heapfix::variant("Holding", "None_", &[])])
+        .collect();
+    n += both.agree("held_size", &listfix::singles(&holdings));
+    println!("{n} list calls agreed, in a WebAssembly engine");
+}
+
+/// Maps, whose search ends four ways — on the key, below every key, above every key, and
+/// **between** two, which is the one a window that shrinks wrongly never leaves.
+#[test]
+fn the_evaluator_and_webassembly_agree_on_maps() {
+    let js = engine!();
+    let both = Both::over("maps.beck", mapfix::MAPS, js);
+    let ms = mapfix::maps();
+    let mut n = 0;
+    for name in ["size", "names", "totals", "is_nothing", "held"] {
+        n += both.agree(name, &mapfix::singles(&ms));
+    }
+    for name in [
+        "below",
+        "above",
+        "same",
+        "differ",
+        "not_after",
+        "not_before",
+    ] {
+        n += both.agree(name, &mapfix::pairs(&ms));
+    }
+    for name in ["lookup", "lookup_or", "holds"] {
+        n += both.agree(name, &mapfix::keyed(&ms));
+    }
+    for name in ["put", "branched"] {
+        n += both.agree(
+            name,
+            &mapfix::keyed(&ms)
+                .iter()
+                .map(|args| {
+                    let mut args = args.clone();
+                    args.push(Value::Int(7));
+                    args
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    n += both.agree("dropped", &mapfix::keyed(&ms));
+    n += both.agree("joined", &mapfix::pairs(&ms));
+    for name in ["grown", "descending"] {
+        n += both.agree(
+            name,
+            &[0i64, 1, 2, 3, 7, 16, 33]
+                .iter()
+                .map(|k| vec![Value::Int(*k)])
+                .collect::<Vec<_>>(),
+        );
+    }
+    n += both.agree("nothing", &[vec![]]);
+    n += both.agree(
+        "total",
+        &ms.iter()
+            .map(|m| vec![m.clone(), Value::Int(0), Value::Int(0)])
+            .collect::<Vec<_>>(),
+    );
+
+    let ns = mapfix::nested();
+    for name in ["nested_below", "nested_same"] {
+        n += both.agree(name, &mapfix::pairs(&ns));
+    }
+    n += both.agree("nested_at", &mapfix::keyed(&ns));
+
+    let cs: Vec<Value> = ms
+        .iter()
+        .map(|m| {
+            heapfix::record(
+                "Counts",
+                &[("tally", m.clone()), ("label", Value::str_("x"))],
+            )
+        })
+        .collect();
+    n += both.agree("counts_tally", &mapfix::singles(&cs));
+    n += both.agree("counts_below", &mapfix::pairs(&cs));
+    n += both.agree(
+        "recounted",
+        &cs.iter()
+            .flat_map(|c| ms.iter().map(move |m| vec![c.clone(), m.clone()]))
+            .collect::<Vec<_>>(),
+    );
+    n += both.agree(
+        "counted",
+        &ms.iter()
+            .map(|m| vec![m.clone(), Value::str_("k")])
+            .collect::<Vec<_>>(),
+    );
+    let hs: Vec<Value> = ms
+        .iter()
+        .map(|m| heapfix::variant("Holding", "Held", &[("m", m.clone())]))
+        .chain([heapfix::variant("Holding", "Empty", &[])])
+        .collect();
+    n += both.agree("held_size", &mapfix::singles(&hs));
+    println!("{n} map calls agreed, in a WebAssembly engine");
+}
+
+/// Closures, applied through the family's table.
+///
+/// The one place this target is not a transcription of the native backends, so the differential
+/// matters more here than anywhere else in this file: they switch on a closure's rank into a direct
+/// call, and this does a `call_indirect` into a table whose gaps are `Trap::NoSuchLambda`.
+#[test]
+fn the_evaluator_and_webassembly_agree_on_closures() {
+    let js = engine!();
+    let both = Both::over("closures.beck", clofix::CLOSURES, js);
+    let ns: Vec<i64> = vec![0, 1, -1, 2, 7, -7, i64::MAX, i64::MIN];
+    let mut n = 0;
+    for name in ["twice", "again", "through", "double"] {
+        n += both.agree(name, &clofix::each_of(&ns));
+    }
+    for name in ["add_on", "nested"] {
+        n += both.agree(name, &clofix::pairs_of(&ns));
+    }
+    n += both.agree("between", &clofix::triples_of(&ns));
+    n += both.agree("either", &clofix::flagged(&ns));
+
+    let xs = clofix::lists();
+    let bys: Vec<i64> = vec![0, 1, -1, 3, i64::MAX];
+    for name in ["doubled", "summed", "flags", "tally", "risky"] {
+        n += both.agree(name, &clofix::singles(&xs));
+    }
+    for name in [
+        "scaled",
+        "kept",
+        "biggest",
+        "all_above",
+        "any_above",
+        "twice_over",
+    ] {
+        n += both.agree(name, &clofix::with(&xs, &bys));
+    }
+    let ts = clofix::texts();
+    for name in ["lengths", "shouted", "long_ones", "joined"] {
+        n += both.agree(name, &clofix::singles(&ts));
+    }
+    let rs = clofix::reals();
+    for name in ["halved", "negated", "added"] {
+        n += both.agree(name, &clofix::singles(&rs));
+    }
+    n += both.agree("spread", &clofix::singles(&xs));
+    // `by_rank` is the stability case: every key in one of those lists is the same, so an unstable
+    // sort is free to answer anything and a stable one answers the input order.
+    for name in ["ascending", "descending", "by_sign"] {
+        n += both.agree(name, &clofix::singles(&xs));
+    }
+    for name in ["by_length", "by_text"] {
+        n += both.agree(name, &clofix::singles(&ts));
+    }
+    n += both.agree("by_real", &clofix::singles(&rs));
+    n += both.agree("by_rank", &clofix::singles(&clofix::notes()));
+
+    // Comparing two closures, which is `Closure`'s own order: the parameters, then where the body
+    // starts — and *not* the captured frame, which `captures_ignored` is about.
+    for name in ["same_lambda", "two_lambdas", "ordered"] {
+        n += both.agree(name, &[vec![]]);
+    }
+    n += both.agree(
+        "captures_ignored",
+        &ns.iter()
+            .flat_map(|a| ns.iter().map(move |b| vec![Value::Int(*a), Value::Int(*b)]))
+            .collect::<Vec<_>>(),
+    );
+    println!("{n} closure calls agreed, in a WebAssembly engine");
+}
+
+/// Generic definitions, which is **monomorphisation** differentially — the pass is
+/// [`beck_llvm::mono`]'s and this is a third caller of it.
+#[test]
+fn the_evaluator_and_webassembly_agree_on_generics() {
+    let js = engine!();
+    let both = Both::over("generic.beck", genfix::GENERIC, js);
+    let mut n = 0;
+    n += both.agree("of_ints", &genfix::ints());
+    n += both.agree("of_bools", &genfix::bools());
+    n += both.agree("of_texts", &genfix::texts());
+    n += both.agree("of_records", &genfix::records());
+    n += both.agree("of_unions", &genfix::unions());
+    n += both.agree("of_lists", &genfix::lists());
+    n += both.agree("of_lists_of_lists", &genfix::nested());
+    n += both.agree("second_int", &genfix::ints());
+    n += both.agree("second_text", &genfix::texts());
+    n += both.agree("count_ints", &genfix::ints());
+    n += both.agree("count_texts", &genfix::texts());
+    n += both.agree("int_then_text", &genfix::int_and_text());
+    n += both.agree("text_then_int", &genfix::text_and_int());
+    n += both.agree("ints_agree", &genfix::int_pairs());
+    n += both.agree("texts_agree", &genfix::text_pairs());
+    n += both.agree("no_ints", &[vec![]]);
+    n += both.agree("no_texts", &[vec![]]);
+    n += both.agree("three_ints", &genfix::scalars());
+    n += both.agree("three_texts", &genfix::singles());
+    n += both.agree("bound", &genfix::scalars());
+    // The control: a run that built `firstly` once and called it three times would answer
+    // correctly and be wrong, so the instantiations are asserted by name.
+    for wanted in [
+        "firstly@Int",
+        "firstly@Bool",
+        "firstly@Str",
+        "firstly@list[Int]",
+        "paired@Int,Str",
+    ] {
+        assert!(
+            both.compiled(wanted),
+            "`{wanted}` is not among what compiled: {:?}",
+            both.module
+                .functions
+                .iter()
+                .map(|f| f.name.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+    println!("{n} generic calls agreed, in a WebAssembly engine");
+}
+
+/// A page, which is what Mode B is for — and the direction nothing in a program needs: a baked
+/// tree back *in*, which the host has to write as a recipe whose leaves are text.
+#[test]
+fn the_evaluator_and_webassembly_agree_on_views() {
+    let js = engine!();
+    let both = Both::over("views.beck", viewfix::VIEWS, js);
+    let cards = viewfix::cards();
+    let lists = viewfix::lists();
+    let mut n = 0;
+    n += both.agree("just_text", &viewfix::singles(&textfix::strings()));
+    n += both.agree("a_number", &singles(&[0, 1, -1, i64::MAX, i64::MIN]));
+    n += both.agree(
+        "a_flag",
+        &[vec![Value::Bool(true)], vec![Value::Bool(false)]],
+    );
+    n += both.agree(
+        "a_real",
+        &[0.0, -0.0, 1.5, f64::INFINITY, f64::NAN]
+            .iter()
+            .map(|f| vec![Value::float(*f)])
+            .collect::<Vec<_>>(),
+    );
+    n += both.agree("a_record", &viewfix::singles(&cards));
+    n += both.agree("a_list", &viewfix::singles(&lists));
+    for name in [
+        "titled",
+        "maybe_done",
+        "ordered",
+        "keyed",
+        "keyed_number",
+        "handled",
+        "handled_nullary",
+        "wrapped",
+        "nested",
+        "one_attr",
+        "one_key",
+        "one_handler",
+        "panelled",
+    ] {
+        n += both.agree(name, &viewfix::singles(&cards));
+    }
+    n += both.agree("blank", &[vec![]]);
+    for name in ["rows", "attrs_from"] {
+        n += both.agree(name, &viewfix::singles(&lists));
+    }
+    n += both.agree("whole", &viewfix::with(&cards, &lists));
+
+    let mut trees: Vec<Value> = Vec::new();
+    for name in ["titled", "keyed", "handled", "nested"] {
+        for c in &cards {
+            trees.push(
+                both.evaluated(name, std::slice::from_ref(c))
+                    .expect("the evaluator builds it"),
+            );
+        }
+    }
+    trees.push(
+        both.evaluated("just_text", &[Value::str_("hello")])
+            .expect("the evaluator builds it"),
+    );
+    n += both.agree("again", &viewfix::singles(&trees));
+    n += both.agree("beside", &viewfix::with(&trees, &cards));
+    println!("{n} view calls agreed, in a WebAssembly engine");
+    assert!(n >= 200, "only {n} calls compared");
+}
+
+/// The same page written with `ui:`, which is what a program actually contains.
+#[test]
+fn a_ui_block_compiles_and_agrees() {
+    let js = engine!();
+    let both = Both::over("page.beck", viewfix::PAGE, js);
+    let lefts = [0i64, 1, 7];
+    let tuples: Vec<Vec<Value>> = viewfix::todos()
+        .iter()
+        .flat_map(|ts| lefts.iter().map(move |k| vec![ts.clone(), Value::Int(*k)]))
+        .collect();
+    let n = both.agree("page", &tuples);
+    println!("{n} `ui:` renders agreed, in a WebAssembly engine");
+}
+
+#[test]
+fn the_evaluator_and_webassembly_agree_on_list_patterns() {
+    let js = engine!();
+    let both = Both::over("patterns.beck", listfix::PATTERNS, js);
+    let xs = listfix::lists();
+    let mut n = 0;
+    for name in [
+        "described",
+        "tail",
+        "after_two",
+        "leading_one",
+        "exactly_two",
+    ] {
+        n += both.agree(name, &listfix::singles(&xs));
+    }
+    n += both.agree("inner_first", &listfix::singles(&listfix::nested()));
+    n += both.agree("joined", &listfix::singles(&listfix::texts()));
+    // The set has to *contain* the boundaries, or this passed without reaching one.
+    for (name, arg, want) in [
+        ("described", vec![], "none"),
+        ("described", vec![9], "one:9"),
+        ("described", vec![1, 2, 3], "many:1:2"),
+    ] {
+        let list = Value::list(arg.into_iter().map(Value::Int).collect());
+        let (walked, compiled) = both.call(name, &[list]);
+        assert_eq!(walked, compiled);
+        assert_eq!(walked.expect("answers"), Value::str_(want));
+    }
+    println!("{n} list-pattern calls agreed, in a WebAssembly engine");
+}
+
+/// Running out of heap is a **message**, not a fault.
+///
+/// The memory grows under the bump pointer up to `heap::ARENA_BYTES`, which is the bound the two
+/// native backends carry — so the program that exceeds it gets `Trap::HeapExhausted` and the
+/// sentence that names the same number, rather than an aborted instance.
+#[test]
+fn running_out_of_heap_is_a_message_and_not_a_fault() {
+    let js = engine!();
+    let both = Both::over(
+        "grow.beck",
+        "def wide(n: Int, acc: list[Int]) -> Int:\n\
+         \x20   if n == 0:\n\
+         \x20       return list_len(acc)\n\
+         \x20   return wide(n - 1, list_append(acc, n))\n",
+        js,
+    );
+    assert!(both.compiled("wide"), "{:?}", both.refusals());
+    // Small enough to answer, so the failure below is the arena and not the program.
+    let small = both.in_wasm("wide", &[vec![Value::Int(1_000), Value::list(Vec::new())]]);
+    assert_eq!(small[0], Ok(Value::Int(1_000)));
+    let huge = both.in_wasm(
+        "wide",
+        &[vec![Value::Int(40_000_000), Value::list(Vec::new())]],
+    );
+    assert_eq!(
+        huge[0],
+        Err(Trap::HeapExhausted.message(0)),
+        "an arena that runs out is a message with the same number the native backends give"
+    );
 }
 
 /// `sin` and `cos` are refused, and the reason is the link line rather than effort.

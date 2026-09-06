@@ -49,6 +49,7 @@
 
 pub mod binary;
 pub mod emit;
+pub mod rt;
 pub mod text;
 
 pub use emit::{module, Module, MAX_PARAMS, TRAP, TRAP_PAYLOAD, TRAP_SPAN};
@@ -64,21 +65,55 @@ mod tests {
     }
 
     #[test]
-    fn a_scalar_definition_compiles_and_a_heap_one_is_refused_by_name() {
+    fn a_definition_whose_values_are_on_the_heap_compiles() {
+        // The sentence `adr/0022` said would reverse it: a `Str` is a value here, and the module
+        // that holds one has a memory to hold it in.
         let m = compile(
             "def twice(n: Int) -> Int:\n    return n + n\n\n\
-             def greet(who: Str) -> Str:\n    return who\n",
+             def greet(who: Str) -> Str:\n    return \"hello, \" + who\n",
         );
         assert!(m.signature("twice").is_some(), "{:?}", m.refusals);
-        let refused = m
-            .refusals
-            .iter()
-            .find(|r| &*r.name == "greet")
-            .expect("a heap-valued definition is refused");
+        assert!(m.signature("greet").is_some(), "{:?}", m.refusals);
         assert!(
-            refused.reason.contains("heap"),
-            "a refusal says what it refused and why: {}",
-            refused.reason
+            m.text.contains("(memory"),
+            "a module with text in it has a memory:\n{}",
+            m.text
+        );
+        assert!(
+            m.text.contains("literal pool"),
+            "and the pool is a data segment rather than something the host writes:\n{}",
+            m.text
+        );
+    }
+
+    /// A program of pure arithmetic keeps the module `docs/93` §93.5 measured: no memory, no data
+    /// segment, no table.
+    ///
+    /// The property is what makes the heap a cost only the programs that need one pay, and it is
+    /// the half of `adr/0032` a listing can show.
+    #[test]
+    fn a_program_that_allocates_nothing_has_no_memory_at_all() {
+        let m = compile("def twice(n: Int) -> Int:\n    return n + n\n");
+        assert!(m.signature("twice").is_some(), "{:?}", m.refusals);
+        assert!(!m.text.contains("(memory"), "{}", m.text);
+        assert!(!m.text.contains("(table"), "{}", m.text);
+    }
+
+    /// A closure is applied through a table, which is the one place this target is *not* a
+    /// transcription of the native backends: they switch on the rank into a direct call.
+    #[test]
+    fn a_closure_is_applied_through_a_table_and_not_a_switch() {
+        // Built and applied inside one call, because that is the whole of a closure's life here:
+        // `Heap::crossing` refuses one in a signature, so it can never be a parameter.
+        let m = compile(
+            "def doubled(xs: list[Int]) -> list[Int]:\n    return map_list(xs, lambda n: n * 2)\n",
+        );
+        assert!(m.signature("doubled").is_some(), "{:?}", m.refusals);
+        assert!(m.text.contains("(table"), "{}", m.text);
+        assert!(
+            m.text.contains("return_call_indirect"),
+            "and applying one is a jump:\n{}",
+            m.text
         );
     }
 
