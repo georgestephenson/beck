@@ -514,6 +514,7 @@ pub fn check_module_importing(
     program
 }
 
+mod dispatch;
 mod exhaust;
 mod tests_in_beck;
 mod traits;
@@ -787,12 +788,7 @@ impl<'a> Checker<'a> {
         item.args
             .get(1)
             .filter(|n| n.is_form(sym::TYPARAMS))
-            .map(|n| {
-                n.args
-                    .iter()
-                    .filter_map(|p| p.as_var().map(|s| s.name.clone()))
-                    .collect()
-            })
+            .map(|n| n.args.iter().filter_map(traits::typaram_name).collect())
             .unwrap_or_default()
     }
 
@@ -812,8 +808,9 @@ impl<'a> Checker<'a> {
             return out;
         };
         for p in &list.args {
-            let Some(s) = p.as_var() else { continue };
-            let name = s.name.clone();
+            let Some(name) = traits::typaram_name(p) else {
+                continue;
+            };
             if self.types.contains_key(&name) || prelude::builtin_arity(&name).is_some() {
                 self.diags.push(
                     Diagnostic::error(
