@@ -103,7 +103,7 @@ ask in order:
 
 Every row above is a prerequisite for a tutorial being worth writing rather than a substitute for
 one. §8.3 item 6 — "write the tutorial as you build, and treat any sentence that requires an apology
-as a bug report against the design" — is the practice this phase has least honoured, and §86.8 is
+as a bug report against the design" — is the practice this phase has least honoured, and §86.12 is
 the list of what the guide does not cover. **The criterion needs an outside developer, and none has
 read it.**
 
@@ -847,6 +847,17 @@ rows.
   did not is the `arrow` dependency itself, which belongs here because this is where the reader
   lives: a Parquet writer and DataFusion are what make an Arrow encoder something other than a
   writer checked by its own reader.
+
+- **A stub that fails** (S, and small). `stub net.out(payments.example.com): Declined` supplies a
+  return value and there is no way to supply a *failure*: a stub body that raises is refused,
+  because the raise lands in the test block's own row and `B0700` says a test performs nothing. So
+  the branch every program with an outbound call writes — the peer is down, refuse the command —
+  is the one branch its tests cannot reach, and a program can be fully covered with that arm never
+  executed. [`22`](22-phase-3-report.md) §22.6 enumerates what a stub cannot do and this was not on
+  it; found by writing [`86`](86-getting-started.md) §86.8, where the guide has a `NoAnswer`
+  rejection it cannot demonstrate. The shape is that a stub stands in for a *definition*, so what it
+  performs should be charged to that definition's row — which the signature already declares — and
+  not to the block that named it.
 
 Behind those, the Phase 4 gates arranged before Phase 4 rather than during it: **DST proper** on the
 seams §8.5.2 names, then the TLA+ gate above, the operator, the replay tooling and the choreography.
