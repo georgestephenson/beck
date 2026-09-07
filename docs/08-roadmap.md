@@ -643,16 +643,20 @@ rows.
   of work written down as "a known piece of work rather than an open question" in a report is
   exactly the shape §8.5's preamble says never comes due.
 - **Mode B's codegen: the heap on a wasm target** (S, and the item with a user in front of it).
-  The emitter is written and the scalar subset compiles, in a real engine, against the
-  tree-walker ([`103`](103-the-wasm-emitter-report.md)) — and it compiles **0 of the corpus's 237<!--c:wasm-corpus-->
-  definitions**, because an application is records, lists and a page. What is left is therefore one
-  thing and it is the big one: a value representation in linear memory, string and collection
-  primitives, closures through an indirect call table, and §5.1's unanswered choice between the GC
-  proposal and a refcounting discipline. Behind it, in order: the four host effects as imports,
-  bundle format 2 with the type table
-  ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) anticipated both), and the kernel
-  loading a compiled component instead of interpreting one. The WebAssembly spec-suite obligation
-  [`12`](12-standards-and-conformance.md) §12.3 pins to core 3.0 lands with it.
+  The heap is **built** ([`106`](106-the-wasm-heap-report.md)): a value representation in linear
+  memory, text and the collections, closures through an indirect call table, failure, and the four
+  host effects as imports — with §5.1's choice between the GC proposal and a refcounting discipline
+  taken in [`adr/0033`](adr/0033-the-webassembly-heap-is-the-arena-in-linear-memory.md), which is
+  neither, because both fork the one layout three backends share. The corpus stands at
+  **217<!--c:wasm-compiled--> definitions compiled against 20<!--c:wasm-refused--> refused**, where
+  it stood at 0 and 237 — two short of what `beck-llvm` compiles, and both of those are
+  `str_to_int`, which is *linked* there and has no link line here. What is left is **the loading**, and it is
+  blocked on one change in a file this work does not own: a module's
+  [`beck_llvm::heap::Heap`] cannot cross a wire, and a table of *types* cannot replace it because
+  the indices compiled code carries are assigned by a whole-program survey and a bundle is a slice
+  (§106.10). Behind that: bundle format **3** — 2 is already spent — carrying the compiled slice,
+  and the kernel calling it through one import the shim supplies. The WebAssembly spec-suite
+  obligation [`12`](12-standards-and-conformance.md) §12.3 pins to core 3.0 lands with it.
 - **The three named backend items** (S): the signal vocabulary compiled rather than read by the
   splitter, a **bounded** definition — a dictionary is a function value — and a worker that can
   answer two calls at once. [`93`](93-the-native-backends-report.md) §93.15 is the list, and the

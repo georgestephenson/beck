@@ -1151,8 +1151,10 @@ anything but a benchmark uses this backend, and it is the first thing a second v
 [`103`](103-the-wasm-emitter-report.md). Cranelift compiles Cranelift IR to machine code, which is the
 opposite direction from the WebAssembly a browser needs — Wasmtime uses Cranelift to compile wasm, not to
 produce it — so it is a **third** emitter against a wasm target, and it is written. What it shares with
-this chapter is the monomorphiser, the trap codes, the layout module and these fixtures; what it does not
-share is the heap, which it does not lay out, so it compiles **0 of the corpus's 237<!--c:wasm-corpus--> definitions**.
+this chapter is the monomorphiser, the trap codes, the layout module and these fixtures — and, since
+[`106`](106-the-wasm-heap-report.md), the heap, which it lays out in its own linear memory rather
+than in an arena the host allocates: the corpus stands at **217<!--c:wasm-compiled--> definitions
+compiled against 20<!--c:wasm-refused--> refused**.
 [`94`](94-the-client-report.md) §94.12's measurement still says what a finished one would buy: a code
 generator divides the constant and leaves the growth.
 

@@ -702,13 +702,14 @@ expectations. A router the program cannot test would be half a feature.
 
 ## 94.15 What is not built
 
-**Codegen — half of it, and not the half a component needs.** The kernel still interprets `Core`.
-The third emitter §5.1 asks for exists ([`103`](103-the-wasm-emitter-report.md)): `Core` to
-WebAssembly, held to the tree-walker by a differential run in a real engine. It compiles the
-**scalar subset**, and a component's `view` is nothing but heap — records, a list, a string, an
-`Html` tree — so it compiles **none of the corpus** and nothing loads its output.
-[`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) is therefore not reversed; §103.6 is that
-sentence as a measurement. And §94.12 still says this bullet is **not the leading cost** — a code
+**Codegen — the half that is not loaded.** The kernel still interprets `Core`. The third emitter
+§5.1 asks for exists ([`103`](103-the-wasm-emitter-report.md)) and it now has a heap
+([`106`](106-the-wasm-heap-report.md)): a component's `view` is records, a list, a string and an
+`Html` tree, and all four compile, so **217<!--c:wasm-compiled--> of the corpus's definitions** do.
+What is missing is no longer the heap — it is the **loading**: the bundle erases the types a
+compiling backend needs, and nothing calls the module.
+[`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) is therefore not reversed, and §106.8 is
+the list of what would. And §94.12 still says this bullet is **not the leading cost** — a code
 generator divides the constant and leaves the growth, because what grows is `view` being a pure
 function of the whole state, which every backend shares.
 
