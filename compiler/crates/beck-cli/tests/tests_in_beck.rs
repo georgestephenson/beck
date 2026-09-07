@@ -356,6 +356,206 @@ fn interaction_assertions_are_queries_over_what_happened() {
     assert!(why(&run(&placed), "false").contains("was performed 1 time"));
 }
 
+/// A module with no merge point whose one outbound call can also *fail*.
+///
+/// `ORDERS` deliberately cannot do either: it is an application, and its `charge` returns an
+/// `Answer` rather than raising, so nothing in that fixture reaches the branch a program writes for
+/// "the peer is down". This is `docs/86` §86.8's shape with the application taken away — a domain
+/// module, a service it asks, and a signature that says the asking can fail.
+const LIBRARY: &str = r#"
+union Trouble:
+    NoAnswer
+
+def catalogue(isbn: Str) -> Str uses net.out(catalogue.example.com), raises(Trouble):
+    return "unread"
+
+def stock(isbn: Str) -> Int uses net.out(stock.example.com):
+    return 0
+
+def relay(isbn: Str) -> Int uses net.out(relay.example.com), net.out(stock.example.com):
+    return stock(isbn)
+
+def asked(isbn: Str) -> Str:
+    looked = try: catalogue(isbn)
+    match looked:
+        case Ok(title):
+            return title
+        case Err(why):
+            return "nobody answered"
+"#;
+
+/// Check a module that may be a library, and hand back what it said.
+fn check_library(src: &str) -> (Option<Placed>, beck_diag::Diagnostics, beck_diag::SourceMap) {
+    beck_core::compile_or_library_str("domain.beck", src)
+}
+
+fn library(src: &str) -> Placed {
+    let (placed, d, m) = check_library(src);
+    assert!(!d.has_errors(), "{}", d.render(&m));
+    placed.expect("this module compiles")
+}
+
+fn refused(src: &str, code: &str) -> String {
+    let (_, d, m) = check_library(src);
+    assert!(
+        d.iter().any(|x| x.code == code),
+        "expected {code}, got {:?}\n{}",
+        d.iter().map(|x| x.code).collect::<Vec<_>>(),
+        d.render(&m)
+    );
+    d.render(&m)
+}
+
+#[test]
+fn a_stub_takes_the_definitions_row_out_of_the_test_blocks_own() {
+    // `DEFECTS.md::a-stub-in-a-library-test-is-accepted-and-can-never-fire`, positively: the two
+    // halves of §21.3 can both be present in one module now. A library has no `when` to reach a
+    // stub through, so the only expression that reaches one is a call — and a call used to put the
+    // callee's whole row in the test's, which `B0700` then refused. A stub stands in for the
+    // definitions that *perform* the atom, so those definitions do not run and their row is not
+    // this block's.
+    let src = format!(
+        "{LIBRARY}\n\
+         test \"the stub is reached\":\n\
+         \x20   stub net.out(catalogue.example.com): \"SICP\"\n\
+         \x20   expect catalogue(\"0262510871\") == \"SICP\"\n"
+    );
+    let placed = library(&src);
+    let report = run(&placed);
+    let c = case(&report, "the stub is reached");
+    assert!(
+        c.outcome.is_pass(),
+        "{}",
+        beck_rt::testing::render(&report, true)
+    );
+    // …and it really fired, which is the half the defect called the worse one: `called 0×` under
+    // `-v` with the test passing is a module whose author believes it is exercising its client.
+    let fired: Vec<&beck_rt::testing::Stubbed> = c
+        .stubbed
+        .iter()
+        .filter(|s| s.def.as_ref() == "catalogue")
+        .collect();
+    assert_eq!(fired.len(), 1);
+    assert_eq!(fired[0].calls, 1, "the clause is dead if this is zero");
+}
+
+#[test]
+fn without_the_stub_the_same_call_is_still_the_test_blocks_own_row() {
+    // The negative half, and the one that would be forgotten: a fix that discharged the row
+    // whether or not a stub named it would have deleted `B0700`'s rule rather than completed it.
+    let src = format!(
+        "{LIBRARY}\n\
+         test \"no clause names it\":\n\
+         \x20   expect catalogue(\"0262510871\") == \"SICP\"\n"
+    );
+    let rendered = refused(&src, "B0700");
+    assert!(
+        rendered.contains("net.out(catalogue.example.com)"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_stub_discharges_what_it_stands_in_for_and_nothing_else() {
+    // The other direction of the same rule, and the one a discharge written as "forget every atom
+    // some stub mentioned" would fail: one peer stubbed does not excuse the other.
+    let src = format!(
+        "{LIBRARY}\n\
+         test \"one peer of two\":\n\
+         \x20   stub net.out(catalogue.example.com): \"SICP\"\n\
+         \x20   expect stock(\"0262510871\") == 0\n"
+    );
+    let rendered = refused(&src, "B0700");
+    assert!(
+        rendered.contains("net.out(stock.example.com)"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("net.out(catalogue.example.com)"),
+        "the stubbed peer is discharged, and only it: {rendered}"
+    );
+
+    // …and the case a discharge written as "the whole row of everything this replaces" would let
+    // through, which is the one worth writing down: `relay` performs one peer and *inherits* the
+    // other, so its row names `stock`'s host. Stubbing `relay` says nothing about a test that
+    // calls `stock` itself. The atom a clause names is discharged exactly — every definition
+    // performing it is replaced — and an atom a performer merely inherits has its own clause to
+    // name it.
+    let src = format!(
+        "{LIBRARY}\n\
+         test \"a peer inherited rather than named\":\n\
+         \x20   stub net.out(relay.example.com): 1\n\
+         \x20   expect stock(\"0262510871\") == 0\n"
+    );
+    let rendered = refused(&src, "B0700");
+    assert!(
+        rendered.contains("net.out(stock.example.com)"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_stub_may_fail_the_way_the_definition_it_stands_in_for_declares() {
+    // `docs/08` §8.5.4's "a stub that fails". The branch every program with an outbound call
+    // writes — the peer is down, refuse the command — was the one branch its tests could not
+    // reach, because the raise was charged to the test block's row and `B0700` says a test
+    // performs nothing. It is charged to `catalogue`'s row now, which its signature declares.
+    let src = format!(
+        "{LIBRARY}\n\
+         test \"the peer is down\":\n\
+         \x20   stub net.out(catalogue.example.com): raise NoAnswer\n\
+         \x20   expect asked(\"0262510871\") == \"nobody answered\"\n"
+    );
+    let placed = library(&src);
+    let report = run(&placed);
+    let c = case(&report, "the peer is down");
+    assert!(
+        c.outcome.is_pass(),
+        "the program's own `try:` catches what the stub raised: {}",
+        beck_rt::testing::render(&report, true)
+    );
+    // The raise crossed `beck_core::backend`'s seam and was caught by *type name*, so it has to
+    // arrive carrying one. A failure flattened to a message would travel straight past the `try:`
+    // above and this would be red.
+    assert_eq!(
+        c.stubbed
+            .iter()
+            .find(|s| s.def.as_ref() == "catalogue")
+            .and_then(|s| s.raised.clone()),
+        Some("raised `NoAnswer`".to_string()),
+        "§21.3 rule 1's obligation is to say what the default did, and a raise is what it did"
+    );
+}
+
+#[test]
+fn a_stub_may_not_fail_a_way_the_definition_cannot() {
+    // The bound. A caller was type-checked against the row the signature publishes, so a stub
+    // raising something else would unwind through code that provably cannot fail.
+    let src = format!(
+        "{LIBRARY}\n\
+         test \"a failure the signature does not declare\":\n\
+         \x20   stub net.out(stock.example.com): raise NoAnswer\n\
+         \x20   expect stock(\"0262510871\") == 0\n"
+    );
+    let rendered = refused(&src, "B0708");
+    assert!(
+        rendered.contains("`stock` cannot fail that way"),
+        "{rendered}"
+    );
+
+    // …and a stub body that *performs* rather than fails is still the test's own row: a stub
+    // exists so the effect does not happen, and one that performed it would have stood in for
+    // nothing.
+    let src = format!(
+        "{LIBRARY}\n\
+         test \"a stub that phones somebody else\":\n\
+         \x20   stub net.out(catalogue.example.com):\n\
+         \x20       return str(stock(isbn))\n\
+         \x20   expect catalogue(\"0262510871\") == \"0\"\n"
+    );
+    refused(&src, "B0700");
+}
+
 // ---------------------------------------------------------------------------------------------
 // 3. Failure reporting
 // ---------------------------------------------------------------------------------------------

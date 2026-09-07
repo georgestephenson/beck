@@ -856,16 +856,26 @@ rows.
   lives: a Parquet writer and DataFusion are what make an Arrow encoder something other than a
   writer checked by its own reader.
 
-- **A stub that fails** (S, and small). `stub net.out(payments.example.com): Declined` supplies a
-  return value and there is no way to supply a *failure*: a stub body that raises is refused,
-  because the raise lands in the test block's own row and `B0700` says a test performs nothing. So
-  the branch every program with an outbound call writes — the peer is down, refuse the command —
-  is the one branch its tests cannot reach, and a program can be fully covered with that arm never
-  executed. [`22`](22-phase-3-report.md) §22.6 enumerates what a stub cannot do and this was not on
-  it; found by writing [`86`](86-getting-started.md) §86.8, where the guide has a `NoAnswer`
-  rejection it cannot demonstrate. The shape is that a stub stands in for a *definition*, so what it
-  performs should be charged to that definition's row — which the signature already declares — and
-  not to the block that named it.
+- **A stub that fails.** **Done**, and it took a register defect with it, because both were the same
+  missing rule: a stub stands in for a *definition*, so what that definition's row holds is charged
+  to the definition — which the signature already declares — and not to the block that named it.
+  A `raises(E)` the signature declares is therefore an answer a stub may give
+  (`stub net.out(h): raise Declined`), and the branch every program with an outbound call writes —
+  the peer is down, refuse the command — stopped being the one branch its tests could not reach.
+  Read the other way the same rule says the definitions a stub replaces **do not run**, so the atom
+  the clause names — exactly, since every definition performing it is replaced — and the failures
+  those definitions carry stop being the block's, and an expectation may call one. That is what let
+  both halves of §21.3 be present in one library module
+  (`DEFECTS.md::a-stub-in-a-library-test-is-accepted-and-can-never-fire` — accepted, reported and
+  dead the moment it was written). What did not move is that a stub may not **perform**: a body
+  reaching an effect is `B0700` as before. Two things this needed that reading the item would not
+  have predicted. A raise had to survive [`backend`](../compiler/crates/beck-core/src/backend.rs)'s
+  seam — `try:` catches by *type name*, so an `ExecError` carrying only a message travels straight
+  past the handler the program wrote, and the gate for that is the refusal arm being reached rather
+  than the stub being installed. And the bound needed a diagnostic of its own (`B0708`): a stub
+  raising what the signature does not declare would unwind through callers type-checked against a
+  row that says they cannot fail. Found by writing [`86`](86-getting-started.md) §86.8, where the
+  guide had a `NoAnswer` rejection it could not demonstrate and now does.
 
 Behind those, the Phase 4 gates arranged before Phase 4 rather than during it: **DST proper** on the
 seams §8.5.2 names, then the TLA+ gate above, the operator, the replay tooling and the choreography.

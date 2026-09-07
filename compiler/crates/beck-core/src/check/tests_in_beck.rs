@@ -162,6 +162,9 @@ impl Checker<'_> {
         );
         bind(self, "result", bindings.result, subjects.result.clone());
 
+        // What the `stub` clauses in this block stand in for, and therefore what this block does
+        // *not* perform — see [`Checker::check_stub`].
+        let mut discharged: Vec<Effect> = Vec::new();
         let (clauses, row) = self.in_scope(|ck| {
             let mut clauses = Vec::new();
             for stmt in &body.args {
@@ -211,7 +214,11 @@ impl Checker<'_> {
                             span: cspan,
                         }
                     }
-                    Some(sym::STUB) if stmt.args.len() == 2 => ck.check_stub(stmt, defs, cspan)?,
+                    Some(sym::STUB) if stmt.args.len() == 2 => {
+                        let (clause, stands_in_for) = ck.check_stub(stmt, defs, cspan)?;
+                        discharged.extend(stands_in_for);
+                        clause
+                    }
                     Some(sym::EXPECT) if stmt.args.len() == 1 => {
                         let e = ck.expr(&stmt.args[0], Some(&Ty::bool_()));
                         ck.unify(&e.ty, &Ty::bool_(), e.span, "`expect`");
@@ -339,11 +346,19 @@ impl Checker<'_> {
 
         // §21.2's open question, settled as an error: "a test that performs a real `net.out` is a
         // test that can fail because somebody else's server is down".
+        //
+        // A `stub` clause is what takes an atom back out. It stands in for the definitions that
+        // *perform* the atom, so those definitions do not run and their row is not this block's —
+        // which is why an expectation may call one of them. Without this the two halves of §21.3
+        // could not both appear in one module: a library has no `when` to reach a stub through, so
+        // the clause was accepted, reported, and dead the moment it was written
+        // (`DEFECTS.md::a-stub-in-a-library-test-is-accepted-and-can-never-fire`).
         let leaked: Vec<Effect> = self
             .subst
             .resolve_row(&row)
             .atoms
             .iter()
+            .filter(|e| !discharged.contains(e))
             // `spawn` is not one of these. The rule's reason is that a test must not depend on
             // anything outside itself, and a `parallel:` scope is the program's own control flow —
             // it crosses no boundary, reaches no host, and is the one atom on §3.3's list that
@@ -377,12 +392,29 @@ impl Checker<'_> {
         })
     }
 
+    /// Check one `stub` clause, and report what its presence takes out of the test's own row.
+    ///
+    /// The second half of the answer is `docs/08` §8.5.4's shape for both of this clause's open
+    /// items: **a stub stands in for a definition**, so what that definition's row holds is
+    /// charged to the definition — which the signature already declares — and not to the block
+    /// that named it. Two things follow, and they are the same rule read in each direction:
+    ///
+    /// * the definitions the stub replaces do not run, so the atom it names and the failures
+    ///   those definitions carry are not this block's — which is what lets an *expectation* call
+    ///   one of them; and
+    /// * the stub may answer the way those definitions may answer, **failure included** — a
+    ///   `raises(E)` the signature declares is an answer, not an act, and `Result[T, E]` is its
+    ///   reified form ([`crate::row::Effect::Raises`]).
+    ///
+    /// What is *not* discharged is everything else: the fold, the document, the clock, and a
+    /// second peer a performer merely inherits. See `stands_in_for` below for which half of the
+    /// discharge is exact and which is by provenance.
     fn check_stub(
         &mut self,
         stmt: &Node,
         defs: &BTreeMap<Arc<str>, Def>,
         span: Span,
-    ) -> Option<crate::testing::Clause> {
+    ) -> Option<(crate::testing::Clause, Vec<Effect>)> {
         let atom = self.test_atom(&stmt.args[0], span)?;
         if !crate::testing::is_stubbable(&atom) {
             self.diags.push(
@@ -435,13 +467,64 @@ impl Checker<'_> {
                 ),
             );
             let value = self.expr(body_expr_of(body), None);
-            return Some(crate::testing::Clause::Stub {
-                atom,
-                params: Vec::new(),
-                value,
-                span,
-            });
+            return Some((
+                crate::testing::Clause::Stub {
+                    atom,
+                    params: Vec::new(),
+                    value,
+                    span,
+                },
+                Vec::new(),
+            ));
         }
+
+        // The row of each definition this clause replaces. Read through the substitution rather
+        // than off `Def::effects`, which is not filled until every body has been seen — this pass
+        // is *deferred* but still runs before that resolution (`Checker::check_module`).
+        let rows: Vec<Vec<Effect>> = performers
+            .iter()
+            .map(|d| {
+                self.subst
+                    .resolve_row(&d.row)
+                    .atoms
+                    .iter()
+                    .cloned()
+                    .collect()
+            })
+            .collect();
+        // What this clause stands in for. Two halves, and they are not equally exact:
+        //
+        // * **the atom it names**, which is exact — `performers` is *every* definition that
+        //   performs it, and all of them are replaced, so nothing left in the program can perform
+        //   it; and
+        // * **the failures those definitions carry**, which is by provenance rather than by proof:
+        //   a row is a set, so a `raises(E)` the test reaches by some other path is discharged
+        //   too. That direction is safe to be loose in — the raise then escapes at run time and
+        //   the test fails carrying the value, which is a failure a person can read rather than a
+        //   silent pass.
+        //
+        // What is deliberately *not* discharged is a second stubbable atom a performer merely
+        // inherits. That one has its own `stub` clause to name it, and demanding it is what keeps
+        // `B0700` naming the peer nobody thought about.
+        let stands_in_for: Vec<Effect> = std::iter::once(atom.clone())
+            .chain(
+                rows.iter()
+                    .flatten()
+                    .filter(|e| matches!(e, Effect::Raises(_)))
+                    .cloned(),
+            )
+            .collect();
+        // A raise the stub may answer with: one *every* definition it stands in for declares. Any
+        // less and intercepting the other one would raise something its callers were never checked
+        // against.
+        let may_raise: Vec<Effect> = rows[0]
+            .iter()
+            .filter(|e| matches!(e, Effect::Raises(_)))
+            .filter(|e| rows.iter().all(|r| r.contains(e)))
+            .cloned()
+            .collect();
+        let performer_names: Vec<String> =
+            performers.iter().map(|d| format!("`{}`", d.name)).collect();
 
         // §21.3 rule 3: a stub that answers *from* the call needs one call to answer from. Two
         // definitions performing one atom can share a *value*, because a value does not look at
@@ -504,16 +587,20 @@ impl Checker<'_> {
         };
 
         if !answers_from_the_call {
-            let value = self.expr(body, want.as_ref());
+            let (value, inner) = self.in_scope(|ck| ck.expr(body, want.as_ref()));
+            self.charge_stub_body(inner, &may_raise, &performer_names, span);
             if let Some(w) = &want {
                 self.unify(&value.ty, w, value.span, "the stub's value");
             }
-            return Some(crate::testing::Clause::Stub {
-                atom,
-                params: Vec::new(),
-                value,
-                span,
-            });
+            return Some((
+                crate::testing::Clause::Stub {
+                    atom,
+                    params: Vec::new(),
+                    value,
+                    span,
+                },
+                stands_in_for,
+            ));
         }
 
         // The block form. The stubbed definition's parameters come into scope under their own
@@ -533,54 +620,111 @@ impl Checker<'_> {
             });
         }
 
-        let value = if body.is_form(sym::STUB_ARMS) {
-            // `case` arms with no scrutinee written: the scrutinee is the parameter, which only
-            // the compiler knows. A definition with two of them has to say which.
-            if target.params.len() != 1 {
-                let names: Vec<String> = target
-                    .params
-                    .iter()
-                    .map(|(_, n, t)| format!("`{n}: {t}`"))
-                    .collect();
-                self.diags.push(
-                    Diagnostic::error(
-                        "B0707",
-                        format!(
-                            "`{}` takes {} arguments, so bare `case` arms do not say what to \
-                             match on",
-                            target.name,
-                            target.params.len()
-                        ),
-                        span,
-                    )
-                    .with_primary_label(if names.is_empty() {
-                        "it takes none".to_string()
-                    } else {
-                        names.join(", ")
-                    })
-                    .with_fix("write the `match` out: `match <argument>:` inside the stub"),
-                );
-                self.locals.truncate(before);
-                return None;
+        // `case` arms with no scrutinee written: the scrutinee is the parameter, which only the
+        // compiler knows. A definition with two of them has to say which.
+        if body.is_form(sym::STUB_ARMS) && target.params.len() != 1 {
+            let names: Vec<String> = target
+                .params
+                .iter()
+                .map(|(_, n, t)| format!("`{n}: {t}`"))
+                .collect();
+            self.diags.push(
+                Diagnostic::error(
+                    "B0707",
+                    format!(
+                        "`{}` takes {} arguments, so bare `case` arms do not say what to match on",
+                        target.name,
+                        target.params.len()
+                    ),
+                    span,
+                )
+                .with_primary_label(if names.is_empty() {
+                    "it takes none".to_string()
+                } else {
+                    names.join(", ")
+                })
+                .with_fix("write the `match` out: `match <argument>:` inside the stub"),
+            );
+            self.locals.truncate(before);
+            return None;
+        }
+
+        let (value, inner) = self.in_scope(|ck| {
+            if body.is_form(sym::STUB_ARMS) {
+                let scrutinee = Node::sym(target.params[0].1.as_ref(), span);
+                let mut arms = vec![scrutinee];
+                arms.extend(body.args.iter().cloned());
+                let as_match = Node::form(sym::MATCH, arms, span);
+                ck.expr(&as_match, want.as_ref())
+            } else {
+                ck.block(&body.args, want.as_ref())
             }
-            let scrutinee = Node::sym(target.params[0].1.as_ref(), span);
-            let mut arms = vec![scrutinee];
-            arms.extend(body.args.iter().cloned());
-            let as_match = Node::form(sym::MATCH, arms, span);
-            self.expr(&as_match, want.as_ref())
-        } else {
-            self.block(&body.args, want.as_ref())
-        };
+        });
+        self.charge_stub_body(inner, &may_raise, &performer_names, span);
         self.locals.truncate(before);
         if let Some(w) = &want {
             self.unify(&value.ty, w, value.span, "the stub's value");
         }
-        Some(crate::testing::Clause::Stub {
-            atom,
-            params,
-            value,
-            span,
-        })
+        Some((
+            crate::testing::Clause::Stub {
+                atom,
+                params,
+                value,
+                span,
+            },
+            stands_in_for,
+        ))
+    }
+
+    /// Charge a stub body's row to the definition it stands in for, and refuse what will not go.
+    ///
+    /// A stub body is test code in every respect but one: it runs *where the definition would*, so
+    /// a failure it produces is a failure that definition's callers were already checked against.
+    /// So a `raises(E)` the signature declares is discharged here, and everything else in the body
+    /// travels back into the test's own row, where `B0700` says what it always said — a stub that
+    /// performed the effect it stands in for would not have stood in for anything.
+    fn charge_stub_body(
+        &mut self,
+        inner: crate::row::Row,
+        may_raise: &[Effect],
+        performers: &[String],
+        span: Span,
+    ) {
+        let inner = self.subst.resolve_row(&inner);
+        self.row.tails.extend(inner.tails.iter().copied());
+        for atom in inner.atoms {
+            match &atom {
+                Effect::Raises(_) if may_raise.contains(&atom) => {}
+                Effect::Raises(what) => {
+                    let declared: Vec<String> = may_raise.iter().map(|e| e.name()).collect();
+                    self.diags.push(
+                        Diagnostic::error(
+                            "B0708",
+                            format!(
+                                "this stub raises `{what}`, and {} cannot fail that way",
+                                performers.join(", ")
+                            ),
+                            span,
+                        )
+                        .with_primary_label(if declared.is_empty() {
+                            "its signature declares no failure at all".to_string()
+                        } else {
+                            format!("its signature declares {}", declared.join(", "))
+                        })
+                        .with_note(
+                            "a stub stands in for the definition, so it may answer the way the \
+                             definition may answer — and a caller was type-checked against the \
+                             row the signature publishes, not against this block",
+                        )
+                        .with_fix(
+                            "raise what the definition declares, or let the definition raise it \
+                             and stub the value it would have returned",
+                        ),
+                    );
+                }
+                _ => self.row.add(atom),
+            }
+        }
     }
 
     fn test_atom(&mut self, n: &Node, span: Span) -> Option<Effect> {

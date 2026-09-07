@@ -252,7 +252,7 @@ impl Host for Globals {
     fn global(&self, name: &str) -> Option<&Core> {
         self.defs.global(name)
     }
-    fn intercept(&self, name: &str, args: &[Value]) -> Option<Value> {
+    fn intercept(&self, name: &str, args: &[Value]) -> Option<Result<Value, ExecError>> {
         self.interceptor.as_ref()?.intercept(name, args)
     }
     fn intercepts(&self) -> bool {
@@ -355,7 +355,13 @@ pub fn backend_with_fuel(placed: &beck_core::Placed, fuel: u64) -> Arc<dyn Backe
 }
 
 fn into_exec(e: EvalError) -> ExecError {
-    ExecError::new(e.message, e.span)
+    ExecError {
+        message: e.message,
+        span: e.span,
+        // Carried rather than flattened: a `raise` that leaves a fold or a stub is the failure the
+        // program declared, and a caller matching on its type has to still be able to.
+        raised: e.raised,
+    }
 }
 
 #[cfg(test)]

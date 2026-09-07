@@ -1296,6 +1296,15 @@ pub const INDEX: &[CodeEntry] = &[
         "The performers are named. A stub is a value for an effect atom; where two definitions \
          perform the same atom with different result types, one value cannot serve both.",
     ),
+    e(
+        "B0708",
+        Stage::Tests,
+        "a stub raises what the definition it stands in for cannot",
+        "A stub stands in for a definition, so it may answer the way that definition may answer — \
+         failure included, because a `raises(E)` the signature declares is an answer rather than \
+         an act. Callers were type-checked against the row the signature publishes, so a raise it \
+         does not declare would unwind through code that provably cannot fail.",
+    ),
 ];
 
 #[cfg(test)]

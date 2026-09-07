@@ -303,6 +303,21 @@ impl EvalError {
         }
     }
 
+    /// A failure that arrived across [`beck_core::backend`]'s seam — from a stub, or from a
+    /// backend this one called.
+    ///
+    /// The `raised` half is what has to survive: a raise is caught by *type name*, so one that
+    /// crossed as a message alone would reach a `try:` the program wrote and not be caught by it.
+    /// The span is the crossing's, because the failure has no position in this program's source.
+    pub fn from_exec(e: beck_core::backend::ExecError, span: Span) -> EvalError {
+        EvalError {
+            message: e.message,
+            span,
+            raised: e.raised,
+            cancelled: false,
+        }
+    }
+
     /// A child that was stopped because a sibling failed.
     fn cancelled(span: Span) -> EvalError {
         EvalError {
@@ -338,7 +353,11 @@ pub trait Host: beck_core::host::Atoms {
     ///
     /// The evaluator's half of [`beck_core::backend::Interceptor`]. Defaulted to "run the real
     /// thing", so the only host that behaves differently is the one a `beck test` run installs.
-    fn intercept(&self, _name: &str, _args: &[Value]) -> Option<Value> {
+    fn intercept(
+        &self,
+        _name: &str,
+        _args: &[Value],
+    ) -> Option<Result<Value, beck_core::backend::ExecError>> {
         None
     }
 
@@ -1103,8 +1122,14 @@ impl<'h> Interp<'h> {
                     // virtual call, and no stub is installed in all but a handful of runs.
                     if self.host.intercepts() {
                         if let CoreKind::Global(name) = &func.kind {
-                            if let Some(v) = self.host.intercept(name, &vals) {
-                                return Ok(Step::Done(v));
+                            if let Some(answered) = self.host.intercept(name, &vals) {
+                                // A stub that fails unwinds where the real body's `raise` would,
+                                // carrying the same type name, so the program's own `try:` catches
+                                // it and nothing here knows a stub was involved.
+                                return match answered {
+                                    Ok(v) => Ok(Step::Done(v)),
+                                    Err(e) => Err(EvalError::from_exec(e, cur.span)),
+                                };
                             }
                         }
                     }

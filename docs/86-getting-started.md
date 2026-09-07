@@ -565,6 +565,11 @@ test "a nomination asks both services and records what they said":
     expect events == [Nominated(book=Book(isbn="0262510871", title="SICP", copies=2))]
     expect net.out(catalogue.example.com) once
 
+test "a nomination nobody answers is refused rather than recorded":
+    stub net.out(catalogue.example.com): raise HttpUnreachable(host="catalogue.example.com", why="connection refused")
+    when Nominate(isbn="0262510871")
+    expect result == Err(error=NoAnswer)
+
 test "the page shows what the shelf and the leaderboard each hold":
     given [Nominated(book=Book(isbn="0262510871", title="SICP", copies=2))]
     given [Finished(isbn="0262510871")] by "ana"
@@ -606,6 +611,13 @@ canonical value of its type ([`21`](21-tests-in-beck-and-proof.md) §21.3), so t
 care about costs nothing. And `expect net.out(catalogue.example.com) once` is the other direction:
 verification as a query over what happened, rather than an expectation arranged in advance and
 checked at the end.
+
+The second test is the arm you would otherwise never run. A stub stands in for the *definition*, so
+it may answer the way that definition may answer — and one of `catalogue`'s answers is failure,
+because its inferred row says `raises(HttpError)`. `stub …: raise HttpUnreachable(…)` unwinds
+exactly where the real call would, the `try:` in `nominated` catches it, and `NoAnswer` is reached.
+A stub that raised something the signature does not declare is refused (`B0708`), for the same
+reason the row exists: every caller was checked against what the signature publishes.
 
 Ask where it all landed:
 

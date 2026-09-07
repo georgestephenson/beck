@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **151 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **152 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -185,7 +185,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0604` | error | **has an interface but no implementation** — An interface is enough to compile against and never enough to run. |
 | `B0605` | error | **does not match its published interface** — The checked-in `.becki` and the module compile to different digests. Regenerate it with `beck iface`, and review the diff — the difference is an API change. |
 
-## Tests written in Beck — `B0700–B0707`
+## Tests written in Beck — `B0700–B0708`
 
 | Code | | Meaning |
 |---|---|---|
@@ -197,4 +197,5 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0705` | error | **only `given`, `when`, `stub` and `expect` may appear in a test** — §21.2: a test names a log, an input and an expectation — there is no fixture to build and no `setUp` to write. |
 | `B0706` | error | **a clause needs something this program does not have** — The state a test arranges is a fold over the program's own event stream, so a program with no `merge_clients` → `decide` → `durable(fold(…))` has nothing for `given` and `when` to mean. |
 | `B0707` | error | **an atom is performed by more than one definition, so a stub cannot answer from the call** — The performers are named. A stub is a value for an effect atom; where two definitions perform the same atom with different result types, one value cannot serve both. |
+| `B0708` | error | **a stub raises what the definition it stands in for cannot** — A stub stands in for a definition, so it may answer the way that definition may answer — failure included, because a `raises(E)` the signature declares is an answer rather than an act. Callers were type-checked against the row the signature publishes, so a raise it does not declare would unwind through code that provably cannot fail. |
 
