@@ -84,9 +84,11 @@ drive, and [`23`](../23-incremental-views-report.md) §23.19 records it as the o
 
 ## What this rules out
 
-* `psql`'s backslash commands. `\d` is a join over four `pg_catalog` relations and this SQL has no
-  joins; `select * from beck_columns` is the substitute, and it is a table rather than a special
-  form.
+* ~~`psql`'s backslash commands.~~ This said `\d` is a join over four `pg_catalog` relations and
+  this SQL has no joins. Both halves have since been built and
+  [`0032`](0032-pg-catalog-is-a-read-model.md) is the record: the catalogue is read models, read by
+  the same operators as any other query, and none of the three decisions above changed to allow it.
+  `select * from beck_columns` remains the table that says what a read model is derived *from*.
 * Any client that requires TLS. `sslmode=prefer` — the default nearly everywhere — negotiates down
   and works; `sslmode=require` does not connect.
 * Writes, at any privilege. Not a permission that could be granted: the log is the only way state

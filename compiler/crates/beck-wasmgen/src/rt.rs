@@ -11,7 +11,7 @@
 //!
 //! # One arena, in linear memory
 //!
-//! [`adr/0032`](../../../../../docs/adr/0032-the-webassembly-heap-is-the-arena-in-linear-memory.md)
+//! [`adr/0033`](../../../../../docs/adr/0033-the-webassembly-heap-is-the-arena-in-linear-memory.md)
 //! is the decision. A value that does not fit in a register is a **byte offset into the module's
 //! own linear memory**, laid out by [`beck_llvm::heap`] — the same layout the two native backends
 //! read and the host marshals against, so a compiled `view` takes a state the host wrote into the

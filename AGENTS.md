@@ -214,7 +214,7 @@ different claims.**
 the differential, replay-determinism, backend-seam, scaling, frames, security, pending-security,
 corpus, placement-property, patterns, general-slicer, incremental-analysis, incremental-engine,
 fusion,
-gestures, shared-arrangement, subscription, view-metrics, read-model, columns, style, SICP, Are We Fast Yet, Benchmarks Game,
+gestures, shared-arrangement, subscription, view-metrics, read-model, psql, columns, style, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
 mode-B, browser, client, playground, identity, OIDC, presence, cranelift, wasm-backend, release and
@@ -290,6 +290,11 @@ the thing you are guarding against would make it so.
     `PLAYWRIGHT_BROWSERS_PATH` and on the path, `BECK_CHROME` names one, and
     `BECK_REQUIRE_BROWSER=1` forbids the skip. Without it, nothing in this workspace executes the
     JavaScript.
+  - The `psql` suite (`beck-cli/tests/psql.rs`) drives the **`psql` binary** against a served read
+    model, for the same reason: `\d` answered by a client written here would be a `\d` this
+    repository defined. It skips without a `psql` on the path and `BECK_REQUIRE_PSQL=1` forbids
+    the skip. A skip means nothing checked that `pg_catalog` answers the queries `psql` actually
+    sends — `read_models.rs` still drives `tokio-postgres` over the wire either way.
   - The image suite (`beck-cli/tests/image.rs`) reads its layer back with the system `tar` and its
     signature with `openssl`, because a writer checked by its own reader agrees with itself. Each
     skips without the tool; `BECK_REQUIRE_TAR=1` and `BECK_REQUIRE_OPENSSL=1` forbid the skip, and

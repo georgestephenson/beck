@@ -96,14 +96,14 @@ ask in order:
 | "Is there a string library? A JSON parser?" | Yes, and `compiler/lib/` shows how to write the next one ([`46`](46-standard-library-report.md)) |
 | "Can I trust the actor in my ownership check?" | Against a real identity provider, yes ([`48`](48-identity-report.md)), and `session.claims` says what they may do. The default still believes the client, and says so |
 | "Can I relate two collections?" | **Yes for a lookup, for a filtered group, and for four questions about that group, and you write all of them as the loop you would have written anyway** ([`99`](99-the-data-tier-means-of-combination.md) §99.6) — `for x in xs:` whose body asks `map_get(ys, k(x))` compiles to a `Join` with an index; one whose body filters `ys` by an equality against `x` compiles to an `arrange_by` and a join that answers with the group; and one that asks `list_len`, `list_min`, `list_max` or `list_sum` of that filter is answered without the group being built at all — the count from a tally the join keeps, the two ends from a `group_by` holding one multiset per group, and the total from one holding a running sum. All are maintained from both sides and `beck explain query` shows them. **And for a membership test**: a `filter_list` whose predicate asks another collection whether it holds a key is the difference, or the intersection without the `not`, and `list_unique` is the values in use — so every row of §99.4's basis is built. What `beck explain cost` still says so on is a predicate that asks a membership question *and something else*, which is a rewrite rather than a reading (§99.10) |
-| "Can my DBA see the data?" | `psql` against the read models ([`23`](23-incremental-views-report.md)) — one table per collection, derived, no annotation — **and they can join, group and deduplicate them**, because a `select` compiles into the same operators the page's view does rather than into a second interpreter ([`99`](99-the-data-tier-means-of-combination.md) §99.9 item 9). What they still cannot do is `\d`: there is no `pg_catalog` to join |
+| "Can my DBA see the data?" | **Yes, with `psql` and the keys they already know.** One table per collection, derived, no annotation ([`23`](23-incremental-views-report.md)) — **and they can join, group and deduplicate them**, because a `select` compiles into the same operators the page's view does rather than into a second interpreter ([`99`](99-the-data-tier-means-of-combination.md) §99.9 item 9). **And `\d` works**, which is the clause that moved: `pg_class`, `pg_namespace`, `pg_attribute` and eleven more are read models over the schema the compiler already derived ([`adr/0032`](adr/0032-pg-catalog-is-a-read-model.md)), so the catalogue is answered by the same parser, the same `Join` and the same scan as every other query and nothing in the wire protocol knows what a backslash command is. `\d`, `\d <table>`, `\dt`, `\dn` and `\l` answer; anything asking for an object a read model does not have — a function, a role, an index — is refused **by the name of the relation it asked for** rather than by an empty result. The gate drives a real `psql` binary (`beck-cli/tests/psql.rs`) |
 | "How do I make it look like anything?" | **With Tailwind's names and no Tailwind**, which is the row that moved. `beck build` writes `styles.css` and a running program serves the same bytes: one rule per class your pages can carry, worked out from the program rather than scanned for, with the theme tokens those rules read and nothing else ([`104`](104-styling-and-the-component-library.md) §104.4a). **3,474 of the 3,625 names Tailwind emits a rule for are rendered identically here**, held byte for byte against Tailwind's own compiler; the sketch's sheet is 2.3 KB and `beck-rt/src/css.rs` is deleted. What is still missing is a way to write a rule of *your own* — `css:` has no parser — so a class the compiler did not define gets no rule, and `beck explain style` says which of yours are which. What the compiler *will* say is that `rounded-ful` is one edit from `rounded-full` (`B0222`), and your editor completes and explains a utility from the same table |
 | "Where's the tutorial?" | [`86`](86-getting-started.md), published on the site, with every program in it compiled and run by a test |
 | "How do I get the compiler?" | One command ([`92`](92-supply-chain-and-release-report.md)) — and it has nothing to download until a tag is pushed, so today the answer is still "build it", which §86.1 says in that order |
 
 Every row above is a prerequisite for a tutorial being worth writing rather than a substitute for
 one. §8.3 item 6 — "write the tutorial as you build, and treat any sentence that requires an apology
-as a bug report against the design" — is the practice this phase has least honoured, and §86.8 is
+as a bug report against the design" — is the practice this phase has least honoured, and §86.12 is
 the list of what the guide does not cover. **The criterion needs an outside developer, and none has
 read it.**
 
@@ -646,7 +646,7 @@ rows.
   The heap is **built** ([`106`](106-the-wasm-heap-report.md)): a value representation in linear
   memory, text and the collections, closures through an indirect call table, failure, and the four
   host effects as imports — with §5.1's choice between the GC proposal and a refcounting discipline
-  taken in [`adr/0032`](adr/0032-the-webassembly-heap-is-the-arena-in-linear-memory.md), which is
+  taken in [`adr/0033`](adr/0033-the-webassembly-heap-is-the-arena-in-linear-memory.md), which is
   neither, because both fork the one layout three backends share. The corpus stands at
   **217<!--c:wasm-compiled--> definitions compiled against 20<!--c:wasm-refused--> refused**, where
   it stood at 0 and 237 — two short of what `beck-llvm` compiles, and both of those are
@@ -851,6 +851,17 @@ rows.
   did not is the `arrow` dependency itself, which belongs here because this is where the reader
   lives: a Parquet writer and DataFusion are what make an Arrow encoder something other than a
   writer checked by its own reader.
+
+- **A stub that fails** (S, and small). `stub net.out(payments.example.com): Declined` supplies a
+  return value and there is no way to supply a *failure*: a stub body that raises is refused,
+  because the raise lands in the test block's own row and `B0700` says a test performs nothing. So
+  the branch every program with an outbound call writes — the peer is down, refuse the command —
+  is the one branch its tests cannot reach, and a program can be fully covered with that arm never
+  executed. [`22`](22-phase-3-report.md) §22.6 enumerates what a stub cannot do and this was not on
+  it; found by writing [`86`](86-getting-started.md) §86.8, where the guide has a `NoAnswer`
+  rejection it cannot demonstrate. The shape is that a stub stands in for a *definition*, so what it
+  performs should be charged to that definition's row — which the signature already declares — and
+  not to the block that named it.
 
 Behind those, the Phase 4 gates arranged before Phase 4 rather than during it: **DST proper** on the
 seams §8.5.2 names, then the TLA+ gate above, the operator, the replay tooling and the choreography.

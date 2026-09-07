@@ -10,7 +10,7 @@
 //!
 //! [`docs/103`](../../../../../docs/103-the-wasm-emitter-report.md) is the half of this that had no
 //! heap in it, and [`docs/106`](../../../../../docs/106-the-wasm-heap-report.md) is the heap.
-//! [`adr/0032`](../../../../../docs/adr/0032-the-webassembly-heap-is-the-arena-in-linear-memory.md)
+//! [`adr/0033`](../../../../../docs/adr/0033-the-webassembly-heap-is-the-arena-in-linear-memory.md)
 //! is the memory model: the module's linear memory *is*
 //! [`adr/0026`](../../../../../docs/adr/0026-the-native-heap-is-an-arena-of-offsets.md)'s arena, so
 //! a value that does not fit in a register is a byte offset into it and the host marshals with

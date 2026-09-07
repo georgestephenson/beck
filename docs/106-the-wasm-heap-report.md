@@ -19,7 +19,7 @@ bundle format is unchanged. Those are §106.8, and they are what is left.
 
 [`05`](05-tier-lowering.md) §5.1 asks for "the component's pure code compiled to WASM (**GC proposal
 where available; Perceus-style refcounting fallback**)".
-[`adr/0032`](adr/0032-the-webassembly-heap-is-the-arena-in-linear-memory.md) takes neither. A value
+[`adr/0033`](adr/0033-the-webassembly-heap-is-the-arena-in-linear-memory.md) takes neither. A value
 that does not fit in a register is a **byte offset into the module's own linear memory**, laid out
 by [`beck_llvm::heap`] — the same arena
 [`adr/0026`](adr/0026-the-native-heap-is-an-arena-of-offsets.md) already decided for the two native
@@ -327,7 +327,7 @@ The rest of the design is settled and is not the blocker:
 | Where | What |
 |---|---|
 | [`103`](103-the-wasm-emitter-report.md) | "**Built, for the scalar subset**" and "it compiles 0 of the corpus's 237 definitions" were true of the emitter without a heap in it. §103.6's table and §103.8's first two bullets are this chapter's |
-| [`05`](05-tier-lowering.md) §5.1 | "GC proposal where available; Perceus-style refcounting fallback" is answered, and the answer is neither — [`adr/0032`](adr/0032-the-webassembly-heap-is-the-arena-in-linear-memory.md) |
+| [`05`](05-tier-lowering.md) §5.1 | "GC proposal where available; Perceus-style refcounting fallback" is answered, and the answer is neither — [`adr/0033`](adr/0033-the-webassembly-heap-is-the-arena-in-linear-memory.md) |
 | [`94`](94-the-client-report.md) §94.15 | "It compiles the **scalar subset**… so it compiles **none of the corpus**" is no longer true; "nothing loads its output" still is, and that is what keeps `adr/0022` standing |
 | [`93`](93-the-native-backends-report.md) | The third emitter shares the heap as well as the monomorphiser, the trap codes and the fixtures — what it does not share is where the arena lives |
 | [`adr/0026`](adr/0026-the-native-heap-is-an-arena-of-offsets.md) | "A fixed reservation nothing can invalidate… 256 MiB of untouched reservation costs nothing on any system this runs on" is false of a browser tab, which is why this target grows instead |

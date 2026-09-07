@@ -90,7 +90,7 @@ mod tests {
     /// segment, no table.
     ///
     /// The property is what makes the heap a cost only the programs that need one pay, and it is
-    /// the half of `adr/0032` a listing can show.
+    /// the half of `adr/0033` a listing can show.
     #[test]
     fn a_program_that_allocates_nothing_has_no_memory_at_all() {
         let m = compile("def twice(n: Int) -> Int:\n    return n + n\n");

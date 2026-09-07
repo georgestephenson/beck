@@ -15,8 +15,8 @@ AST, Python-shaped default surface, S-expression second surface, everything an e
 
 ```python
 # geometry.beck — a module is a file; a package is a directory with beck.toml
-import std.math (sqrt, tau)
-import shapes.svg as svg                # no wildcard imports, ever
+import std.math (sqrt, tau)             # the selection and the alias below are designed,
+import shapes.svg as svg                # not built — see under the block
 
 radius = 4.5                            # immutable binding, type inferred (f64)
 var hits = 0                            # mutability is explicit and local-only
@@ -32,6 +32,14 @@ union Shape:                            # an algebraic data type
     Rect(a: Point, b: Point)
     Poly(points: list[Point])
 ```
+
+**The two import forms above are the designed notation and the compiler has neither.** What is
+built is `import <module>`, and it brings in everything that module publishes: the namespace is flat,
+there is no `as`, no selection list and no qualified reference, so two modules defining one name is
+`B0601` rather than something a call site can tell apart ([`10`](10-decisions.md) D23). That is why
+[`compiler/lib/`](../compiler/lib/README.md) has to link as a whole, and why a program that writes
+`def parsed(…)` and imports `http` is refused. [`16`](16-packages-and-ecosystem.md) §16.7's
+namespaced import is what reopens it.
 
 ## 11.2 Functions, matching, errors — everything is an expression
 

@@ -1,4 +1,4 @@
-# ADR 0032 — The WebAssembly heap is the same arena, in linear memory, and it grows
+# ADR 0033 — The WebAssembly heap is the same arena, in linear memory, and it grows
 
 **Status:** accepted
 **Date:** 2026-09-06

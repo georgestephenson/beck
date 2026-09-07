@@ -99,7 +99,7 @@ macro_rules! engine {
 ///
 /// # The heap crosses as the memory itself
 ///
-/// [`adr/0032`](../../../../docs/adr/0032-the-webassembly-heap-is-the-arena-in-linear-memory.md)
+/// [`adr/0033`](../../../../docs/adr/0033-the-webassembly-heap-is-the-arena-in-linear-memory.md)
 /// is what makes this eleven lines rather than a marshalling layer: the module's linear memory *is*
 /// [`beck_llvm::heap`]'s arena, and byte `i` of what `Heap::encode_args` produces is offset `i`. So
 /// the driver writes that blob at address zero, moves the bump pointer past it, calls, and hands

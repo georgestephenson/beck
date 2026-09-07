@@ -19,7 +19,7 @@
 //!
 //! # The heap is a memory, a data segment and a table
 //!
-//! [`adr/0032`](../../../../../docs/adr/0032-the-webassembly-heap-is-the-arena-in-linear-memory.md)
+//! [`adr/0033`](../../../../../docs/adr/0033-the-webassembly-heap-is-the-arena-in-linear-memory.md)
 //! is the decision this encoder carries: one linear memory whose bytes *are*
 //! [`beck_llvm::heap`]'s arena, a data segment holding the literal pool, and one `funcref` table
 //! per closure family so that applying a closure is a `call_indirect` rather than a switch.

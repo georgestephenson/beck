@@ -9,11 +9,15 @@
 > construct by construct; [`docs/reference/`](reference/README.md) is generated from the compiler's
 > own tables. This is the path through them.
 >
-> **Every program below is compiled by a test.** `beck-cli/tests/getting_started.rs` extracts each
-> ```` ```beck ```` block from this file and runs the front end over it, and extracts each `beck`
-> command shown and checks the subcommand exists. A guide whose examples do not compile is worse
-> than no guide, and this project's answer to that is the same one it uses for the language
-> reference: gate it.
+> **Every program below is compiled by a test, and its own tests are run.**
+> `beck-cli/tests/getting_started.rs` extracts each ```` ```beck ```` block from this file and puts
+> it through the front end exactly as `beck test` would — a block whose first line names a file,
+> `# books.beck`, is a module the next block may import — then extracts each `beck` command shown
+> and checks the subcommand exists. A guide whose examples do not compile is worse than no guide,
+> and this project's answer to that is the same one it uses for the language reference: gate it.
+> §86.12 is what the guide does *not* cover, and the same test holds the list to being shorter than
+> it was: two folds, a module boundary, a trait, an outbound call, a macro and a `parallel:` scope
+> are each asserted from a compiled program here.
 
 ## 86.1 Install the compiler
 
@@ -306,6 +310,8 @@ out/k8s/070-workload.yaml
 out/k8s/080-snapshots.yaml
 out/k8s/090-grants.yaml
 out/k8s/100-policy.yaml
+out/sbom.cdx.json         what went into the image, as CycloneDX
+out/styles.css            the classes the program's pages can carry
 ```
 
 Nothing in `shelf.beck` mentions Kubernetes. The `durable` fold implied the volume, the snapshot
@@ -314,18 +320,576 @@ implied the NetworkPolicy. Delete an effect and the object it implied disappears
 that is [`06`](06-kubernetes-and-packaging.md) §6.5's claim, and `beck-infra/tests/manifests.rs` is
 where it is held to it.
 
-## 86.7 Where to go next
+## 86.7 A second program, and a second fold
+
+The shelf is one person's. A **club** is several people's, and the moment it is, the page wants
+something no shelf holds: who has finished what. That is not a function of the books — it is a
+different accumulation of the same events — so it is a **second fold**, and it reads a field of the
+envelope the first one ignores.
+
+```beck
+model Book:
+    isbn: Str
+    title: Str
+
+model Shelf:
+    books: Map[Str, Book]
+
+model Readers:
+    finished: Map[Str, Int]
+
+union Command:
+    Nominate(isbn: Str, title: Str)
+    Finish(isbn: Str)
+
+union Event:
+    Nominated(isbn: Str, title: Str)
+    Finished(isbn: Str)
+
+union Rejection:
+    AlreadyOnTheShelf
+    NotOnTheShelf
+
+def apply_book(s: Shelf, env: Envelope[Event]) -> Shelf:
+    match env.body:
+        case Nominated(isbn, title):
+            return s.with(books=map_insert(s.books, isbn, Book(isbn=isbn, title=title)))
+        case Finished(isbn):
+            return s
+
+def apply_reader(r: Readers, env: Envelope[Event]) -> Readers:
+    match env.body:
+        case Nominated(isbn, title):
+            return r
+        case Finished(isbn):
+            return r.with(finished=map_insert(r.finished, env.actor, read_count(r, env.actor) + 1))
+
+def read_count(r: Readers, who: Str) -> Int:
+    return unwrap_or(map_get(r.finished, who), 0)
+
+def validate(s: Shelf, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Nominate(isbn, title):
+            if map_contains(s.books, isbn):
+                return Err(error=AlreadyOnTheShelf)
+            return Ok(value=[Nominated(isbn=isbn, title=title)])
+        case Finish(isbn):
+            if not map_contains(s.books, isbn):
+                return Err(error=NotOnTheShelf)
+            return Ok(value=[Finished(isbn=isbn)])
+
+def render(s: Shelf, r: Readers) -> Html:
+    return ui:
+        main:
+            h1: "the club"
+            ul:
+                for b in map_values(s.books):
+                    li(key=b.isbn): b.title
+            ul:
+                for who in map_keys(r.finished):
+                    li: (who + " has finished " + str(read_count(r, who)))
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, shelf, validate)
+shelf: Signal[Shelf] = durable(fold(apply_book, Shelf(books={}), events))
+readers: Signal[Readers] = durable(fold(apply_reader, Readers(finished={}), events))
+page: Signal[Html] = map2(render, shelf, readers)
+
+test "a nomination lands on the shelf":
+    given [Nominated(isbn="0262510871", title="SICP")]
+    expect page contains "SICP"
+
+test "each reader is counted against the name the runtime supplied":
+    given [Nominated(isbn="0262510871", title="SICP"), Nominated(isbn="0262560995", title="HtDP")]
+    given [Finished(isbn="0262510871"), Finished(isbn="0262560995")] by "ana"
+    given [Finished(isbn="0262510871")] by "bo"
+    expect page contains "ana has finished 2"
+    expect page contains "bo has finished 1"
+
+test "finishing a book nobody nominated is refused":
+    given []
+    when Finish(isbn="0262510871")
+    expect Err(error=NotOnTheShelf)
+```
+
+Two `durable` folds, one `merge_clients()`. A program has **one log** — that is
+[`03`](03-type-and-effect-system.md) §3.7 and it is not negotiable — so two folds are two
+projections of it rather than two databases; `beck explain flow` prints the accumulator they
+compile to, which is one record with a field per fold. `map2` is the two-signal `signal_map`: this
+club's page is the same page for everybody, so it takes no `Session` and §86.4's `per_session` is
+what puts one back when a page differs by who is reading it.
+
+The reason to keep the folds apart is visible in what each one reads. `apply_book` never looks at
+`env.actor`, and `apply_reader` looks at almost nothing else. **Nobody in this program asks who is
+logged in.** The actor is on the envelope because the merge point put it there — from the identity
+provider, not from the client — so a proposal that claimed to come from somebody else would still be
+counted against whoever sent it, and no line here is responsible for that.
+
+```text
+$ beck test club.beck
+test "a nomination lands on the shelf" … ok
+test "each reader is counted against the name the runtime supplied" … ok
+test "finishing a book nobody nominated is refused" … ok
+
+3 passed, 0 failed, 0 skipped
+```
+
+## 86.8 Asking somebody else
+
+Members should not have to type a title. The club knows the ISBN; a catalogue service knows what the
+book is called, and the library's stock service knows how many copies there are. Two questions, and
+neither one needs the other's answer.
+
+```beck
+import http
+import json
+
+model Book:
+    isbn: Str
+    title: Str
+    copies: Int
+
+model Shelf:
+    books: Map[Str, Book]
+
+model Readers:
+    finished: Map[Str, Int]
+
+union Command:
+    Nominate(isbn: Str)
+    Finish(isbn: Str)
+
+union Event:
+    Nominated(book: Book)
+    Finished(isbn: Str)
+
+union Rejection:
+    AlreadyOnTheShelf
+    NotOnTheShelf
+    NoAnswer
+
+def apply_book(s: Shelf, env: Envelope[Event]) -> Shelf:
+    match env.body:
+        case Nominated(book):
+            return s.with(books=map_insert(s.books, book.isbn, book))
+        case Finished(isbn):
+            return s
+
+def apply_reader(r: Readers, env: Envelope[Event]) -> Readers:
+    match env.body:
+        case Nominated(book):
+            return r
+        case Finished(isbn):
+            return r.with(finished=map_insert(r.finished, env.actor, read_count(r, env.actor) + 1))
+
+def read_count(r: Readers, who: Str) -> Int:
+    return unwrap_or(map_get(r.finished, who), 0)
+
+def as_document(body: Str) -> Result[Json, JsonError]:
+    return try: json_parse(body)
+
+def field_of(doc: Json, name: Str) -> Str:
+    match doc:
+        case JsonObject(fields):
+            match map_get(fields, name):
+                case Some(JsonStr(value)):
+                    return value
+                case _:
+                    return ""
+        case _:
+            return ""
+
+def title_of(body: Str) -> Str:
+    match as_document(body):
+        case Ok(doc):
+            return field_of(doc, "title")
+        case Err(why):
+            return ""
+
+def catalogue(isbn: Str) -> Str:
+    return title_of(require_ok(http_fetch("catalogue.example.com", accepting_json(get("/isbn/" + isbn)))))
+
+def copies_of(isbn: Str) -> Int:
+    return unwrap_or(str_to_int(str_trim(require_ok(http_fetch("stock.example.com", get("/copies/" + isbn))))), 0)
+
+def look_up(isbn: Str) -> Book:
+    return parallel:
+        title = catalogue(isbn)
+        copies = copies_of(isbn)
+        Book(isbn=isbn, title=title, copies=copies)
+
+def nominated(isbn: Str) -> Result[list[Event], Rejection]:
+    looked = try: look_up(isbn)
+    match looked:
+        case Ok(book):
+            return Ok(value=[Nominated(book=book)])
+        case Err(why):
+            return Err(error=NoAnswer)
+
+def validate(s: Shelf, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Nominate(isbn):
+            if map_contains(s.books, isbn):
+                return Err(error=AlreadyOnTheShelf)
+            return nominated(isbn)
+        case Finish(isbn):
+            if not map_contains(s.books, isbn):
+                return Err(error=NotOnTheShelf)
+            return Ok(value=[Finished(isbn=isbn)])
+
+def render(s: Shelf, r: Readers) -> Html:
+    return ui:
+        main:
+            h1: "the club"
+            ul:
+                for b in map_values(s.books):
+                    li(key=b.isbn): (b.title + " — " + str(b.copies) + " copies")
+            ul:
+                for who in map_keys(r.finished):
+                    li: (who + " has finished " + str(read_count(r, who)))
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, shelf, validate)
+shelf: Signal[Shelf] = durable(fold(apply_book, Shelf(books={}), events))
+readers: Signal[Readers] = durable(fold(apply_reader, Readers(finished={}), events))
+page: Signal[Html] = map2(render, shelf, readers)
+
+test "the title is read out of the catalogue's document":
+    expect title_of("{\"title\":\"SICP\",\"year\":1985}") == "SICP"
+    expect title_of("not a document at all") == ""
+
+test "a nomination asks both services and records what they said":
+    stub net.out(catalogue.example.com): "SICP"
+    stub net.out(stock.example.com): 2
+    when Nominate(isbn="0262510871")
+    expect events == [Nominated(book=Book(isbn="0262510871", title="SICP", copies=2))]
+    expect net.out(catalogue.example.com) once
+
+test "the page shows what the shelf and the leaderboard each hold":
+    given [Nominated(book=Book(isbn="0262510871", title="SICP", copies=2))]
+    given [Finished(isbn="0262510871")] by "ana"
+    expect page contains "SICP — 2 copies"
+    expect page contains "ana has finished 1"
+```
+
+Four things arrived there, and none of them is larger than the step that wanted it.
+
+**`import`.** `http` and `json` are standard-library modules carried inside the compiler
+([`46`](46-standard-library-report.md)), so there is nothing to fetch and no version to pin —
+`import` resolves against your own directory first and the library second. `http` is itself written
+in Beck, over one primitive.
+
+**The host is written at the call site.** `http_fetch("catalogue.example.com", …)` takes the host as
+a literal first argument rather than as a field of the request, and that is why the library has no
+`get(host, path)` and cannot have one: the call performs `net.out(catalogue.example.com)`, and
+[`06`](06-kubernetes-and-packaging.md) §6.5 derives the cluster's egress rules from exactly those
+atoms. A host that arrived in a variable would be an outbound call the deployment could not be told
+about.
+
+**`parallel:`** is an expression whose bindings are its children and whose tail runs once, after the
+join, with all of them in scope. No child may name another, and no child may perform an effect
+another could observe — both are compile errors rather than conventions
+([`80`](80-structured-concurrency-report.md)) — so the scope's answer cannot depend on which one
+finished first. `net.out(host)` is deliberately *not* on that forbidden list: a remote host's state
+was never Beck's to order, and that is what is left for the form to be about.
+
+**`try:`** turns a raise into a value. `http_fetch` and `require_ok` both raise `HttpError`, so
+`catalogue` and `copies_of` do too — nothing in their signatures says so, because the row is
+inferred — and `nominated` writes `try:` once, at the point where the shape the runtime wants is a
+`Result`.
+
+Now look at the tests, because there is no server in them and no mock either.
+`stub net.out(catalogue.example.com): "SICP"` names the **effect**, not a method: the atom is the
+identity, so there is no parameter list to restate and nothing to keep in step with the code. A call
+that is not stubbed is not an omission — every outbound call is stubbed by default and returns the
+canonical value of its type ([`21`](21-tests-in-beck-and-proof.md) §21.3), so the case you do not
+care about costs nothing. And `expect net.out(catalogue.example.com) once` is the other direction:
+verification as a query over what happened, rather than an expectation arranged in advance and
+checked at the end.
+
+Ask where it all landed:
+
+```text
+$ beck explain place club.beck
+```
+
+The program's own rows, out of a table that also lists everything the standard library brought:
+
+```text
+catalogue            server   definition {net.out(catalogue.example.com), raises(HttpError)}
+copies_of            server   definition {net.out(stock.example.com), raises(HttpError)}
+look_up              server   definition {net.out(catalogue.example.com), net.out(stock.example.com), spawn, raises(HttpError)}
+validate             server   definition {net.out(catalogue.example.com), net.out(stock.example.com), spawn}
+events               server   signal     {net.out(catalogue.example.com), net.out(stock.example.com), spawn}
+shelf                data     signal     {durable}
+readers              data     signal     {durable}
+page                 client   signal     {}
+```
+
+Nothing in the program says `server`. `net.out` and `spawn` are atoms only a server discharges
+([`docs/reference/effects.md`](reference/effects.md)), the rows are inferred, and the placement
+follows — so `validate` moved to the server the moment it reached a service, and it took the
+chokepoint with it. Nothing else moved: the folds are still on the data tier and the page is still
+on the client.
+
+## 86.9 Two files, and a macro for the half that is drudgery
+
+`club.beck` is now doing two jobs. It says what a book *is* and what happened to it; and it says who
+may do what, and who to ask. Those change for different reasons and at different rates, which is the
+usual reason to split a file — and here a second one arrives at the same time.
+
+The club has a chat channel and should tell it what happened. Sending a `Book` means building a
+`Json` out of it field by field, and building it again every time the model changes. So don't:
+
+```beck
+# books.beck
+import json
+
+derive_json:
+    model Book:
+        isbn: Str
+        title: Str
+        copies: Int
+
+model Shelf:
+    books: Map[Str, Book]
+
+model Readers:
+    finished: Map[Str, Int]
+
+union Event:
+    Nominated(book: Book)
+    Finished(isbn: Str)
+
+impl ToJson for Event:
+    def to_json(self):
+        match self:
+            case Nominated(book):
+                return JsonObject(fields={"what": JsonStr(value="nominated"), "book": book.to_json()})
+            case Finished(isbn):
+                return JsonObject(fields={"what": JsonStr(value="finished"), "isbn": JsonStr(value=isbn)})
+
+def apply_book(s: Shelf, env: Envelope[Event]) -> Shelf:
+    match env.body:
+        case Nominated(book):
+            return s.with(books=map_insert(s.books, book.isbn, book))
+        case Finished(isbn):
+            return s
+
+def apply_reader(r: Readers, env: Envelope[Event]) -> Readers:
+    match env.body:
+        case Nominated(book):
+            return r
+        case Finished(isbn):
+            return r.with(finished=map_insert(r.finished, env.actor, read_count(r, env.actor) + 1))
+
+def read_count(r: Readers, who: Str) -> Int:
+    return unwrap_or(map_get(r.finished, who), 0)
+
+test "a model's json is its fields, and the union's is what this file decided":
+    expect json_render(Book(isbn="0262510871", title="SICP", copies=2).to_json()) == "{\"copies\":2.0,\"isbn\":\"0262510871\",\"title\":\"SICP\"}"
+    expect str_contains(json_render(Finished(isbn="0262510871").to_json()), "\"what\":\"finished\"")
+```
+
+```beck
+# club.beck
+import http
+import json
+import books
+
+union Command:
+    Nominate(isbn: Str)
+    Finish(isbn: Str)
+
+union Rejection:
+    AlreadyOnTheShelf
+    NotOnTheShelf
+    NoAnswer
+
+def field_of(doc: Json, name: Str) -> Str:
+    match doc:
+        case JsonObject(fields):
+            match map_get(fields, name):
+                case Some(JsonStr(value)):
+                    return value
+                case _:
+                    return ""
+        case _:
+            return ""
+
+def as_document(body: Str) -> Result[Json, JsonError]:
+    return try: json_parse(body)
+
+def title_of(body: Str) -> Str:
+    match as_document(body):
+        case Ok(doc):
+            return field_of(doc, "title")
+        case Err(why):
+            return ""
+
+def catalogue(isbn: Str) -> Str:
+    return title_of(require_ok(http_fetch("catalogue.example.com", accepting_json(get("/isbn/" + isbn)))))
+
+def copies_of(isbn: Str) -> Int:
+    return unwrap_or(str_to_int(str_trim(require_ok(http_fetch("stock.example.com", get("/copies/" + isbn))))), 0)
+
+def look_up(isbn: Str) -> Book:
+    return parallel:
+        title = catalogue(isbn)
+        copies = copies_of(isbn)
+        Book(isbn=isbn, title=title, copies=copies)
+
+def announce[T: ToJson](what: T) -> Bool:
+    return is_ok(http_fetch("hooks.example.com", post("/club", json_render(what.to_json()))))
+
+def announced(e: Event) -> list[Event]:
+    _ = try: announce(e)
+    return [e]
+
+def nominated(isbn: Str) -> Result[list[Event], Rejection]:
+    looked = try: look_up(isbn)
+    match looked:
+        case Ok(book):
+            return Ok(value=announced(Nominated(book=book)))
+        case Err(why):
+            return Err(error=NoAnswer)
+
+def validate(s: Shelf, p: Proposal) -> Result[list[Event], Rejection]:
+    match p.command:
+        case Nominate(isbn):
+            if map_contains(s.books, isbn):
+                return Err(error=AlreadyOnTheShelf)
+            return nominated(isbn)
+        case Finish(isbn):
+            if not map_contains(s.books, isbn):
+                return Err(error=NotOnTheShelf)
+            return Ok(value=announced(Finished(isbn=isbn)))
+
+def render(s: Shelf, r: Readers) -> Html:
+    return ui:
+        main:
+            h1: "the club"
+            ul:
+                for b in map_values(s.books):
+                    li(key=b.isbn): (b.title + " — " + str(b.copies) + " copies")
+            ul:
+                for who in map_keys(r.finished):
+                    li: (who + " has finished " + str(read_count(r, who)))
+
+proposals: Stream[Proposal] = merge_clients()
+events: Stream[Event] = decide(proposals, shelf, validate)
+shelf: Signal[Shelf] = durable(fold(apply_book, Shelf(books={}), events))
+readers: Signal[Readers] = durable(fold(apply_reader, Readers(finished={}), events))
+page: Signal[Html] = map2(render, shelf, readers)
+
+test "the title is read out of the catalogue's document":
+    expect title_of("{\"title\":\"SICP\",\"year\":1985}") == "SICP"
+    expect title_of("not a document at all") == ""
+
+test "a nomination asks both services, records what they said, and tells the chat":
+    stub net.out(catalogue.example.com): "SICP"
+    stub net.out(stock.example.com): 2
+    when Nominate(isbn="0262510871")
+    expect events == [Nominated(book=Book(isbn="0262510871", title="SICP", copies=2))]
+    expect net.out(hooks.example.com) once
+
+test "a chat that refuses the message does not cost the club what a member did":
+    stub net.out(hooks.example.com): False
+    given [Nominated(book=Book(isbn="0262510871", title="SICP", copies=2))]
+    when Finish(isbn="0262510871")
+    expect events == [Finished(isbn="0262510871")]
+```
+
+`derive_json:` is a **macro**. It reads the fields out of the declaration it is handed and writes
+the `impl` somebody would otherwise have written, at compile time — so what runs is ordinary code
+and there is no reflection anywhere in the program
+([`102`](102-the-macro-interpreter-report.md) is the interpreter that makes a macro body ordinary
+Beck). It takes a *declaration*, which is why the `model` is written inside it.
+
+`impl ToJson for Event` is written out by hand, and the contrast is the point. A model's fields are
+drudgery; **a union's shape is a decision** — what tags a variant, and what the reader at the other
+end will match on — and a macro that guessed it would be one you had to fight. The two compose: the
+arm written here calls `book.to_json()`, which the macro wrote.
+
+`announce[T: ToJson]` is a **bound** — one function that posts anything the club can write down,
+knowing nothing about its argument except that it can be written. `announced` is where the club
+decides what a chat outage costs it, and the answer is nothing: `try:` makes the failure a value,
+and `_ =` is the club saying it will not read it. Whether the chat heard is not the club's state;
+what a member did is, and an outage at somebody else's host is not a reason to lose it.
+
+The split itself is one `import` and one contract:
+
+```text
+$ beck iface books.beck
+wrote books.becki
+```
+
+and `books.becki` reads, in part:
+
+```text
+impl ToJson for Book
+impl ToJson for Event
+
+@on(any)
+def apply_book(s: Shelf, env: Envelope[Event]) -> Shelf
+```
+
+Types, signatures, rows, tiers and the impls — no bodies. That file is what `club.beck` compiles
+against, `beck check --wire-compat books.becki` is what says whether a change to `books.beck` is one
+a running deployment can take, and `@on(any)` is there because a published placement is part of a
+published signature: an imported definition is placed where its own module placed it. Note what is
+*not* in it. The standard library `books.beck` imported is not re-exported, because a module
+publishes what it owns — and the impl the macro wrote is published beside the one written by hand,
+because a call in another module cannot resolve `book.to_json()` without knowing that it exists.
+
+`beck test` on the root runs both files' tests, which is what makes a domain module worth writing
+tests in at all:
+
+```text
+$ beck test club.beck
+test "a model's json is its fields, and the union's is what this file decided" … ok
+test "the title is read out of the catalogue's document" … ok
+test "a nomination asks both services, records what they said, and tells the chat" … ok
+test "a chat that refuses the message does not cost the club what a member did" … ok
+
+4 passed, 0 failed, 0 skipped
+```
+
+## 86.10 The deploy learned three names
+
+`beck build` on the club emits the same sixteen files §86.6 listed, and the same ten Kubernetes
+objects. One of them is different:
+
+```text
+$ beck build club.beck --out out
+$ grep egress-hosts out/k8s/100-policy.yaml
+    beck.dev/egress-hosts: "catalogue.example.com,hooks.example.com,stock.example.com"
+```
+
+Three hosts nobody wrote into a manifest: they are the `net.out(host)` atoms, sorted. Delete the
+`announce` call and `hooks.example.com` leaves that line, because the row it was derived from no
+longer carries it. `beck explain deploy club.beck` prints the derivation object by object, and its
+`Policy` line names every definition that put a host there.
+
+**A core `NetworkPolicy` cannot say "may talk to `catalogue.example.com`."** Its egress peers are IP
+blocks and selectors, and a DNS name is neither. So what is generated is egress on 443 to everything
+*except* the private ranges, with the host list in an annotation beside it — which is what a mesh or
+a gateway reads. [`06`](06-kubernetes-and-packaging.md) §6.5 is exact about the line between what is
+enforced and what is recorded, and the reason to say so here is that a guide which showed the
+annotation without the sentence would have promised a firewall.
+
+## 86.11 Where to go next
 
 | | |
 |---|---|
 | The language, construct by construct | [`11`](11-language-tour.md) |
 | Every error code, the prelude, the effect and tier matrix | [`docs/reference/`](reference/README.md), generated from the compiler |
-| Thirty-four worked programs, none with a placement annotation | [`compiler/corpus/`](../compiler/corpus/) |
+| 39<!--c:corpus-programs--> worked programs, none with a placement annotation | [`compiler/corpus/`](../compiler/corpus/) |
 | The todo sketch this project grew from | [`compiler/examples/todo.beck`](../compiler/examples/todo.beck) |
 | Why any of it is shaped this way | [`01`](01-vision-and-premise.md), then [`03`](03-type-and-effect-system.md) |
 | What is *not* built | every report's "what is not built" section, and [`43`](43-threat-model.md) §43.4 |
 
-## 86.8 What this guide does not do, and what that means for the exit criterion
+## 86.12 What this guide does not do, and what that means for the exit criterion
 
 Stated plainly, because [`08`](08-roadmap.md) §8.5.4's exit criterion is a claim about a **person**
 and this document cannot make it true on its own.
@@ -333,9 +897,12 @@ and this document cannot make it true on its own.
 * **It does not establish that an outside developer can build from it.** That is the criterion, it
   requires an outside developer, and nobody outside this project has read this. What has changed is
   that the answer to "from what?" is no longer "there is nothing" — which was the stated blocker.
-* **It covers one shape of program.** One fold, one view, one command union. Nothing here shows two
-  folds, a module boundary, a trait, an outbound call, a macro or a `parallel:` scope, all of which
-  exist and are documented in the reports rather than here.
+* **It covers two shapes of program and there are more.** Neither one is optimistic about a client:
+  nothing here shows `gestures`, presence or awareness ([`94`](94-the-client-report.md)), a
+  capability a chokepoint has to hold (`cap.*`, [`03`](03-type-and-effect-system.md) §3.5), a
+  `property` block, or a view the engine maintains by delta rather than recomputing
+  ([`99`](99-the-data-tier-means-of-combination.md)). Those are in the reports and in
+  [`compiler/corpus/`](../compiler/corpus/), and they are not here.
 * ~~**There is no installation story.**~~ There is one — §86.1 — and it is
   [`92`](92-supply-chain-and-release-report.md)'s work: an installer that verifies what it
   downloaded, and a tag-triggered pipeline that builds what it installs. §92.13 is careful about
@@ -347,6 +914,7 @@ and this document cannot make it true on its own.
   repository has applied a generated manifest to a real cluster, so this guide does not tell anybody
   to.
 
-What it *is* is checked: every program compiles and every command exists, gated on every pull
-request. That is the difference between documentation and a description of documentation, and it is
-the same discipline [`34`](34-generated-documentation-report.md) applied to the reference.
+What it *is* is checked: every program compiles, every program's own tests pass, every command
+exists, and the list above is held to being shorter than it was — gated on every pull request. That
+is the difference between documentation and a description of documentation, and it is the same
+discipline [`34`](34-generated-documentation-report.md) applied to the reference.
