@@ -60,13 +60,13 @@ use crate::core::{Const, Core, CoreKind, Fields, Prim, Value, VarId};
 use crate::engine::{Engine, Prepared};
 use crate::plan::{Agg, Plan, Relate};
 use crate::read::{
-    self, Cell, Column, Cond, Datum, Field, Item, Name, Schema, Select, SqlError, SqlTy, Table,
+    self, Cell, Column, Datum, Eval, Field, Item, Name, Schema, Select, SqlError, SqlTy, Table,
 };
 use crate::ty::{Tier, Ty};
 
-/// A conjunction of disjunctions — the shape [`crate::read`] parses a `where` into, because `and`
-/// binds tighter than `or`.
-type Filter = Vec<Vec<Cond>>;
+/// A conjunction — the shape [`crate::read`] parses a `where` into, because `and` is the operator
+/// that lets one term be pushed into one table's scan while another is not.
+type Filter = Vec<read::Expr>;
 
 /// One record per row, as the fields of the [`CoreKind::Make`] that builds it.
 type Row = Vec<(Arc<str>, Core)>;
@@ -82,11 +82,11 @@ pub struct Compiled {
     /// whose rows carry every column of every table so that a `where` or an `order by` can name one
     /// the select list does not.
     pub projected: bool,
-    /// The `where` groups this did **not** apply, for the caller to apply to the rows.
+    /// The `where` terms this did **not** apply, for the caller to apply to the rows.
     ///
-    /// A condition names one column and therefore one table, so a disjunctive group whose
-    /// conditions all name the same table is pushed into that table's scan. One that spans two
-    /// tables cannot be, and is left here.
+    /// A term that names one table is pushed into that table's scan. One that spans two tables
+    /// cannot be, and is left here — except an equality between two columns, which is a join
+    /// condition written in the `where` and is moved into the `on` it means.
     pub residual: Filter,
     /// The tables the plan reads, in the order its state record holds them.
     inputs: Vec<Input>,
@@ -98,7 +98,9 @@ pub struct Compiled {
 
 /// One table the compiled plan reads.
 struct Input {
-    table: Arc<str>,
+    table: Table,
+    /// What the query called it, because a prefilter's conditions are written with that name.
+    alias: Arc<str>,
     /// Where this table's columns start in the row the plan reads, so `c{n}` names the same column
     /// everywhere in it.
     base: usize,
@@ -136,13 +138,23 @@ impl Compiled {
 
         let mut state = Fields::with_capacity(self.inputs.len());
         for (i, input) in self.inputs.iter().enumerate() {
-            let table = schema.table(&input.table).ok_or_else(|| {
-                SqlError::no_table(format!("there is no read model called \"{}\"", input.table))
-            })?;
+            let table = &input.table;
             let values = scan(schema, table, rows)?;
+            // The query's own name for the table, not the table's: a prefilter says `p.name` when
+            // the `from` said `people p`, and one rule for what a name means is the whole point of
+            // resolving it here the way the joined rows resolve it.
+            let fields: Vec<Field> = table
+                .columns
+                .iter()
+                .map(|c| Field {
+                    column: c.clone(),
+                    of: Some(input.alias.clone()),
+                })
+                .collect();
+            let ev = Eval::new(schema, &fields, rows);
             let mut out = Vec::with_capacity(values.len());
             for v in &values {
-                if !input.prefilter.is_empty() && !kept(table, v, &input.prefilter)? {
+                if !input.prefilter.is_empty() && !ev.holds(&input.prefilter, &table.row(v))? {
                     continue;
                 }
                 out.push(normalise(table, v, input.base));
@@ -188,38 +200,15 @@ fn exec(e: crate::backend::ExecError) -> SqlError {
 }
 
 /// A table's rows, from wherever that table's rows come from.
+///
+/// The catalogue and `pg_catalog` are built rather than scanned, and both are tables a join may
+/// name: "which tables have a column called `id`" is a self-join over one, and `psql`'s `\d` is a
+/// join over three of the other.
 fn scan(schema: &Schema, table: &Table, rows: &dyn read::Rows) -> Result<Vec<Value>, SqlError> {
-    match table.source {
-        // The catalogue is built rather than scanned, and it is a table a join may name: "which
-        // tables have a column called `id`" is a self-join over it, and it is the nearest thing
-        // this read model has to `pg_catalog`.
-        read::Source::Catalogue => Ok(schema.catalogue_values()),
-        _ => rows.scan(table),
+    match schema.builtin_rows(table) {
+        Some(values) => Ok(values),
+        None => rows.scan(table),
     }
-}
-
-/// Whether a row survives the `where` groups pushed into its own table's scan.
-fn kept(table: &Table, v: &Value, groups: &Filter) -> Result<bool, SqlError> {
-    let cells = table.row(v);
-    for group in groups {
-        let mut any = false;
-        for c in group {
-            let (i, _) = table.column(&c.column.column).ok_or_else(|| {
-                SqlError::no_column(format!(
-                    "\"{}\" has no column \"{}\"",
-                    table.name, c.column.column
-                ))
-            })?;
-            if read::matches(&cells[i], c) {
-                any = true;
-                break;
-            }
-        }
-        if !any {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 
 /// One element as the record the plan reads columns out of: `c{base+i}` per column.
@@ -297,7 +286,12 @@ pub fn compile_with(schema: &Schema, s: &Select, relate: Relate) -> Result<Compi
     }
     q.fresh = q.entries.len() as VarId;
 
-    let (residual, prefilters) = q.push_down(s)?;
+    // A comma join's equality lives in the `where`, and it is the same query as a `join … on`:
+    // lifting it gives the indexed operator rather than a cross product the filter then throws
+    // most of away. One that cannot be lifted stays in the `where` and is answered over the pairs,
+    // which is correct and `O(rows × rows)` — the cost of writing it that way.
+    let filter = q.lift_join_conditions(s.filter.clone());
+    let (residual, prefilters) = q.push_down(&filter)?;
     let grouping = !s.group.is_empty() || s.items.iter().any(Item::aggregates);
     if !residual.is_empty() && (grouping || s.distinct) {
         return Err(SqlError::unsupported(format!(
@@ -356,7 +350,8 @@ pub fn compile_with(schema: &Schema, s: &Select, relate: Relate) -> Result<Compi
         .iter()
         .zip(prefilters)
         .map(|(e, prefilter)| Input {
-            table: e.table.name.clone(),
+            table: e.table.clone(),
+            alias: e.alias.clone(),
             base: e.base,
             prefilter,
         })
@@ -379,6 +374,8 @@ struct Entry<'a> {
     base: usize,
     /// The `on` equalities as (this table's column, an earlier table's column).
     on: Vec<(usize, usize)>,
+    /// `left join`: a row before this one survives with nulls when this table has no match.
+    left: bool,
 }
 
 struct Query<'a> {
@@ -399,13 +396,13 @@ impl<'a> Query<'a> {
     /// sit in the row a join produces.
     fn resolve_from(&mut self, s: &'a Select) -> Result<(), SqlError> {
         for (i, f) in s.from.iter().enumerate() {
-            let table = self.schema.table(&f.table).ok_or_else(|| {
-                SqlError::no_table(format!(
-                    "there is no read model called \"{}\"; `select * from {}` lists what there is",
-                    f.table,
-                    Schema::CATALOGUE
-                ))
-            })?;
+            if let Some(call) = &f.function {
+                return Err(SqlError::unsupported(format!(
+                    "`{call}(…)` in a `from` is a set-returning function, and this read model has \
+                     none: what a `from` names here is a relation"
+                )));
+            }
+            let table = self.schema.relation(f.namespace.as_deref(), &f.table)?;
             if self.entries.iter().any(|e| e.alias.as_ref() == f.alias) {
                 return Err(SqlError::syntax(format!(
                     "\"{}\" is in this `from` twice; give one of them a name (`{} as x`)",
@@ -422,6 +419,7 @@ impl<'a> Query<'a> {
                 table,
                 base,
                 on: Vec::new(),
+                left: f.left,
             });
             // Resolved after the entry exists, so a join may name its own columns.
             let mut on = Vec::new();
@@ -463,7 +461,7 @@ impl<'a> Query<'a> {
                 }
                 on.push(pair);
             }
-            if i > 0 && on.is_empty() {
+            if i > 0 && on.is_empty() && !f.on.is_empty() {
                 return Err(SqlError::syntax(format!(
                     "`join {}` wants `on <column> = <column>`",
                     f.table
@@ -513,20 +511,96 @@ impl<'a> Query<'a> {
     }
 
     /// Split the `where` into what each table can be scanned with, and what is left over.
-    fn push_down(&self, s: &Select) -> Result<(Filter, Vec<Filter>), SqlError> {
+    ///
+    /// A term that names one table narrows that table's scan; one that names none is a constant
+    /// and narrows the first (so a `where false` reads nothing rather than everything); one that
+    /// spans two is left for the joined rows.
+    ///
+    /// A prefilter is what makes a `where` cost `O(rows)` on the table it names rather than
+    /// `O(rows × rows)` on the join — the rows it removes are rows no stage ever pairs.
+    ///
+    /// **A term over a `left join`'s own table is never pushed into it.** Removing a row from the
+    /// null-supplying side does not remove the joined row: it turns it into one with nulls, which
+    /// the term would then have rejected. `psql`'s `\d` is exactly this — `left join pg_namespace
+    /// n … where n.nspname <> 'pg_catalog'` — and pushing it down answers with every relation the
+    /// query asked to hide.
+    fn push_down(&self, filter: &Filter) -> Result<(Filter, Vec<Filter>), SqlError> {
         let mut prefilters: Vec<Filter> = vec![Vec::new(); self.entries.len()];
         let mut residual = Vec::new();
-        for group in &s.filter {
+        for term in filter {
+            let mut names = Vec::new();
+            term.names(&mut names);
+            // A name this query cannot resolve — one belonging to a subquery the term carries, or
+            // one that is simply wrong — makes the term unpushable rather than an error here: it
+            // is applied to the joined rows, where resolving it is what a person is shown.
             let mut owners = BTreeSet::new();
-            for cond in group {
-                owners.insert(self.owner(self.resolve(&cond.column)?));
+            let mut resolved = true;
+            for name in &names {
+                match self.resolve(name) {
+                    Ok(i) => {
+                        owners.insert(self.owner(i));
+                    }
+                    Err(_) => resolved = false,
+                }
+            }
+            if !resolved {
+                residual.push(term.clone());
+                continue;
             }
             match owners.iter().copied().collect::<Vec<_>>().as_slice() {
-                [one] => prefilters[*one].push(group.clone()),
-                _ => residual.push(group.clone()),
+                [] => prefilters[0].push(term.clone()),
+                [one] if !self.entries[*one].left => prefilters[*one].push(term.clone()),
+                _ => residual.push(term.clone()),
             }
         }
         Ok((residual, prefilters))
+    }
+
+    /// Move `where a.k = b.k` into the `on` of whichever entry it joins, and answer what is left.
+    ///
+    /// It applies only to an entry that has no `on` of its own and is not a `left join`: those are
+    /// the entries a comma join and a `cross join` produce, and they are the ones whose equality
+    /// was written in the `where` because the syntax has nowhere else to put it. Everything the
+    /// lift does not recognise stays where it was, so this can make a query faster and cannot make
+    /// one answer differently.
+    fn lift_join_conditions(&mut self, terms: Filter) -> Filter {
+        let mut kept = Vec::with_capacity(terms.len());
+        for term in terms {
+            let read::Expr::Cmp(l, read::CmpOp::Eq, r) = &term else {
+                kept.push(term);
+                continue;
+            };
+            let (read::Expr::Column(l), read::Expr::Column(r)) = (&**l, &**r) else {
+                kept.push(term);
+                continue;
+            };
+            let (Ok(li), Ok(ri)) = (self.resolve(l), self.resolve(r)) else {
+                kept.push(term);
+                continue;
+            };
+            let (lo, hi) = (self.owner(li), self.owner(ri));
+            // The later entry is the one being joined; the earlier one is what it joins to.
+            let (entry, pair) = match lo.cmp(&hi) {
+                std::cmp::Ordering::Less => (hi, (ri, li)),
+                std::cmp::Ordering::Greater => (lo, (li, ri)),
+                std::cmp::Ordering::Equal => {
+                    kept.push(term);
+                    continue;
+                }
+            };
+            let e = &self.entries[entry];
+            let usable = entry > 0
+                && e.on.is_empty()
+                && !e.left
+                && !self.fields[pair.0].column.nullable
+                && !self.fields[pair.1].column.nullable
+                && self.fields[pair.0].column.ty == self.fields[pair.1].column.ty;
+            match usable {
+                true => self.entries[entry].on.push(pair),
+                false => kept.push(term),
+            }
+        }
+        kept
     }
 
     /// Which `from` entry a wide column belongs to.
@@ -552,6 +626,7 @@ impl<'a> Query<'a> {
             let base = self.entries[i].base;
             let width = self.entries[i].table.columns.len();
             let pairs = self.entries[i].on.clone();
+            let (no_key, outer) = (pairs.is_empty(), self.entries[i].left);
             let key_of = |v: VarId, mine: bool| -> Core {
                 let at = |p: &(usize, usize)| if mine { p.0 } else { p.1 };
                 match pairs.as_slice() {
@@ -569,7 +644,6 @@ impl<'a> Query<'a> {
                     ),
                 }
             };
-            let predicate = prim(Prim::Eq, vec![key_of(right, true), key_of(left, false)]);
             let combined = make(
                 (0..base)
                     .map(|k| (Arc::from(field_name(k)), field(var(left), &field_name(k))))
@@ -579,16 +653,50 @@ impl<'a> Query<'a> {
                     )
                     .collect(),
             );
-            let inner = prim(
-                Prim::MapList,
-                vec![
-                    prim(
-                        Prim::FilterList,
-                        vec![var(i as VarId), lam(vec![right], predicate)],
-                    ),
-                    lam(vec![right], combined),
-                ],
-            );
+            // A `from` entry with no `on` is a cross product — a comma join whose equality stayed
+            // in the `where`, or a `cross join`. It is the loop without the filter, and the `where`
+            // then narrows the pairs it produced.
+            let source = match no_key {
+                true => var(i as VarId),
+                false => prim(
+                    Prim::FilterList,
+                    vec![
+                        var(i as VarId),
+                        lam(
+                            vec![right],
+                            prim(Prim::Eq, vec![key_of(right, true), key_of(left, false)]),
+                        ),
+                    ],
+                ),
+            };
+            let matched = prim(Prim::MapList, vec![source, lam(vec![right], combined)]);
+            // A `left join` keeps the left row when the group is empty, with this table's columns
+            // as units — which `read::cell_of` reads as the NULL SQL says they are. The group is
+            // **bound** rather than built twice: it is what the emptiness is a question about and
+            // what the answer is when it is not empty.
+            let inner = match outer {
+                false => matched,
+                true => {
+                    let group = self.fresh();
+                    let empty = make(
+                        (0..base)
+                            .map(|k| (Arc::from(field_name(k)), field(var(left), &field_name(k))))
+                            .chain((base..base + width).map(|k| {
+                                (Arc::from(field_name(k)), node(CoreKind::Const(Const::Unit)))
+                            }))
+                            .collect(),
+                    );
+                    bind(
+                        group,
+                        matched,
+                        node(CoreKind::If {
+                            cond: Box::new(prim(Prim::ListIsEmpty, vec![var(group)])),
+                            then: Box::new(node(CoreKind::ListLit(vec![empty]))),
+                            alt: Box::new(var(group)),
+                        }),
+                    )
+                }
+            };
             rows = prim(
                 Prim::ConcatLists,
                 vec![prim(Prim::MapList, vec![rows, lam(vec![left], inner)])],
@@ -641,6 +749,22 @@ impl<'a> Query<'a> {
                          `group by` is what asks an aggregate per group",
                     ))
                 }
+                // An expression in a `select distinct` or a `group by` would have to be compiled
+                // into the operator rather than evaluated over what it produced: the operator's
+                // key *is* the select list, so a `case` there is a `case` inside a
+                // `list_unique`. Nothing asks for one, and answering it wrongly would be worse
+                // than saying so.
+                Item::Expr(_, alias) => {
+                    return Err(SqlError::unsupported(format!(
+                        "`{}` is an expression, and a `{}` is over the columns it groups by: an \
+                         expression here would have to be part of the key the operator builds",
+                        alias.as_deref().unwrap_or("an expression"),
+                        match s.group.is_empty() {
+                            true => "select distinct",
+                            false => "group by",
+                        }
+                    )))
+                }
             }
         }
         Ok((out, fields))
@@ -672,6 +796,15 @@ impl<'a> Query<'a> {
                         "`select *` with a `group by` would name every column of every row, and a \
                          group is not a row: name the grouped columns and the aggregates",
                     ))
+                }
+                // See `project`: an expression's place in a grouped query is inside the key the
+                // operator builds, and this evaluates expressions over the rows one produced.
+                Item::Expr(_, alias) => {
+                    return Err(SqlError::unsupported(format!(
+                        "`{}` is an expression, and a `group by` groups by columns: an expression \
+                         here would have to be part of the key the operator builds",
+                        alias.as_deref().unwrap_or("an expression")
+                    )))
                 }
                 Item::Column(name, alias) => {
                     let i = self.resolve(name)?;

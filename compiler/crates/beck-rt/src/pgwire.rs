@@ -23,13 +23,25 @@
 //!   application's whole state must not be reachable from another host, and a flag that turns that
 //!   off is a decision with an ADR rather than a convenience.
 //! * **No TLS.** The same reason and the same bound.
-//! * **No `pg_catalog`.** `psql`'s `\d` sends a join against four catalogue relations, and those
-//!   relations do not exist here — the SQL has joins now, and nothing for one to join.
-//!   [`beck_core::read::Schema::CATALOGUE`] is the substitute, and it is a table like any other:
-//!   it can be filtered, grouped and joined, including to itself.
 //! * **No writes.** The log is the only way state changes; a read model that accepted an `insert`
 //!   would be a second way, which is the property [`01`](../../../../../docs/01-vision-and-premise.md)
 //!   §1.1 is about.
+//!
+//! # `pg_catalog`, and why it is not here either
+//!
+//! `psql`'s `\d` sends a join against four catalogue relations, and those relations are read
+//! models: [`beck_core::pg`] derives `pg_class`, `pg_namespace`, `pg_attribute` and the rest from
+//! the same [`Schema`] this file serves, and they are scanned, filtered and joined by the
+//! operators every other query goes through. **Nothing in this file knows what a backslash command
+//! is.** A catalogue answered by matching the query text would be a second query path — one that
+//! could drift from the schema, and one no `select` could reach — where this one cannot disagree
+//! with the schema because it *is* the schema under another set of column names.
+//!
+//! `\d`, `\d <table>`, `\dt`, `\dn` and `\l` are what that answers. Anything else asks for an
+//! object a read model does not have — a function, a role, an index — and is refused by the name
+//! of the relation it asked for ([`beck_core::pg::Rel::missing`]) rather than by an empty answer.
+//! [`beck_core::read::Schema::CATALOGUE`] is still the table that says what a read model is
+//! derived *from*, which is the question `pg_catalog` has no column for.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -428,7 +440,10 @@ struct Snapshot<'a> {
 impl read::Rows for Snapshot<'_> {
     fn scan(&self, table: &Table) -> Result<Vec<Value>, SqlError> {
         let values = match &table.source {
-            read::Source::Catalogue => return Ok(Vec::new()),
+            // Built here rather than read from the program, and `Schema::builtin_rows` answers
+            // them before a scan is asked for — so this arm is what a reader that went looking
+            // anyway is told, rather than a second way to build them.
+            read::Source::Catalogue | read::Source::Pg(_) => return Ok(Vec::new()),
             read::Source::State(path) => {
                 let at = read::at_path(self.state, path).ok_or_else(|| SqlError {
                     message: format!(
@@ -472,11 +487,11 @@ impl read::Rows for Snapshot<'_> {
     /// `psql`; a `Map` or a `list` in the accumulator knows its length too, and the scan path was
     /// cloning every value out of it before counting them.
     ///
-    /// The catalogue answers `None` and is scanned: it is a handful of rows built on demand, and a
-    /// second way to count them would be a second thing to keep true.
+    /// The catalogue and `pg_catalog` answer `None` and are scanned: each is a handful of rows
+    /// built on demand, and a second way to count them would be a second thing to keep true.
     fn count(&self, table: &Table) -> Result<Option<u64>, SqlError> {
         Ok(match &table.source {
-            read::Source::Catalogue => None,
+            read::Source::Catalogue | read::Source::Pg(_) => None,
             read::Source::State(path) => match read::at_path(self.state, path) {
                 Some(Value::Map(m)) => Some(m.len() as u64),
                 Some(Value::List(xs)) => Some(xs.len() as u64),

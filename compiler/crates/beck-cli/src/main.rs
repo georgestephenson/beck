@@ -1817,6 +1817,15 @@ fn explain_query(
                 "`{tag}` is acknowledged and ignored: there is nothing to plan.\n"
             ))
         }
+        // Each branch of a `union` is planned on its own — the stacking and the deduplication
+        // happen over the answers rather than in the plan — so there is no one plan to print.
+        beck_core::read::Stmt::Union { branches, .. } => {
+            return Ok(format!(
+                "this query is a `union` of {} selects, and each branch is planned on its own: \
+                 ask for one of them.\n",
+                branches.len()
+            ))
+        }
     };
     if !beck_core::query::relational(&select) {
         return Ok(
