@@ -650,11 +650,13 @@ rows.
   neither, because both fork the one layout three backends share. The corpus stands at
   **217<!--c:wasm-compiled--> definitions compiled against 20<!--c:wasm-refused--> refused**, where
   it stood at 0 and 237 — two short of what `beck-llvm` compiles, and both of those are
-  `str_to_int`, which is *linked* there and has no link line here. What is left: bundle format 2
-  with the type table ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) anticipated it),
-  and the kernel loading a compiled component instead of interpreting one. The WebAssembly
-  spec-suite obligation [`12`](12-standards-and-conformance.md) §12.3 pins to core 3.0 lands with
-  it.
+  `str_to_int`, which is *linked* there and has no link line here. What is left is **the loading**, and it is
+  blocked on one change in a file this work does not own: a module's
+  [`beck_llvm::heap::Heap`] cannot cross a wire, and a table of *types* cannot replace it because
+  the indices compiled code carries are assigned by a whole-program survey and a bundle is a slice
+  (§106.10). Behind that: bundle format **3** — 2 is already spent — carrying the compiled slice,
+  and the kernel calling it through one import the shim supplies. The WebAssembly spec-suite
+  obligation [`12`](12-standards-and-conformance.md) §12.3 pins to core 3.0 lands with it.
 - **The three named backend items** (S): the signal vocabulary compiled rather than read by the
   splitter, a **bounded** definition — a dictionary is a function value — and a worker that can
   answer two calls at once. [`93`](93-the-native-backends-report.md) §93.15 is the list, and the

@@ -231,13 +231,74 @@ anybody re-deciding them: `Ranked`'s variants are declared out of alphabetical o
 fields are, so a backend that made either one a *declaration* index answers two definitions
 backwards and nothing else.
 
-## 106.10 What is not built
+## 106.10 The type table, and why it is not a type table
 
-- **Bundle format 2 with the type table.** A compiling client backend needs the types the bundle
-  erases, which [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) anticipated as "a version
-  bump the format was built to take".
-- **The kernel loading a compiled component.** `beck-wasm` still interprets `Core`, so `adr/0022` is
-  **not reversed** — this is the half of it that runs, and nothing runs it.
+[`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) named the next two steps: "**Types are
+erased from the bundle.** A compiling client backend needs them, so it needs bundle format 2… the
+bundle grows a type table under a new format version." Both halves of that sentence turn out to be
+wrong, and finding out why is what this section is.
+
+**The version is already spent.** [`beck_core::bundle::FORMAT`] is `2`, and has been since the
+client learned to carry `reads_freshness`. The type table is format **3**, which is a detail — but
+it is the kind of detail an ADR's forecast gets wrong for free and a reader should not have to
+discover by reading the constant.
+
+**A type table is not enough, and the reason is a property this project wanted.** What a host has
+to hold in order to marshal against a module is not the types — it is the module's
+[`beck_llvm::heap::Heap`]: the layouts, the element and entry tables, the closure families, and the
+literal pool, each identified by an **index** the compiled code has baked into it. A view node's
+deferred value stores `heap.word_of(v.ty)` in the arena and the host reads it back through
+`heap.shape(at)`, so a host whose table is numbered differently decodes the right word as the wrong
+thing.
+
+Those indices are assigned by [`beck_llvm::heap::survey`], which walks **the whole program** —
+deliberately, and §93.1 is the reason: "a layout's index is then a function of the program's own
+order rather than of which definition happened to be emitted first, so the IR is the same bytes
+twice." A bundle is a *slice*. Replaying the survey in the browser would need the program the
+bundle exists not to carry, and resolving only the slice's own types produces a different numbering
+for the same layouts.
+
+So the bundle has to carry the `Heap`, and **a `Heap` cannot cross a wire**: its fields are
+private, it derives no `Serialize`, and its only public constructor is `Heap::new`. Everything can
+be *read* out of it — `layouts`, `lists`, `maps`, `families`, `strings` — and nothing can be put
+back, because the only way to make a layout is to resolve a type and the only way to resolve a type
+is to have the program.
+
+That is one change in [`beck_llvm::heap`] and it is somebody else's file. Any of three would do,
+and they are not equivalent:
+
+1. `#[derive(Serialize, Deserialize)]` on `Heap` and its parts. Smallest, and it puts `serde` in a
+   crate that has none.
+2. `Heap::parts()` and `Heap::from_parts()`, with the mirror types written where the bundle's other
+   mirrors are ([`beck_core::bundle`]'s own argument for why a concrete wire type is worth having).
+3. **`heap` as a crate of its own.** The layout is already "a contract between three parties"
+   ([`adr/0026`](adr/0026-the-native-heap-is-an-arena-of-offsets.md)); a fourth is a browser, and a
+   client kernel taking a dependency called `beck-llvm` in order to know what a record looks like
+   is a name that has stopped describing the thing.
+
+**What it costs the kernel is measured rather than guessed**, because that is the assumption
+everybody makes first: adding `beck-llvm` to `beck-wasm` and calling `Heap::decode` grows the
+`wasm32-unknown-unknown` kernel from **832,279 bytes to 832,482** — 203 bytes. The 21 MiB runtime
+archive `beck_llvm::prim` embeds is dead code and is eliminated. Whatever decides between the three
+options above, it is not size.
+
+The rest of the design is settled and is not the blocker:
+
+- The **compiler** compiles, not the browser. [`adr/0030`](adr/0030-the-webassembly-emitter-writes-its-own-bytes.md)
+  refuses to "compile a code generator into every browser download", so the module is emitted where
+  the bundle is built and travels in it.
+- The module is attached at **compile time**, not served time. `AGENTS.md`'s structural rule is that
+  `beck-rt` must not depend on any backend crate, and `beck-rt::http` is what serves the bundle — so
+  the compiled slice belongs on the `Placed` program, put there by whoever compiled it.
+- The kernel needs **one import**, not a second module of its own: the shim instantiates the
+  component, and the kernel hands it a blob and cells and gets a cell and a blob back. The
+  marshalling stays in the kernel, where the `Heap` is.
+
+## 106.11 What is not built
+
+- **The kernel loading a compiled component**, for §106.10's reason. `beck-wasm` still interprets
+  `Core`, so `adr/0022` is **not reversed** — this is the half of it that runs, and nothing runs
+  it.
 - **The runtime library's fifteen primitives**, refused for the link line exactly as `sin` and `cos`
   are ([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)): a
   WebAssembly module reaches `beck-prim` only as an import the bundle does not carry.
@@ -262,3 +323,4 @@ backwards and nothing else.
 | [`94`](94-the-client-report.md) §94.15 | "It compiles the **scalar subset**… so it compiles **none of the corpus**" is no longer true; "nothing loads its output" still is, and that is what keeps `adr/0022` standing |
 | [`93`](93-the-native-backends-report.md) | The third emitter shares the heap as well as the monomorphiser, the trap codes and the fixtures — what it does not share is where the arena lives |
 | [`adr/0026`](adr/0026-the-native-heap-is-an-arena-of-offsets.md) | "A fixed reservation nothing can invalidate… 256 MiB of untouched reservation costs nothing on any system this runs on" is false of a browser tab, which is why this target grows instead |
+| [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) | "it needs bundle format **2**" — the format is already 2, for `reads_freshness`, so the table is format 3. And "the bundle grows a **type table**" is not sufficient: §106.10 is why a table of types cannot reproduce the indices a whole-program survey assigned |
