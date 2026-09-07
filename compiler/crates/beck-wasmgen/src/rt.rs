@@ -251,7 +251,7 @@ impl Helper {
 /// place in the export order and a listing reads in the order a person wrote the program.
 pub struct Registry {
     /// `name` per defined function, in index order. The index space's zero is the first *import*,
-    /// so a caller adds [`Registry::base`].
+    /// so what this holds begins where the imports end.
     pub names: Vec<String>,
     by_name: BTreeMap<String, u32>,
     /// The helpers whose bodies are still to be built, in the order they were first asked for.
