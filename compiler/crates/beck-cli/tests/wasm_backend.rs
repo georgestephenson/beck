@@ -32,20 +32,23 @@
 //! `BECK_REQUIRE_WASM_RUN=1` forbids the skip, which is what CI sets. `docs/19` §19.4 item 10 is
 //! why the skip is loud.
 
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use beck_core::backend::Backend;
 use beck_core::{Program, Value};
 use beck_llvm::heap::{self, Heap, Repr};
-use beck_llvm::Trap;
+use beck_llvm::service::Asking;
+use beck_llvm::{Question, Trap, Upcall};
 
 mod support;
+use support::hostfix::Stated;
 use support::scalar::{
     float_pairs, floats, ints, pairs, render, singles, ARITHMETIC, CONTROL, REALS, RECURSION,
 };
-use support::{clofix, genfix, heapfix, listfix, mapfix, textfix, viewfix};
+use support::{clofix, failfix, genfix, heapfix, hostfix, listfix, mapfix, textfix, viewfix};
 
 fn require_run() -> bool {
     std::env::var("BECK_REQUIRE_WASM_RUN").is_ok_and(|v| v == "1")
@@ -104,20 +107,89 @@ macro_rules! engine {
 const DRIVER: &str = r#"
 const fs = require('fs');
 const [, , wasmPath, callsPath] = process.argv;
+
+// A synchronous line at a time, because an import has to *answer* before the call it interrupted
+// can carry on — which is what a question is.
+let pending = Buffer.alloc(0);
+function line() {
+  for (;;) {
+    const nl = pending.indexOf(10);
+    if (nl >= 0) {
+      const got = pending.subarray(0, nl).toString();
+      pending = pending.subarray(nl + 1);
+      return got;
+    }
+    const chunk = Buffer.alloc(1 << 16);
+    let n = 0;
+    try {
+      n = fs.readSync(0, chunk, 0, chunk.length, null);
+    } catch (err) {
+      if (err.code === 'EAGAIN') continue;
+      throw err;
+    }
+    if (n <= 0) throw new Error('the host closed the pipe');
+    pending = Buffer.concat([pending, chunk.subarray(0, n)]);
+  }
+}
+const ask = (q) => {
+  process.stdout.write(JSON.stringify({ q }) + '\n');
+  return JSON.parse(line());
+};
+
+let e;
+const grow = (bytes) => {
+  if (!e.memory) return;
+  const want = Math.ceil((bytes + 1) / 65536);
+  const have = e.memory.buffer.byteLength / 65536;
+  if (want > have) e.memory.grow(want - have);
+};
+// The four questions a computation cannot answer. What crosses is the frame the module built: the
+// question, the shapes, and a word per argument — so this knows nothing about what `secret_env`
+// takes or what `http_fetch` answers.
+const imports = {
+  beck: {
+    upcall: (op, span, ret, raises, named, a0, s0, a1, s1) => {
+      const used = Number(e.beck_heap.value);
+      const answer = ask({
+        op, span, ret, raises,
+        used: String(used),
+        args: [[s0, a0.toString()], [s1, a1.toString()]],
+        arena: Buffer.from(new Uint8Array(e.memory.buffer, 0, used)).toString('base64'),
+      });
+      const tail = Buffer.from(answer.tail, 'base64');
+      if (tail.length) {
+        grow(used + tail.length);
+        new Uint8Array(e.memory.buffer).set(tail, used);
+      }
+      e.beck_heap.value = BigInt(used + tail.length);
+      if (answer.code !== 0) {
+        e.beck_trap.value = answer.code;
+        e.beck_trap_span.value = span;
+        e.beck_trap_payload.value = BigInt(answer.payload);
+        e.beck_trap_type.value = named;
+        return 0n;
+      }
+      return BigInt(answer.value);
+    },
+  },
+};
+
 const inst = new WebAssembly.Instance(
-  new WebAssembly.Module(fs.readFileSync(wasmPath)), {});
-const e = inst.exports;
+  new WebAssembly.Module(fs.readFileSync(wasmPath)), imports);
+e = inst.exports;
 const view = new DataView(new ArrayBuffer(8));
 const toF64 = (bits) => { view.setBigUint64(0, BigInt(bits)); return view.getFloat64(0); };
 const fromF64 = (f) => { view.setFloat64(0, f); return view.getBigUint64(0).toString(); };
 const calls = JSON.parse(fs.readFileSync(callsPath, 'utf8'));
 const out = [];
-for (const c of calls) {
+for (let at = 0; at < calls.length; at += 1) {
+  const c = calls[at];
+  // The host is told a call is starting, so a stated answer that counts (a minted id) counts from
+  // the same place it does for the tree-walker.
+  process.stdout.write(JSON.stringify({ call: at }) + '\n');
   const blob = Buffer.from(c.blob, 'base64');
   if (e.memory) {
-    const pages = Math.ceil((blob.length + 1) / 65536);
-    const have = e.memory.buffer.byteLength / 65536;
-    if (pages > have) e.memory.grow(pages - have);
+    grow(blob.length);
     if (blob.length) new Uint8Array(e.memory.buffer).set(blob, 0);
   }
   const args = c.args.map((a) =>
@@ -125,6 +197,7 @@ for (const c of calls) {
   e.beck_trap.value = 0;
   e.beck_trap_span.value = 0;
   e.beck_trap_payload.value = 0n;
+  if (e.beck_trap_type) e.beck_trap_type.value = 0n;
   e.beck_heap.value = BigInt(c.hp);
   let r;
   try {
@@ -133,21 +206,26 @@ for (const c of calls) {
     out.push({ crash: String(err) });
     continue;
   }
-  if (e.beck_trap.value !== 0) {
-    out.push({ trap: e.beck_trap.value, payload: e.beck_trap_payload.value.toString() });
-    continue;
-  }
-  // The used prefix of the memory *is* the arena the host reads the answer out of.
   const used = Number(e.beck_heap.value);
   const heap = e.memory
     ? Buffer.from(new Uint8Array(e.memory.buffer, 0, used)).toString('base64')
     : '';
+  if (e.beck_trap.value !== 0) {
+    // A `raise` carries a value, so the arena travels with the failure — which is the one place
+    // the protocol treats a failure like an answer.
+    out.push({
+      trap: e.beck_trap.value,
+      payload: e.beck_trap_payload.value.toString(),
+      heap,
+    });
+    continue;
+  }
   out.push(
     c.ret === 'i' ? { k: 'i', v: r.toString(), heap }
     : c.ret === 'f' ? { k: 'f', v: fromF64(r), heap }
     : { k: 'b', v: r !== 0, heap });
 }
-process.stdout.write(JSON.stringify(out));
+process.stdout.write(JSON.stringify({ out }) + '\n');
 "#;
 
 /// What one backend answered: a value, or the message it failed with.
@@ -183,10 +261,26 @@ struct Both {
     evaluator: Arc<dyn Backend>,
     js: PathBuf,
     dir: PathBuf,
+    /// The stated host, when this program has effects. Rewound before each backend is driven over
+    /// a case, so that the *n*th question of a call gets the same answer whichever asked it.
+    stated: Option<Arc<Stated>>,
 }
 
 impl Both {
     fn over(name: &str, src: &str, js: PathBuf) -> Both {
+        Both::host(name, src, js, None)
+    }
+
+    /// The same, with both backends answering their host effects from one stated host.
+    ///
+    /// This is what makes a differential over `now()` mean anything: the two are asked the same
+    /// question and told the same answer, so what is left to compare is what the *backends* did
+    /// with it.
+    fn answering(name: &str, src: &str, js: PathBuf, atoms: Arc<Stated>) -> Both {
+        Both::host(name, src, js, Some(atoms))
+    }
+
+    fn host(name: &str, src: &str, js: PathBuf, stated: Option<Arc<Stated>>) -> Both {
         let program = compile(name, src);
         let module = emit(&program);
         // Unique per `Both` rather than per program: two tests over one fixture run in one
@@ -203,12 +297,19 @@ impl Both {
         std::fs::write(dir.join("module.wasm"), &module.wasm).expect("the module");
         std::fs::write(dir.join("module.wat"), &module.text).expect("the listing");
         std::fs::write(dir.join("driver.js"), DRIVER).expect("the driver");
+        let evaluator: Arc<dyn Backend> = match &stated {
+            Some(atoms) => {
+                Arc::new(beck_eval::Evaluator::new(program.clone()).answering(atoms.clone()))
+            }
+            None => beck_eval::backend_for(program.clone()),
+        };
         Both {
-            evaluator: beck_eval::backend_for(program.clone()),
+            evaluator,
             program,
             module,
             js,
             dir,
+            stated,
         }
     }
 
@@ -260,25 +361,116 @@ impl Both {
         )
         .expect("the calls file");
 
-        let out = Command::new(&self.js)
+        let mut child = Command::new(&self.js)
             .arg(self.dir.join("driver.js"))
             .arg(self.dir.join("module.wasm"))
             .arg(&calls_path)
-            .output()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .expect("the engine runs");
+        let mut ask = child.stdin.take().expect("the engine takes questions");
+        let said = BufReader::new(child.stdout.take().expect("the engine answers"));
+        // Drained on a thread of its own: a child that filled its error pipe while this loop was
+        // waiting on its output would deadlock, and what fills it is exactly the case worth
+        // reading — a module the engine refused.
+        let mut errors = child.stderr.take().expect("the engine complains");
+        let complaints = std::thread::spawn(move || {
+            let mut held = String::new();
+            let _ = errors.read_to_string(&mut held);
+            held
+        });
+
+        let asking = Asking::new();
+        let mut answers: Vec<serde_json::Value> = Vec::new();
+        for line in said.lines() {
+            let line = line.expect("a line from the engine");
+            let message: serde_json::Value =
+                serde_json::from_str(&line).unwrap_or_else(|e| panic!("`{line}` is not JSON: {e}"));
+            if let Some(q) = message.get("q") {
+                let answer = self.serve(q, &asking);
+                writeln!(ask, "{answer}").expect("the engine is listening");
+                ask.flush().expect("the engine is listening");
+            } else if message.get("call").is_some() {
+                if let Some(atoms) = &self.stated {
+                    atoms.rewind();
+                }
+            } else if let Some(out) = message.get("out") {
+                answers = out.as_array().expect("a list of answers").clone();
+            }
+        }
+        drop(ask);
+        let status = child.wait().expect("the engine exits");
+        let complaints = complaints.join().unwrap_or_default();
         assert!(
-            out.status.success(),
-            "the engine refused the module:\n{}",
-            String::from_utf8_lossy(&out.stderr)
+            status.success(),
+            "the engine refused the module:\n{complaints}"
         );
-        let answers: Vec<serde_json::Value> =
-            serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
-                panic!(
-                    "the driver's answer is not JSON ({e}): {}",
-                    String::from_utf8_lossy(&out.stdout)
-                )
-            });
+        assert_eq!(
+            answers.len(),
+            tuples.len(),
+            "the engine answered {} of {} calls:\n{complaints}",
+            answers.len(),
+            tuples.len()
+        );
         answers.iter().map(|a| decode(a, sig.ret, heap)).collect()
+    }
+
+    /// One question, answered by [`beck_llvm::service`] — the host half the native backends
+    /// already have, unchanged.
+    ///
+    /// That is the point of the frame's shapes: this function knows what `Upcall::arity` is and
+    /// nothing else about the four primitives, and the encoding and decoding are `Heap`'s.
+    fn serve(&self, q: &serde_json::Value, asking: &Asking) -> String {
+        let atoms = self
+            .stated
+            .as_ref()
+            .expect("only a program with effects asks anything");
+        let code = q["op"].as_u64().expect("a question names itself") as u32;
+        let op = Upcall::from_code(code).unwrap_or_else(|| panic!("`{code}` is not a question"));
+        let used: u64 = q["used"]
+            .as_str()
+            .expect("the mark")
+            .parse()
+            .expect("a decimal");
+        let arena = unbase64(q["arena"].as_str().unwrap_or(""));
+        let args: Vec<(u32, u64)> = q["args"]
+            .as_array()
+            .expect("a shape and a word per argument")
+            .iter()
+            .take(op.arity())
+            .map(|a| {
+                (
+                    a[0].as_u64().expect("a shape") as u32,
+                    a[1].as_str()
+                        .expect("a word")
+                        .parse::<i64>()
+                        .expect("an i64") as u64,
+                )
+            })
+            .collect();
+        let answered = beck_llvm::service::answer(
+            &self.module.heap,
+            atoms.as_ref(),
+            asking,
+            Question {
+                op,
+                span: q["span"].as_u64().unwrap_or(0) as u32,
+                used,
+                ret: q["ret"].as_u64().expect("the answer's shape") as u32,
+                raises: q["raises"].as_u64().unwrap_or(0) as u32,
+                args: &args,
+                arena: &arena,
+            },
+        );
+        serde_json::json!({
+            "code": answered.code,
+            "payload": answered.payload.to_string(),
+            "value": answered.value.to_string(),
+            "tail": base64(&answered.tail),
+        })
+        .to_string()
     }
 
     /// Assert the two agree on every tuple, and answer how many were compared.
@@ -287,13 +479,9 @@ impl Both {
             self.compiled(name),
             "`{name}` did not compile to WebAssembly, so this compares the evaluator with itself"
         );
-        let def = &self.program.defs[name];
         let theirs = self.in_wasm(name, tuples);
         for (args, in_wasm) in tuples.iter().zip(&theirs) {
-            let evaluated = beck_eval::on_the_evaluator_stack(|| {
-                let f = self.evaluator.function(&def.body).expect("prepares");
-                outcome(f(args.to_vec()))
-            });
+            let evaluated = self.evaluated(name, args);
             assert_eq!(
                 &evaluated,
                 in_wasm,
@@ -324,6 +512,9 @@ impl Both {
     /// What the *evaluator* answers, for a case that needs a value only it can build.
     fn evaluated(&self, name: &str, args: &[Value]) -> Outcome {
         let def = &self.program.defs[name];
+        if let Some(atoms) = &self.stated {
+            atoms.rewind();
+        }
         beck_eval::on_the_evaluator_stack(|| {
             let f = self.evaluator.function(&def.body).expect("prepares");
             outcome(f(args.to_vec()))
@@ -369,6 +560,14 @@ fn decode(answer: &serde_json::Value, ret: Repr, heap: &Heap) -> Outcome {
             .unwrap_or(0);
         let trap = Trap::from_code(code as u32)
             .unwrap_or_else(|| panic!("`{code}` is not a trap either native backend stores"));
+        // A raise is the one failure that is not a fault, so the message says *what* was raised —
+        // decoded by `Heap::raised`, which is the same function the native host calls.
+        if trap == Trap::Raised {
+            let blob = unbase64(answer.get("heap").and_then(|h| h.as_str()).unwrap_or(""));
+            return Err(heap
+                .raised(payload as u64, &blob)
+                .map_or_else(|why| why, |v| format!("raised `{}`", v.display())));
+        }
         return Err(trap.message(payload));
     }
     let v = answer.get("v").expect("an answer carries a value");
@@ -1245,6 +1444,119 @@ fn the_evaluator_and_webassembly_agree_on_list_patterns() {
         assert_eq!(walked.expect("answers"), Value::str_(want));
     }
     println!("{n} list-pattern calls agreed, in a WebAssembly engine");
+}
+
+/// Failure, which is `raise` and `try:` — the one control-flow shape a `block` is for here.
+///
+/// The native backends unwind through an error cell that was already an unwinder; here the trap
+/// globals are that cell and a handler is a `block` a failure branches out of, so what the
+/// differential is asking is whether a lexical handler written as structured control flow catches
+/// exactly what a label-and-branch one catches.
+#[test]
+fn the_evaluator_and_webassembly_agree_on_failure() {
+    let js = engine!();
+    let both = Both::over("failure.beck", failfix::FAILURE, js);
+    let ns = failfix::ints(&failfix::numbers());
+    let mut n = 0;
+    for name in [
+        "checked",
+        "uncaught",
+        "caught",
+        "described",
+        "overflows",
+        "wrong_type",
+        "nested",
+    ] {
+        n += both.agree(name, &ns);
+    }
+    n += both.agree("named", &failfix::texts());
+    n += both.agree("several", &failfix::lists());
+    n += both.agree("all_checked", &failfix::lists());
+    println!("{n} fallible calls agreed, in a WebAssembly engine");
+    assert!(n >= 80, "only {n} calls compared");
+}
+
+/// The message a raise crosses the boundary with is the evaluator's, value and all.
+///
+/// Asserted directly as well as differentially, because the differential compares two backends
+/// against each other and this says what the string *is*: a regression to "the compiled program
+/// failed" would still agree with itself.
+#[test]
+fn an_uncaught_raise_names_the_value_it_carried() {
+    let js = engine!();
+    let both = Both::over("failure.beck", failfix::FAILURE, js);
+    for (k, want) in [(101, "raised `TooBig{n: 101}`"), (0, "raised `Blank`")] {
+        let (walked, compiled) = both.call("uncaught", &[Value::Int(k)]);
+        assert_eq!(compiled, Err(want.to_string()), "`uncaught({k})`");
+        assert_eq!(walked, compiled);
+    }
+    // The control: the same definition, on an argument that does not raise.
+    let (walked, compiled) = both.call("uncaught", &[Value::Int(2)]);
+    assert_eq!(compiled, Ok(Value::Int(5)));
+    assert_eq!(walked, compiled);
+}
+
+/// The four questions a computation cannot answer, asked of a **stated** host.
+///
+/// The native backends write a question frame into the arena and block on a pipe; here the loader
+/// is in the same tab, holds the memory, and can be called — so the frame's fields are the
+/// import's arguments and the answer is its result. What is *not* different is who answers:
+/// [`beck_llvm::service::answer`] services this suite's questions and the native worker's, so a
+/// divergence here is the emitter's rather than two hosts disagreeing.
+#[test]
+fn the_evaluator_and_webassembly_agree_on_the_host_effects() {
+    let js = engine!();
+    let atoms = Stated::new();
+    let both = Both::answering("effects.beck", hostfix::EFFECTS, js, atoms.clone());
+    let mut n = 0;
+    for (name, args) in hostfix::calls() {
+        n += both.agree(name, std::slice::from_ref(&args));
+    }
+    // Both backends made every outbound call, rather than one of them being the evaluator twice:
+    // five of the cases reach `http_fetch` once each, and the count is per backend.
+    assert_eq!(
+        atoms.asked(),
+        10,
+        "every `http_fetch` case has to have been asked by both backends"
+    );
+    // The set has to *contain* the failure, or this passed by never carrying a raise across the
+    // boundary.
+    let (walked, compiled) = both.call("unreachable", &[]);
+    assert_eq!(walked, compiled);
+    assert!(
+        walked
+            .expect_err("nowhere.invalid is unreachable")
+            .contains("HttpUnreachable"),
+        "an uncaught raise carries the value, not the fact of one"
+    );
+    println!("{n} host-effect calls agreed, in a WebAssembly engine");
+}
+
+/// A module that asks nothing declares nothing.
+///
+/// The property is what keeps the import a cost only the programs that need one pay — a browser
+/// that had to supply a function for every module would be a browser that knows what a Beck
+/// program is — and it is decided from the definitions the fixed point *kept*, so a module whose
+/// only user of `now()` was refused for another reason still declares nothing.
+#[test]
+fn only_a_module_that_asks_declares_an_import() {
+    let quiet = compile(
+        "quiet.beck",
+        "def twice(n: Int) -> Int:\n    return n + n\n",
+    );
+    assert!(!emit(&quiet).text.contains("(import"));
+    let asking = compile("asking.beck", "def stamped() -> Int:\n    return now()\n");
+    let module = emit(&asking);
+    assert!(
+        module.signature("stamped").is_some(),
+        "{:?}",
+        module.refusals
+    );
+    assert!(
+        module.text.contains(r#"(import "beck" "upcall""#),
+        "{}",
+        module.text
+    );
 }
 
 /// Running out of heap is a **message**, not a fault.

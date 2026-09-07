@@ -54,7 +54,7 @@ use beck_diag::Span;
 use beck_llvm::heap::{self, Heap, Repr};
 use beck_llvm::{prim, Refusal, Scalar, Signature, Trap, Upcall};
 
-use crate::binary::{Ins, ModuleBuilder, ValType};
+use crate::binary::{Import, Ins, ModuleBuilder, ValType};
 use crate::rt::{self, Fun, Helper, Registry, Rt};
 
 /// The globals a compiled module exports, in index order.
@@ -69,6 +69,12 @@ pub const TRAP_PAYLOAD: u32 = 2;
 /// and has to say where they end — which is the same "reset the arena to the end of the arguments"
 /// the native worker does before every call.
 pub const HEAP: u32 = 3;
+/// The **name** of the type a [`Trap::Raised`] carries, as its offset in the literal pool.
+///
+/// A name and not a shape, because two instantiations of one generic type are two layouts and one
+/// name, and it is the name a `try:` compares — `beck_core`'s own rule, since the atom is
+/// `raises(T)`. It is the third word of the native backends' error cell, one global over.
+pub const TRAP_TYPE: u32 = 4;
 
 /// The most parameters a compiled function may have.
 ///
@@ -165,9 +171,37 @@ pub fn module(program: &Program) -> Module {
         .cloned()
         .collect();
 
+    // The one import, decided before any index is handed out: an imported function comes *before*
+    // every defined one in the index space, so whether there is one has to be known first. It is
+    // asked of the definitions the fixed point kept, so a module whose only user of `now()` was
+    // refused declares nothing and instantiates against `{}`.
     let mut builder = ModuleBuilder::new();
+    if order.iter().any(|n| asks(&program.defs[n].body)) {
+        // The frame is `beck_llvm::Question`'s five fields and then a shape and a word per
+        // argument, in that order — the same protocol the native worker writes down a pipe, with
+        // the pipe taken out.
+        let ty = builder.ty(
+            vec![
+                ValType::I32, // which question
+                ValType::I32, // the span that asked
+                ValType::I32, // the shape the answer is expected to have
+                ValType::I32, // the shape a failure would carry
+                ValType::I64, // the name of the type a failure raises, in the pool
+                ValType::I64, // the first argument, and its shape
+                ValType::I32,
+                ValType::I64, // the second
+                ValType::I32,
+            ],
+            vec![ValType::I64],
+        );
+        builder.imports.push(Import {
+            module: "beck".into(),
+            field: "upcall".into(),
+            ty,
+        });
+    }
+    let upcall = builder.defined_at().checked_sub(1);
     let mut registry = Registry::new(builder.defined_at());
-    let _ = &builder;
     let mut indexed: BTreeMap<Arc<str>, Signature> = BTreeMap::new();
     for name in &order {
         let mut sig = sigs[name].clone();
@@ -181,6 +215,7 @@ pub fn module(program: &Program) -> Module {
     for name in &order {
         let def = &program.defs[name];
         let mut fun = Function::new(&indexed, &eligible, program, &mut heap, &mut registry);
+        fun.upcall = upcall;
         fun.spans = std::mem::take(&mut spans);
         let body = fun
             .emit(def)
@@ -258,6 +293,9 @@ fn builder_setup(builder: &mut ModuleBuilder, heap: &Heap) {
     builder
         .globals
         .push(("beck_heap".into(), ValType::I64, true, pool_end as i64));
+    builder
+        .globals
+        .push(("beck_trap_type".into(), ValType::I64, true, 0));
 
     let arena = !heap.is_empty() || heap.uses_text() || heap.uses_lists() || heap.uses_maps();
     if arena {
@@ -391,6 +429,23 @@ pub struct Function<'a> {
     /// The lambdas this body built, by rank, each already a function of its own — collected
     /// upwards because a `lam` is an *expression* and WebAssembly has no nested definitions.
     pub lambdas: BTreeMap<u32, Fun>,
+    /// Which import asks the host a question, when this module has one.
+    ///
+    /// `None` during the fixed point, where which definitions survive is what is being decided and
+    /// therefore whether the import exists at all is not yet known. Nothing those rounds emit is
+    /// kept.
+    upcall: Option<u32>,
+    /// How many control frames are open here, so a `br` can be counted from the inside out.
+    depth: u32,
+    /// Where a failure inside the block being emitted goes, innermost last — as the [`depth`] the
+    /// handler's block was opened at.
+    ///
+    /// Empty means the function's own exit. A `try:` pushes one while its block is emitted, so
+    /// every check a call makes and every trap a primitive stores lands in the handler rather than
+    /// leaving the function — which is the whole of what makes a handler lexical
+    /// ([`docs/38`](../../../../../docs/38-literature-survey.md) §38.4): there is no dynamic search
+    /// for who handles what, because the distance is decided where the block is written.
+    handlers: Vec<u32>,
 }
 
 impl<'a> Function<'a> {
@@ -414,6 +469,9 @@ impl<'a> Function<'a> {
             ret: Repr::Int,
             spans: Vec::new(),
             lambdas: BTreeMap::new(),
+            upcall: None,
+            depth: 0,
+            handlers: Vec::new(),
         }
     }
 
@@ -505,11 +563,34 @@ impl<'a> Function<'a> {
     }
 
     fn push(&mut self, ins: Ins) {
+        match ins {
+            Ins::Block(_) | Ins::Loop(_) | Ins::If(_) => self.depth += 1,
+            Ins::End => self.depth -= 1,
+            _ => {}
+        }
         self.code.push(ins);
     }
 
     fn all(&mut self, xs: impl IntoIterator<Item = Ins>) {
-        self.code.extend(xs);
+        for ins in xs {
+            self.push(ins);
+        }
+    }
+
+    /// Leave the computation: to the innermost `try:` if there is one, and out of the function if
+    /// there is not.
+    fn escape(&mut self) {
+        match self.handlers.last().copied() {
+            Some(h) => {
+                let out = self.depth - h;
+                self.push(Ins::Br(out));
+            }
+            None => {
+                let z = zero(self.ret);
+                self.push(z);
+                self.push(Ins::Return);
+            }
+        }
     }
 
     /// A fresh local. Never reused: a WebAssembly local costs a slot in a frame, and a reuse
@@ -541,16 +622,14 @@ impl<'a> Function<'a> {
         self.push(Ins::GlobalSet(TRAP));
         self.push(Ins::I32Const(index as i32));
         self.push(Ins::GlobalSet(TRAP_SPAN));
-        let z = zero(self.ret);
-        self.push(z);
-        self.push(Ins::Return);
+        self.escape();
     }
 
     /// After a call that may have trapped: stop, leaving the reason where the callee put it.
     fn checked(&mut self) {
         self.all([Ins::GlobalGet(TRAP), Ins::If(None)]);
-        let z = zero(self.ret);
-        self.all([z, Ins::Return, Ins::End]);
+        self.escape();
+        self.push(Ins::End);
     }
 
     fn repr_of(&mut self, ty: &Ty) -> Result<Repr, String> {
@@ -1217,6 +1296,7 @@ impl<'a> Function<'a> {
         // forever — and overwritten with what comes back.
         self.lambdas.insert(rank, Fun::new(&[], ValType::I64));
         let mut inner = Function::new(self.sigs, self.eligible, self.program, self.heap, self.reg);
+        inner.upcall = self.upcall;
         inner.spans = std::mem::take(&mut self.spans);
         let emitted = inner.lam_body(params, body, &fam, &captures);
         self.spans = std::mem::take(&mut inner.spans);
@@ -1731,6 +1811,11 @@ impl Function<'_> {
 
     fn prim(&mut self, op: Prim, args: &[Core], c: &Core) -> Result<Val, String> {
         let (ty, span) = (&c.ty, c.span);
+        // Before the arguments, because this one's first argument is a *block* and evaluating it
+        // here would run it outside the protection it exists to have.
+        if op == Prim::Try {
+            return self.try_(args, ty, span);
+        }
         let mut vals = Vec::with_capacity(args.len());
         for a in args {
             vals.push(self.value(a)?);
@@ -1758,11 +1843,7 @@ impl Function<'_> {
         // WebAssembly module reaches neither, and both would be a second implementation of
         // something whose whole value is that there is one.
         if let Some(ask) = Upcall::of(op) {
-            return Err(format!(
-                "`{}` is a question for the host, and this module declares no import to ask it \
-                 with yet",
-                ask.name()
-            ));
+            return self.upcall(ask, &vals, ty, span);
         }
         if prim::op_of(op).is_some() || prim::float_op_of(op).is_some() {
             return Err(format!(
@@ -2240,6 +2321,36 @@ impl Function<'_> {
                 self.push(Ins::LocalGet(is_some));
                 self.push(Ins::Select);
                 Ok(self.held(payload))
+            }
+
+            // `raise e` — the one failure that is not a fault, so it carries a value.
+            //
+            // Two words in the arena (the value's shape and its word, which is a view node's
+            // deferred value one subsystem over) and the type *name* in a global of its own.
+            Prim::Raise => {
+                arity(1)?;
+                let Repr::Obj(at) = vals[0].ty else {
+                    return Err(format!(
+                        "raises {}, and a raised value must have a declared type",
+                        self.heap.show(vals[0].ty)
+                    ));
+                };
+                let name = self.heap.layout(at).name.to_string();
+                let shape = self.heap.word_of(vals[0].ty);
+                let pair = self.alloc_bytes(heap::RAISED_WORDS * heap::WORD, span);
+                self.store_word(pair.local, 0, i64::from(shape));
+                self.store_field(pair.local, 1, vals[0]);
+                let named = self.heap.intern(&name);
+                let named = self.heap.string_offset(named);
+                self.push(Ins::I64Const(named as i64));
+                self.push(Ins::GlobalSet(TRAP_TYPE));
+                self.trap(Trap::Raised, span, Some(pair.local));
+                // Unreachable: `trap` left for the handler. `raise` has no type of its own, so the
+                // checker gave the expression whatever the context wanted, and nothing reads this.
+                let want = self.repr_of(ty).unwrap_or(Repr::Int);
+                let z = zero(want);
+                self.push(z);
+                Ok(self.held(want))
             }
 
             // -- the page -----------------------------------------------------------------
@@ -3144,5 +3255,284 @@ impl Function<'_> {
         self.push(Ins::I32WrapI64);
         self.push(Ins::MemoryCopy);
         Ok(answer)
+    }
+}
+
+// -------------------------------------------------------------------------------------------
+// `try:`, which is the one control-flow shape a `block` is for
+// -------------------------------------------------------------------------------------------
+
+impl Function<'_> {
+    /// `try: block` — run the block under a handler, and reify one failure as a `Result[T, E]`.
+    ///
+    /// The block is emitted **inline**, not as a closure applied. The checker wraps it in a `lam`
+    /// of no parameters so the evaluator can delay it; here there is nothing to delay, and inlining
+    /// is what puts the block's own calls under the handler.
+    ///
+    /// Emitting it for a **value** is load-bearing and not a style: a call in tail position is a
+    /// `return_call` that does not check the trap globals (there is no frame left to check in),
+    /// which is correct at the top of a function and would walk straight through a handler.
+    ///
+    /// What the handler does is the evaluator's `Prim::Try`, word for word: a raise of the caught
+    /// type becomes `Err(value)`, and **everything else keeps travelling** — a fault is not a
+    /// failure, and a different error type belongs to a handler further out.
+    ///
+    /// # Why this is two blocks and not a branch
+    ///
+    /// WebAssembly has no jumps, so the label a failure goes to is the end of a `block` it is
+    /// *inside*. The inner one is the failure exit and the outer one carries the answer past it:
+    /// the success path builds its `Ok` and `br`s over the handler, and every `checked()` under
+    /// the handler `br`s to the inner block's end instead of returning.
+    fn try_(&mut self, args: &[Core], ty: &Ty, span: Span) -> Result<Val, String> {
+        let [block, caught] = args else {
+            return Err("`try` takes a block and the name of what it catches".into());
+        };
+        let CoreKind::Lam { params, body } = &block.kind else {
+            return Err("`try` over something that is not a block".into());
+        };
+        if !params.is_empty() {
+            return Err("`try` over a block that takes arguments".into());
+        }
+        let CoreKind::Const(Const::Str(name)) = &caught.kind else {
+            return Err("`try` whose caught type is not written down".into());
+        };
+        // `Result[T, E]`, from the type the checker gave this expression: `E` is what the raised
+        // value is read back as and `T` is what the block answers.
+        let repr = self
+            .repr_of(ty)
+            .map_err(|why| format!("catches into a value that is {why}"))?;
+        let Repr::Obj(at) = repr else {
+            return Err(format!("catches into `{ty}`, which is not an object"));
+        };
+        let (ok, err, layout) = {
+            let l = self.heap.layout(at);
+            let ok = l
+                .tag_of(Some("Ok"))
+                .ok_or_else(|| format!("`{}` has no `Ok`", l.shown))?;
+            let err = l
+                .tag_of(Some("Err"))
+                .ok_or_else(|| format!("`{}` has no `Err`", l.shown))?;
+            (ok, err, l.clone())
+        };
+        let (ok_slot, ok_ty) = layout.variants[ok as usize]
+            .slot("value")
+            .ok_or_else(|| format!("`{}`'s `Ok` has no `value`", layout.shown))?;
+        let (err_slot, err_ty) = layout.variants[err as usize]
+            .slot("error")
+            .ok_or_else(|| format!("`{}`'s `Err` has no `error`", layout.shown))?;
+        let bytes = layout
+            .variants
+            .iter()
+            .map(|v| v.bytes())
+            .max()
+            .unwrap_or(heap::WORD);
+        let want = self.heap.intern(name);
+        let want = self.heap.string_offset(want);
+        let out = self.local(ValType::I64);
+
+        self.push(Ins::Block(None));
+        self.push(Ins::Block(None));
+        self.handlers.push(self.depth);
+        let value = self.expr(body, false);
+        self.handlers.pop();
+        let value = value?;
+        if value != ok_ty {
+            return Err(format!(
+                "`try` over a block answering {} where `{}` carries {}",
+                self.heap.show(value),
+                layout.shown,
+                self.heap.show(ok_ty)
+            ));
+        }
+        let held = self.held(value);
+        let good = self.alloc_bytes(bytes, span);
+        self.store_word(good.local, 0, i64::from(ok));
+        self.store_field(good.local, ok_slot, held);
+        self.load(good);
+        self.push(Ins::LocalSet(out));
+        self.push(Ins::Br(1));
+        self.push(Ins::End);
+
+        // Two tests and no search: is this failure a raise at all, and is it the one this `try:`
+        // names. Anything else leaves for the *enclosing* handler with the globals untouched.
+        self.push(Ins::GlobalGet(TRAP));
+        self.push(Ins::I32Const(Trap::Raised.code() as i32));
+        self.push(Ins::I32Ne);
+        self.push(Ins::GlobalGet(TRAP_TYPE));
+        self.push(Ins::I64Const(want as i64));
+        self.push(Ins::I64Ne);
+        self.push(Ins::I32Or);
+        self.push(Ins::If(None));
+        self.escape();
+        self.push(Ins::End);
+
+        // Handled. The globals are cleared **before** anything else, because the allocation below
+        // checks them: a failure that stops here must not look like one to the next call.
+        self.push(Ins::GlobalGet(TRAP_PAYLOAD));
+        let pair = self.local(ValType::I64);
+        self.push(Ins::LocalSet(pair));
+        self.push(Ins::I32Const(0));
+        self.push(Ins::GlobalSet(TRAP));
+        self.push(Ins::I32Const(0));
+        self.push(Ins::GlobalSet(TRAP_SPAN));
+        self.push(Ins::I64Const(0));
+        self.push(Ins::GlobalSet(TRAP_PAYLOAD));
+        self.push(Ins::I64Const(0));
+        self.push(Ins::GlobalSet(TRAP_TYPE));
+        let carried = self.load_field(pair, 1, err_ty);
+        let bad = self.alloc_bytes(bytes, span);
+        self.store_word(bad.local, 0, i64::from(err));
+        self.store_field(bad.local, err_slot, carried);
+        self.load(bad);
+        self.push(Ins::LocalSet(out));
+        self.push(Ins::End);
+
+        Ok(Val {
+            local: out,
+            ty: repr,
+        })
+    }
+}
+
+// -------------------------------------------------------------------------------------------
+// The four questions a computation cannot answer
+// -------------------------------------------------------------------------------------------
+
+/// Whether any part of this body asks the host something.
+///
+/// Asked of a definition the fixed point kept, so the answer decides whether the module declares
+/// the import — and a module that declares one it never calls would be a module a loader has to
+/// supply a function for and a browser has to be told about.
+fn asks(c: &Core) -> bool {
+    if let CoreKind::Prim { op, .. } = &c.kind {
+        if Upcall::of(*op).is_some() {
+            return true;
+        }
+    }
+    match &c.kind {
+        CoreKind::Lam { body, .. } => asks(body),
+        CoreKind::App { func, args } => asks(func) || args.iter().any(asks),
+        CoreKind::Prim { args, .. } => args.iter().any(asks),
+        CoreKind::Let { value, body, .. } => asks(value) || asks(body),
+        CoreKind::If { cond, then, alt } => asks(cond) || asks(then) || asks(alt),
+        CoreKind::Match { scrutinee, arms } => {
+            asks(scrutinee)
+                || arms
+                    .iter()
+                    .any(|a| a.guard.as_ref().is_some_and(asks) || asks(&a.body))
+        }
+        CoreKind::Make { fields, .. } => fields.iter().any(|(_, f)| asks(f)),
+        CoreKind::With { base, fields } => asks(base) || fields.iter().any(|(_, f)| asks(f)),
+        CoreKind::Field { base, .. } => asks(base),
+        CoreKind::ListLit(xs) => xs.iter().any(asks),
+        CoreKind::MapLit(kvs) => kvs.iter().any(|(k, v)| asks(k) || asks(v)),
+        CoreKind::Const(_) | CoreKind::Var(_) | CoreKind::Global(_) => false,
+    }
+}
+
+impl Function<'_> {
+    /// Ask the host one of the four questions compiled code cannot answer.
+    ///
+    /// # Why this is an import and not a pipe
+    ///
+    /// The native backends write a **question frame** into the arena and block on a pipe
+    /// ([`beck_llvm::Upcall`]), because [`adr/0021`](../../../../../docs/adr/0021-the-native-backend-writes-ir-and-runs-a-process.md)
+    /// put the compiled program in another process. There is no other process in a browser tab and
+    /// no pipe to block on: the loader is *in* the same tab, holds the memory, and can be called.
+    /// So the frame's five fields become the call's arguments, and the answer comes back as the
+    /// return value with its bytes appended at the mark — which is the same protocol with the
+    /// blocking taken out.
+    ///
+    /// The **shapes** are what carry it. What goes across is a word per argument and a word saying
+    /// what each word *is*, so the host decodes and encodes through
+    /// [`beck_llvm::heap::Heap`] without a second table of what `secret_env` takes and what
+    /// `http_fetch` answers — the same trick a view's deferred leaves play, one subsystem over.
+    ///
+    /// The name of the error type is passed by the **module** rather than chosen by the host, for
+    /// [`Upcall::raises`]'s reason: a `try:` compares an interned literal's offset, and only this
+    /// module knows which offset that is.
+    fn upcall(&mut self, op: Upcall, vals: &[Val], ty: &Ty, span: Span) -> Result<Val, String> {
+        if vals.len() != op.arity() {
+            return Err(format!(
+                "`{}` is applied to {} arguments here",
+                op.name(),
+                vals.len()
+            ));
+        }
+        let Some(index) = self.upcall else {
+            // Only reachable in the fixed point's rounds, where nothing emitted is kept: the
+            // import is decided from the definitions those rounds leave standing.
+            return self.placeholder(ty, op);
+        };
+        let ret = self
+            .repr_of(ty)
+            .map_err(|why| format!("`{}` answers {why}", op.name()))?;
+        Heap::crossing(ret).map_err(|why| format!("`{}` answers {why}", op.name()))?;
+        // The host *writes* the answer into the memory, which is the inbound direction and has the
+        // one rule that is directional: an `Attr` is a value the host cannot name a shape for.
+        self.heap
+            .inbound(ret)
+            .map_err(|why| format!("`{}` answers {why}", op.name()))?;
+        let ret_shape = self.heap.word_of(ret);
+        // The shape a failure carries and the **name** of its type: the shape is what the host
+        // encodes the failure through, and the name is what a `try:` compares — an interned
+        // literal's offset, which only this module knows.
+        let (raises, named) = match op.raises() {
+            Some(name) => {
+                let repr = self
+                    .repr_of(&Ty::con(name))
+                    .map_err(|why| format!("`{}` raises {why}", op.name()))?;
+                let at = self.heap.intern(name);
+                (self.heap.word_of(repr), self.heap.string_offset(at))
+            }
+            None => (0, 0),
+        };
+        let mut shapes = Vec::with_capacity(vals.len());
+        for v in vals {
+            Heap::crossing(v.ty).map_err(|why| format!("`{}` is given {why}", op.name()))?;
+            shapes.push(self.heap.word_of(v.ty));
+        }
+
+        let at = self.span_index(span);
+        self.push(Ins::I32Const(op.code() as i32));
+        self.push(Ins::I32Const(at as i32));
+        self.push(Ins::I32Const(ret_shape as i32));
+        self.push(Ins::I32Const(raises as i32));
+        self.push(Ins::I64Const(named as i64));
+        // Two argument slots, because [`Upcall::arity`] is at most two and an arity read out of
+        // the frame would be an arity the host could not check.
+        let mut given = vals.iter().zip(&shapes);
+        for _ in 0..2 {
+            match given.next() {
+                Some((v, shape)) => {
+                    self.widen(*v);
+                    self.push(Ins::I32Const(*shape as i32));
+                }
+                None => {
+                    self.push(Ins::I64Const(0));
+                    self.push(Ins::I32Const(0));
+                }
+            }
+        }
+        self.push(Ins::Call(index));
+        let held = self.local(ValType::I64);
+        self.push(Ins::LocalSet(held));
+        self.checked();
+        self.push(Ins::LocalGet(held));
+        Ok(self.narrow(ret))
+    }
+
+    /// A value of the right shape for a round whose output is thrown away.
+    fn placeholder(&mut self, ty: &Ty, op: Upcall) -> Result<Val, String> {
+        let ret = self
+            .repr_of(ty)
+            .map_err(|why| format!("`{}` answers {why}", op.name()))?;
+        Heap::crossing(ret).map_err(|why| format!("`{}` answers {why}", op.name()))?;
+        self.heap
+            .inbound(ret)
+            .map_err(|why| format!("`{}` answers {why}", op.name()))?;
+        let z = zero(ret);
+        self.push(z);
+        Ok(self.held(ret))
     }
 }

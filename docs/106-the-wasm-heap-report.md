@@ -1,16 +1,19 @@
 # 106 — The heap on the third target
 
 **Built.** A value representation in linear memory, text and the collections, closures through an
-indirect call table, and the whole of it held to the tree-walker by a differential of
-**22,714 calls run in a real WebAssembly engine** — where the scalar half
-([`103`](103-the-wasm-emitter-report.md)) ran 12,852.
+indirect call table, failure, and the four host effects as imports — the whole of it held to the
+tree-walker by a differential of **22,814 calls run in a real WebAssembly engine**, where the scalar
+half ([`103`](103-the-wasm-emitter-report.md)) ran 12,852.
 
 The number that matters is the other one. `beck-wasmgen` compiled **0 of the corpus's 237**
-definitions; it now compiles **212<!--c:wasm-compiled--> against 25<!--c:wasm-refused--> refused**,
+definitions; it now compiles **217<!--c:wasm-compiled--> against 20<!--c:wasm-refused--> refused**,
 which is [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)'s "what would reverse it"
-arriving as a measurement. It is not yet reversed: **nothing loads the module**. `beck-wasm`'s
-kernel still interprets, the bundle format is unchanged, and the four host effects have no import to
-ask through. Those are §106.8, and they are what is left.
+arriving as a measurement. It is **two short of what `beck-llvm` compiles over the same corpus**,
+and both of those two are `str_to_int` — linked there, and there is no link line here
+([`adr/0031`](adr/0031-transcendentals-are-computed-here-and-correctly-rounded.md)).
+
+It is not yet reversed: **nothing loads the module**. `beck-wasm`'s kernel still interprets and the
+bundle format is unchanged. Those are §106.8, and they are what is left.
 
 ## 106.1 The decision §5.1 left open, and why it is neither of its two answers
 
@@ -111,7 +114,54 @@ Three things fall out of it, and the third is the interesting one:
    would otherwise be the thing that catches a wrong rank — and an engine's type-mismatch trap
    aborts the instance, which is exactly what §103.2 says a Beck failure must never be.
 
-## 106.4 What was different about the target, and what was not
+## 106.4 A question is an import, and in production nothing crosses at all
+
+`now`, `uuid`, `secret_env` and `http_fetch` are the four things a computation cannot answer.
+[`adr/0021`](adr/0021-the-native-backend-writes-ir-and-runs-a-process.md) put the compiled program
+in **another process**, so the native backends write a question frame into the arena and block on a
+pipe. There is no other process in a browser tab and no pipe to block on: the loader is in the same
+tab, holds the memory, and can be called. So the frame's five fields —
+[`beck_llvm::Question`]'s `op`, `span`, the answer's shape, a failure's shape, and the name of the
+type a failure raises — become the arguments of **one import**, `beck.upcall`, and the answer is
+its result with its bytes appended at the mark.
+
+Two things follow, and the second is the one worth stating:
+
+- **The host is not written twice.** `beck_llvm::service::answer` services this backend's questions
+  and the native worker's. It is handed a `Question` and a `Heap` and gives back an `Answer`, and
+  the only per-primitive code in it is four lines. What made that possible is the **shapes**: a
+  word per argument and a word saying what each word *is*, so nothing on the host side has a table
+  of what `secret_env` takes.
+- **In production the arena does not travel.** §93.15's measured decision — a question sends the
+  live arena when, and only when, an argument could point into it — exists because a pipe copies.
+  Here the host *is* holding the memory, so a question copies nothing at all whatever its
+  arguments are. The differential's driver copies, because its engine is another process; that is
+  the harness's cost and not the design's.
+
+A module that asks nothing declares nothing, which
+`only_a_module_that_asks_declares_an_import` is the gate for — and it is decided from the
+definitions the fixed point *kept*, because an import is a function the loader has to supply and a
+browser should not be asked for one a refused definition wanted.
+
+## 106.5 A handler is a block a failure branches out of
+
+`raise` and `try:` are the one control-flow shape a `block` is for here. The native backends unwind
+through an error cell that was already an unwinder and branch to a *label*; there are no labels, so
+a handler is two nested `block`s — the inner one is the failure exit and the outer one carries the
+answer past it. The success path builds its `Ok` and `br`s over the handler; every trap check under
+the handler `br`s to the inner block's end instead of returning.
+
+That makes the handler **lexical** in the strongest possible sense
+([`38`](38-literature-survey.md) §38.4): the distance to it is a number counted where the block is
+written, so there is not merely no dynamic search — there is nowhere to search. What it costs is
+that the emitter has to know how deep it is, which is one counter maintained where instructions are
+pushed.
+
+The globals are cleared **before** the `Err` is allocated, and that ordering is load-bearing: every
+allocation checks them, so a failure that stops here would otherwise make the next call look like it
+was still failing.
+
+## 106.6 What was different about the target, and what was not
 
 | | LLVM and Cranelift | WebAssembly |
 |---|---|---|
@@ -122,13 +172,14 @@ Three things fall out of it, and the third is the interesting one:
 | A byte comparison | `memcmp` | a loop, because there is no `memcmp` |
 | A bulk copy | `memcpy` | `memory.copy`, which is the one bulk operation there is |
 | The literal pool | written into every request | a **data segment** |
+| A question | a frame in the arena and a blocking pipe | one **import**, called in the same tab |
 
 Rows three and seven are the two places this target is *simpler*. A WebAssembly memory never moves
 what is already in it, so a data pointer taken before an allocation is still correct after one —
 which removes a class of defect the native backends carry a comment about at four sites. And a pool
 that belongs to the module is a pool nothing has to copy per call.
 
-## 106.5 Four defects, each of which passes almost every case
+## 106.7 Four defects, each of which passes almost every case
 
 The differential is the point, so what it caught is the report. Every one of these produced a
 *plausible* answer over a wide input set and a wrong one over a narrow one.
@@ -154,18 +205,20 @@ into this backend as `rt::cmp_helper`, so a new reference kind is a compile erro
 as there. §93.8 recorded the same defect three times before that rule existed; this is the second
 backend to inherit it rather than rediscover it.
 
-## 106.6 What it compiles
+## 106.8 What it compiles
 
 | | Compiled | Refused | Was |
 |---|---|---|---|
-| [`corpus/`](../compiler/corpus/) — 39<!--c:corpus-programs--> applications | **212**<!--c:wasm-compiled--> | 25<!--c:wasm-refused--> | 0 and 237 |
-| [`awfy/`](../compiler/awfy/) — Are We Fast Yet | 348 | 54 | 58 and 344 |
+| [`corpus/`](../compiler/corpus/) — 39<!--c:corpus-programs--> applications | **217**<!--c:wasm-compiled--> | 20<!--c:wasm-refused--> | 0 and 237 |
+| [`awfy/`](../compiler/awfy/) — Are We Fast Yet | 391 | 11 | 58 and 344 |
 
 The ceiling is 219 and 18, which is what `beck-llvm` compiles over the same corpus. The gap is
-seven definitions and every one of them is on the list in §106.8: three host effects, a `raise`,
-and three definitions that call one of those.
+**two** definitions: `parse_amount`, which calls `str_to_int`, and the one that calls it. That
+primitive is one of the fifteen the runtime library computes, and a WebAssembly module reaches
+`beck-prim` only as an import the bundle does not carry — the same sentence `sin` and `cos` are
+refused under.
 
-## 106.7 The fixtures are not this suite's
+## 106.9 The fixtures are not this suite's
 
 `support/{heapfix,textfix,listfix,mapfix,clofix,viewfix,genfix}` are the programs `native.rs` and
 `cranelift.rs` already point at, and `wasm_backend.rs` is the third caller. That is the same
@@ -178,14 +231,8 @@ anybody re-deciding them: `Ranked`'s variants are declared out of alphabetical o
 fields are, so a backend that made either one a *declaration* index answers two definitions
 backwards and nothing else.
 
-## 106.8 What is not built
+## 106.10 What is not built
 
-- **The four host effects.** `now`, `uuid`, `secret_env` and `http_fetch` are upcalls on the native
-  backends; here they are imports the loader supplies, and nothing supplies them yet. Three corpus
-  definitions are refused for this and three more for calling those three.
-- **`raise` and `try`.** The native backends unwind through an error cell that is already an
-  unwinder; here the trap globals are that cell, and what is missing is the lexical handler — a
-  `block` a failure branches out of, which is a control-flow shape rather than a layout.
 - **Bundle format 2 with the type table.** A compiling client backend needs the types the bundle
   erases, which [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) anticipated as "a version
   bump the format was built to take".
@@ -200,6 +247,11 @@ backwards and nothing else.
 - **A measurement.** Nothing here has been timed. §106.1 names reclamation as the arena's cost and
   says a measurement is what would reverse the decision; that measurement does not exist, so the
   claim in this chapter is agreement and not speed.
+- **A WebAssembly spec-suite run.** [`12`](12-standards-and-conformance.md) §12.3 pins core 3.0,
+  and what exists is a differential against the *language's* semantics — a different claim from
+  conformance to the format. The half of it that is cheap is paid on every run: the emitter's
+  output is validated by a real engine, and two of §106.7's four defects were caught by that
+  validation rather than by an answer.
 
 ### What this corrects, elsewhere
 

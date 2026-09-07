@@ -9,7 +9,7 @@ flow, the trap that cannot be a signal, and the tail call that is a proposal. Wh
 that was the whole emitter and it compiled **none of the corpus**, because an application is
 records, lists and a page. [`106`](106-the-wasm-heap-report.md) is the heap, and the number this
 section used to carry is there: the corpus stands at
-**212<!--c:wasm-compiled--> definitions compiled against 25<!--c:wasm-refused--> refused**.
+**217<!--c:wasm-compiled--> definitions compiled against 20<!--c:wasm-refused--> refused**.
 
 ## 103.1 What was new, and it was not the code generation
 
@@ -98,8 +98,8 @@ Two details of that harness are decisions:
 
 | | Compiled | Refused |
 |---|---|---|
-| [`corpus/`](../compiler/corpus/) — 39<!--c:corpus-programs--> applications | **212**<!--c:wasm-compiled--> | 25<!--c:wasm-refused--> |
-| [`awfy/`](../compiler/awfy/) — Are We Fast Yet | 348 | 54 |
+| [`corpus/`](../compiler/corpus/) — 39<!--c:corpus-programs--> applications | **217**<!--c:wasm-compiled--> | 20<!--c:wasm-refused--> |
+| [`awfy/`](../compiler/awfy/) — Are We Fast Yet | 391 | 11 |
 
 Both rows were **0 and 237**, and 58 and 344, for as long as this emitter had no heap in it — which
 was [`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md)'s argument arriving as a measurement

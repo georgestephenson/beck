@@ -1153,8 +1153,8 @@ opposite direction from the WebAssembly a browser needs — Wasmtime uses Cranel
 produce it — so it is a **third** emitter against a wasm target, and it is written. What it shares with
 this chapter is the monomorphiser, the trap codes, the layout module and these fixtures — and, since
 [`106`](106-the-wasm-heap-report.md), the heap, which it lays out in its own linear memory rather
-than in an arena the host allocates: the corpus stands at **212<!--c:wasm-compiled--> definitions
-compiled against 25<!--c:wasm-refused--> refused**.
+than in an arena the host allocates: the corpus stands at **217<!--c:wasm-compiled--> definitions
+compiled against 20<!--c:wasm-refused--> refused**.
 [`94`](94-the-client-report.md) §94.12's measurement still says what a finished one would buy: a code
 generator divides the constant and leaves the growth.
 

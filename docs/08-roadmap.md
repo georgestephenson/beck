@@ -644,13 +644,14 @@ rows.
   exactly the shape §8.5's preamble says never comes due.
 - **Mode B's codegen: the heap on a wasm target** (S, and the item with a user in front of it).
   The heap is **built** ([`106`](106-the-wasm-heap-report.md)): a value representation in linear
-  memory, text and the collections, and closures through an indirect call table, with §5.1's choice
-  between the GC proposal and a refcounting discipline taken in
-  [`adr/0032`](adr/0032-the-webassembly-heap-is-the-arena-in-linear-memory.md) — neither, because
-  both fork the one layout three backends share. The corpus stands at
-  **212<!--c:wasm-compiled--> definitions compiled against 25<!--c:wasm-refused--> refused**, where
-  it stood at 0 and 237. What is left, in order: the four host effects as imports, bundle format 2
-  with the type table ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) anticipated both),
+  memory, text and the collections, closures through an indirect call table, failure, and the four
+  host effects as imports — with §5.1's choice between the GC proposal and a refcounting discipline
+  taken in [`adr/0032`](adr/0032-the-webassembly-heap-is-the-arena-in-linear-memory.md), which is
+  neither, because both fork the one layout three backends share. The corpus stands at
+  **217<!--c:wasm-compiled--> definitions compiled against 20<!--c:wasm-refused--> refused**, where
+  it stood at 0 and 237 — two short of what `beck-llvm` compiles, and both of those are
+  `str_to_int`, which is *linked* there and has no link line here. What is left: bundle format 2
+  with the type table ([`adr/0022`](adr/0022-mode-b-ships-the-backend-it-has.md) anticipated it),
   and the kernel loading a compiled component instead of interpreting one. The WebAssembly
   spec-suite obligation [`12`](12-standards-and-conformance.md) §12.3 pins to core 3.0 lands with
   it.
