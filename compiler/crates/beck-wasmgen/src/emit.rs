@@ -297,8 +297,10 @@ fn builder_setup(builder: &mut ModuleBuilder, heap: &Heap) {
         .globals
         .push(("beck_trap_type".into(), ValType::I64, true, 0));
 
-    let arena = !heap.is_empty() || heap.uses_text() || heap.uses_lists() || heap.uses_maps();
-    if arena {
+    // `Heap::is_empty` already answers for text, closures, a view, the collections and the
+    // layouts, which is why the two native backends ask it and nothing else: a program of pure
+    // arithmetic keeps the module `docs/93` §93.5 measured — no memory, no data segment, no table.
+    if !heap.is_empty() {
         let need = pool_end.div_ceil(rt::PAGE).max(1) as u32;
         builder.memory = Some((need, rt::MAX_PAGES));
         // The pool is written by `Heap` itself — the same bytes the native host puts at the front
