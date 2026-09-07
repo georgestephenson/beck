@@ -200,6 +200,14 @@ The differential is the point, so what it caught is the report. Every one of the
   Both of these are the argument for a differential that *loads* what it emits, which
   [`adr/0030`](adr/0030-the-webassembly-emitter-writes-its-own-bytes.md) is the decision behind.
 
+Those last two are also the argument for a gate the fixtures cannot be: they are refusals by the
+engine over *shapes*, and a fixture only has the shapes somebody wrote a case for.
+`every_module_the_tree_produces_is_one_the_engine_accepts` emits a module for every program in
+`corpus/`, `awfy/`, `sicp/` and `examples/` — **64** of them — and hands each to
+`new WebAssembly.Module`. It validates rather than instantiates, so a module that declares the host
+import needs no host, and it is the same gate [`93`](93-the-native-backends-report.md)'s corpus walk
+already has one target over: "what is being checked is that LLVM accepts the IR".
+
 The fifth is not a defect but is worth the same sentence: `Repr::order`'s exhaustive match is copied
 into this backend as `rt::cmp_helper`, so a new reference kind is a compile error **here** as well
 as there. §93.8 recorded the same defect three times before that rule existed; this is the second

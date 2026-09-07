@@ -1635,6 +1635,92 @@ fn the_artefact_is_readable_and_names_what_it_holds() {
     assert_eq!(&both.module.wasm[..4], b"\0asm");
 }
 
+/// Every module the tree produces is one a real engine accepts.
+///
+/// [`native.rs`]'s corpus walk **assembles** what it emits rather than only emitting it — "what is
+/// being checked is that LLVM accepts the IR" — and this is that gate one target over. It is worth
+/// having for the reason §106.7's last two defects are: a block with the wrong type and a double
+/// `i32.wrap_i64` are refusals by the engine rather than wrong answers, so validation catches a
+/// whole class of emitter defect over shapes no fixture has, and catches it on every program in
+/// the tree rather than on the ones somebody wrote a case for.
+///
+/// It validates rather than instantiates, so a module that declares the host import needs no host.
+#[test]
+fn every_module_the_tree_produces_is_one_the_engine_accepts() {
+    let js = engine!();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let dir = std::env::temp_dir().join(format!("beck-wasm-validate-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a working directory");
+    let mut names = Vec::new();
+    for source in ["corpus", "awfy", "sicp", "examples"] {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(root.join(source))
+            .expect("the directory is there")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("beck"))
+            .collect();
+        files.sort();
+        for path in files {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("x.beck")
+                .to_string();
+            let src = std::fs::read_to_string(&path).expect("a program");
+            let module = beck_diag::depth::on_the_front_end_stack(|| {
+                let (placed, diags, _) = beck_core::compile_or_library_str(&name, &src);
+                // A library that imports another module does not compile on its own, and this is
+                // not the suite that checks that.
+                placed
+                    .filter(|_| !diags.has_errors())
+                    .map(|p| beck_wasmgen::module(&p.program))
+            });
+            let Some(module) = module else { continue };
+            let at = format!("{source}-{name}.wasm");
+            std::fs::write(dir.join(&at), &module.wasm).expect("the module");
+            names.push(serde_json::json!({ "at": at, "of": format!("{source}/{name}") }));
+        }
+    }
+    assert!(names.len() > 40, "only {} programs emitted", names.len());
+    let driver = "\
+const fs = require('fs');\n\
+const [, , dir, listed] = process.argv;\n\
+const bad = [];\n\
+for (const m of JSON.parse(fs.readFileSync(listed, 'utf8'))) {\n\
+  try { new WebAssembly.Module(fs.readFileSync(dir + '/' + m.at)); }\n\
+  catch (e) { bad.push(m.of + ': ' + e); }\n\
+}\n\
+process.stdout.write(JSON.stringify(bad));\n";
+    std::fs::write(dir.join("validate.js"), driver).expect("the driver");
+    let listed = dir.join("modules.json");
+    std::fs::write(
+        &listed,
+        serde_json::to_string(&names).expect("the list encodes"),
+    )
+    .expect("the list");
+    let out = Command::new(&js)
+        .arg(dir.join("validate.js"))
+        .arg(&dir)
+        .arg(&listed)
+        .output()
+        .expect("the engine runs");
+    assert!(
+        out.status.success(),
+        "the engine failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let refused: Vec<String> =
+        serde_json::from_slice(&out.stdout).expect("the driver's answer is JSON");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        refused.is_empty(),
+        "{} of {} modules were refused by the engine:\n  {}",
+        refused.len(),
+        names.len(),
+        refused.join("\n  ")
+    );
+    println!("{} modules validated in a WebAssembly engine", names.len());
+}
+
 /// What the tree compiles to WebAssembly, printed rather than gated.
 ///
 /// [`docs/93`](../../../../docs/93-the-native-backends-report.md) §93.6 keeps the same tally for
