@@ -1014,6 +1014,7 @@ fn every_defect_is_a_file_named_for_the_entry_it_holds() {
     let dir = repo_root().join("defects");
     let mut wrong = Vec::new();
     let mut seen = 0;
+    let mut files = 0;
     for item in std::fs::read_dir(&dir).expect("the register is readable") {
         let path = item.expect("a directory entry").path();
         let name = path
@@ -1022,6 +1023,13 @@ fn every_defect_is_a_file_named_for_the_entry_it_holds() {
             .to_string_lossy()
             .to_string();
         if !name.ends_with(".md") {
+            continue;
+        }
+        files += 1;
+        // The one file here that is not an entry, and the reason the directory exists when the
+        // register is empty: git does not store a directory, so a register with nothing wrong in
+        // it would vanish along with the links that name it.
+        if name == "README.md" {
             continue;
         }
         seen += 1;
@@ -1039,10 +1047,12 @@ fn every_defect_is_a_file_named_for_the_entry_it_holds() {
         wrong.len(),
         wrong.join("\n  ")
     );
-    // A floor, so that a register nobody could read would not pass by being unreadable.
+    // A floor on the *listing* rather than on the entries. An empty register is the state this
+    // project is trying to be in, so "no defects" may not be a failure — but a listing that found
+    // nothing at all has read the wrong place, and the README is always there to prove it did not.
     assert!(
-        seen > 0,
-        "no entries found in {} — the listing is wrong",
+        files > 0,
+        "nothing found in {} — the listing is wrong",
         dir.display()
     );
     println!("{seen} defects, each in a file named for its id");

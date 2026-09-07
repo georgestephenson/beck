@@ -618,6 +618,12 @@ impl Checker<'_> {
                 if let Some(s) = def.args[0].as_var() {
                     self.impl_methods.insert(s.name.clone());
                 }
+                // A bound on the *impl* is spent here rather than by the sweep over the written
+                // items, because this method does not exist until the line above synthesised it:
+                // `expand_bounds` runs over the module as the person wrote it, and an impl's
+                // methods are not in it. Without this a bounded impl's method has its parameter in
+                // scope and no dictionary to call anything through.
+                let def = self.expand_bounds(&def).unwrap_or(def);
                 out.push(def);
             }
         }
@@ -897,7 +903,8 @@ impl Checker<'_> {
                 .get(&spec.param)
                 .map(|t| self.subst.resolve(t))
                 .unwrap_or_else(|| self.subst.fresh());
-            let Some(dict) = self.dictionary(&spec.trait_name, &spec.method, &at, span) else {
+            let Some(dict) = self.dictionary_at(&spec.trait_name, &spec.method, &at, span, 0)
+            else {
                 continue;
             };
             if let Some(want) = param_tys.get(ordinary + i) {
@@ -1170,6 +1177,13 @@ impl Checker<'_> {
         }
         let receiver = self.expr(&args[at], None);
         let ty = self.subst.resolve(&receiver.ty);
+        // The implementation may have bounds of its own — `impl[T: Ord] Ranked for list[T]` — and
+        // then it takes a dictionary the call site has to supply, which is a question about the
+        // receiver's type rather than about this call's arguments (`super::dispatch`).
+        if let Some(call) = self.apply_bounded_impl(&trait_name, method, &receiver, at, args, span)
+        {
+            return call;
+        }
         // One rule for both kinds of answer: a concrete receiver finds the impl's own global, and a
         // bounded type parameter finds the dictionary its definition was handed.
         let Some(func) = self.dictionary(&trait_name, method, &ty, args[at].span()) else {
@@ -1690,6 +1704,14 @@ def label[T: Show](x: T) -> Str:
         let text = errors(src);
         assert!(text.contains("B0316"), "{text}");
         assert!(text.contains("has no body"), "{text}");
+        // Once. The reader who wrote the bound is told the one thing that is wrong with it — and
+        // not, on top of that, that `T` is a type nobody declared, which is what came out while
+        // the parameter was being read with `Node::as_var` and dropped from scope by the bound
+        // that was already being reported on.
+        assert!(
+            !text.contains("B0310"),
+            "the bound is the defect, and the parameter is still a parameter:\n{text}"
+        );
     }
 
     #[test]

@@ -562,11 +562,15 @@ rows.
     declaration and this is handed an expression. The finding is in the probe rather than in the
     types: inferring an argument to tell the macro what it is must leave behind neither the
     diagnostics nor the **effects**, since a macro may discard the argument and then nothing
-    performs them. **The cost that probe leaves is a defect and is written down**: an argument that is
-    itself a typed macro call is expanded twice, so nesting `d` deep is charged `2^d` against F17's
-    production budget — which bounds what expansion *produces*, and the probe's output is discarded
-    — and fifteen deep is refused for producing forty-five nodes
-    ([the register](../defects/a-typed-macro-nested-in-its-own-argument-is-charged-for-output-nobody-gets.md)). **Exhaustiveness-aware codegen came with it and needed nothing added**: a macro
+    performs them. **The cost that probe left was a defect, was written down, and is fixed**: an
+    argument that is itself a typed macro call was expanded twice — once in the probe, once inside
+    what the enclosing macro wrote — so nesting `d` deep was charged `2^d` against F17's production
+    budget, which bounds what expansion *produces*, and fifteen deep was refused for producing
+    forty-five nodes. An expansion is now remembered by the call it came from and the argument
+    types the body was told, the charge is **per use** so a macro that really does double still
+    owes `2^d`, and a probe that meets a call it has already answered answers from memory instead
+    of walking it again — which took the shape linear as well as the charge.
+    **Exhaustiveness-aware codegen came with it and needed nothing added**: a macro
     that read a union's variants generates one `match` arm per variant with `node_form`, and a
     constructor it computed is written `case n(at):` inside a `quote:` — a template head that names
     bound syntax *is* that syntax. This list said otherwise for the length of one experiment, on

@@ -334,6 +334,10 @@ pub struct Checker<'a> {
     /// What a typed macro body may ask — the module's declarations, filled once, and the current
     /// call's expressions, filled by [`Checker::probe`] and cleared between calls.
     typed_env: beck_macro::TypeEnv,
+    /// What each typed macro call site has already expanded to, so a nested call is expanded once
+    /// per set of argument types rather than once per place the checker walks past it
+    /// ([`expansion`]).
+    expansions: expansion::Expansions,
     /// Where a probe collects what it inferred. `Some` only while one is running, which is also
     /// how a nested probe knows to put the outer one back.
     probe: Option<Vec<(Span, Ty)>>,
@@ -422,6 +426,7 @@ pub fn check_module_importing(
         mode,
         typed: beck_macro::TypedExpander::collect(module, macros_from),
         typed_env: beck_macro::TypeEnv::new(),
+        expansions: expansion::Expansions::default(),
         probe: None,
         typed_depth: 0,
     };
@@ -514,7 +519,9 @@ pub fn check_module_importing(
     program
 }
 
+mod dispatch;
 mod exhaust;
+mod expansion;
 mod tests_in_beck;
 mod traits;
 
@@ -787,12 +794,7 @@ impl<'a> Checker<'a> {
         item.args
             .get(1)
             .filter(|n| n.is_form(sym::TYPARAMS))
-            .map(|n| {
-                n.args
-                    .iter()
-                    .filter_map(|p| p.as_var().map(|s| s.name.clone()))
-                    .collect()
-            })
+            .map(|n| n.args.iter().filter_map(traits::typaram_name).collect())
             .unwrap_or_default()
     }
 
@@ -812,8 +814,9 @@ impl<'a> Checker<'a> {
             return out;
         };
         for p in &list.args {
-            let Some(s) = p.as_var() else { continue };
-            let name = s.name.clone();
+            let Some(name) = traits::typaram_name(p) else {
+                continue;
+            };
             if self.types.contains_key(&name) || prelude::builtin_arity(&name).is_some() {
                 self.diags.push(
                     Diagnostic::error(
@@ -3593,86 +3596,6 @@ impl<'a> Checker<'a> {
     }
 
     // ------------------------------------------------------------------------------ typed macros
-
-    /// Expand one `typed macro` call and check what it produced.
-    ///
-    /// The order is the whole feature: infer the arguments, hand the macro what they are, check
-    /// the code it wrote. The expansion is checked with the *caller's* expectation, so a typed
-    /// macro is an expression like any other and inference flows through it.
-    fn typed_macro(&mut self, n: &Node, expected: Option<&Ty>, span: Span) -> Core {
-        let unit = |ck: &mut Self| Core::new(CoreKind::Const(Const::Unit), ck.subst.fresh(), span);
-        if self.typed_depth >= beck_macro::MAX_DEPTH {
-            self.diags.push(
-                Diagnostic::error("B0201", "macro expansion did not terminate", span)
-                    .with_primary_label("expanded past the depth limit")
-                    .with_note(format!(
-                        "the limit is {} nested expansions, and a typed macro's nest through the \
-                         checker rather than through the expander: each one emits a call the check \
-                         of its own answer meets",
-                        beck_macro::MAX_DEPTH
-                    )),
-            );
-            return unit(self);
-        }
-        // A budget that has run out has already been reported, and everything after it expands to
-        // nothing. Walking further would be spending the rest of the compile on a refused program.
-        if self.typed.exhausted() {
-            return unit(self);
-        }
-        self.probe(&n.args, span);
-        // Three disjoint fields, so the expander is moved out for the call rather than borrowed
-        // beside them.
-        let mut typed = std::mem::take(&mut self.typed);
-        let out = typed.expand(n, &self.typed_env, self.diags);
-        self.typed = typed;
-        let Some(node) = out else {
-            return unit(self);
-        };
-        self.typed_depth += 1;
-        let core = self.expr(&node, expected);
-        self.typed_depth -= 1;
-        core
-    }
-
-    /// Infer a typed macro call's arguments, and forget everything about having done so.
-    ///
-    /// Everything except the types: the diagnostics, the effects and the bindings are rolled back,
-    /// because the arguments are checked again — inside whatever the macro wrote — and a macro that
-    /// *discards* an argument must not leave that argument's effects on the definition's row.
-    /// Inference itself is not rolled back, and cannot be: a unification the arguments force is one
-    /// the real check would force too.
-    fn probe(&mut self, args: &[Node], call: Span) {
-        let outer = self.probe.replace(Vec::new());
-        let exhausted_before = self.typed.exhausted();
-        let diags_mark = self.diags.len();
-        let row_before = self.row.clone();
-        let locals_before = self.locals.len();
-        let siblings_before = self.parallel_siblings.len();
-        for a in args {
-            let _ = self.expr(argument_expr(a), None);
-        }
-        let recorded = std::mem::replace(&mut self.probe, outer).unwrap_or_default();
-        self.parallel_siblings.truncate(siblings_before);
-        self.locals.truncate(locals_before);
-        self.row = row_before;
-        self.diags.truncate(diags_mark);
-        // One report does **not** roll back. An argument that is itself a typed macro call expands
-        // here, and expansion draws on a module-wide budget that is spent once and refused once —
-        // so discarding that refusal would leave the only report there will ever be deleted, every
-        // expansion afterwards producing nothing, and a program silently checked as `unit`.
-        if !exhausted_before && self.typed.exhausted() {
-            let typed = std::mem::take(&mut self.typed);
-            typed.report_exhaustion(call, self.diags);
-            self.typed = typed;
-        }
-
-        self.typed_env.clear_nodes();
-        for (span, ty) in recorded {
-            let ty = self.subst.resolve(&ty);
-            let repr = self.repr(&ty);
-            self.typed_env.record(span, repr);
-        }
-    }
 
     /// Every declaration in scope, as the projection a macro body reads.
     ///

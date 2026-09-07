@@ -387,6 +387,17 @@ impl TypedExpander {
         out
     }
 
+    /// Charge an expansion this call site has **already** produced, without producing it again.
+    ///
+    /// The budget bounds what expansion *produces* (`docs/42` §42.6), and an expansion the checker
+    /// is handed twice puts two copies in the program — so the second copy is charged even though
+    /// the body ran once. That is the difference between a macro whose output keeps its argument
+    /// and one that writes it twice, and charging per call site rather than per use would erase it:
+    /// a doubling macro nested `d` deep really does produce `2^d` nodes, and really does owe them.
+    pub fn charge_expansion(&mut self, out: &Node, span: Span, diags: &mut Diagnostics) -> bool {
+        crate::charge_nodes(&mut self.fuel, &mut self.spent, out, span, diags)
+    }
+
     /// Expand one call, with what the checker inferred about its arguments.
     ///
     /// The four-part hygiene dance is the untyped expander's, unchanged — a typed macro differs in

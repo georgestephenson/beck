@@ -173,6 +173,41 @@ pub fn expand_module_with(module: &Node, imported: &[&Node], diags: &mut Diagnos
     expand_module_inner(module, imported, diags).0
 }
 
+/// Charge a tree of nodes against a module's expansion budget, and say whether it fitted.
+///
+/// **Iterative**, with its own stack, for the reason the walk counts at all: the tree being
+/// measured is one a macro just built, so a recursive count would be a claim about the host's
+/// stack rather than about the program
+/// ([`93`](../../../../docs/93-the-native-backends-report.md) §93.9 is the same defect one
+/// subsystem over). It also stops the moment the budget does, so the *accounting* is bounded by
+/// the budget it is accounting for — a macro that produced a billion nodes is refused after a
+/// hundred thousand of them have been counted, not after a billion.
+///
+/// Free-standing because two callers spend the same meter: the expander that has just built the
+/// tree, and [`typed::TypedExpander::charge_expansion`], which is handed one it built earlier and
+/// is putting in the program a second time.
+pub(crate) fn charge_nodes(
+    fuel: &mut u64,
+    spent: &mut bool,
+    out: &Node,
+    span: Span,
+    diags: &mut Diagnostics,
+) -> bool {
+    let mut stack = vec![out];
+    while let Some(node) = stack.pop() {
+        if *fuel == 0 {
+            if !*spent {
+                *spent = true;
+                diags.push(too_much(span));
+            }
+            return false;
+        }
+        *fuel -= 1;
+        stack.extend(node.args.iter());
+    }
+    true
+}
+
 /// Expand a module, and say how much of the interpreter's step budget is left.
 ///
 /// The second half is what makes [`interp::MAX_STEPS`]'s doc comment a measurement rather than an
@@ -377,19 +412,7 @@ impl<'a> Expander<'a> {
     /// the budget it is accounting for — a macro that produced a billion nodes is refused after a
     /// hundred thousand of them have been counted, not after a billion.
     pub(crate) fn charge(&mut self, out: &Node, span: Span) -> bool {
-        let mut stack = vec![out];
-        while let Some(node) = stack.pop() {
-            if self.fuel == 0 {
-                if !self.spent {
-                    self.spent = true;
-                    self.diags.push(too_much(span));
-                }
-                return false;
-            }
-            self.fuel -= 1;
-            stack.extend(node.args.iter());
-        }
-        true
+        charge_nodes(&mut self.fuel, &mut self.spent, out, span, self.diags)
     }
 
     /// Expand a node bottom-up, then re-expand if the node itself was a macro call.
