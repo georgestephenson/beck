@@ -17,7 +17,10 @@ That is also why the register is the directory and not a file assembled from it.
 be assembled and lag behind its entries, because it is history and a late entry is merely late. A
 register that lagged would go on naming a defect somebody had already fixed, which is the one thing
 "what is wrong right now" may not do. `ls defects/` is the current list because there is nothing
-between the list and the truth.
+between the list and the truth — and that list may be **empty**, which is the state to be in and the
+reason the directory also holds a [`README.md`](defects/README.md): git does not store a directory,
+so a register with nothing left in it would disappear the first time it was earned, taking the links
+that name it with it.
 
 **What belongs here: something that behaves wrongly.** Silent, misleading, or contrary to what a
 document says. **What does not: something that is merely absent.** A feature nobody has built is a

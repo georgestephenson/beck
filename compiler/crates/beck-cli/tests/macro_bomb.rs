@@ -113,6 +113,159 @@ fn a_doubling_typed_macro_is_refused_by_its_own_budget() {
     );
 }
 
+/// A typed macro nested `d` deep, each expansion producing `width` nodes of its own.
+///
+/// `list_sum` of a flat literal rather than a chain of `+`: the production has to be *wide*, or the
+/// front end's structural nesting count ([`adr/0012`](../../../../docs/adr/0012-the-front-end-counts-its-own-recursion.md))
+/// refuses the fixture before the budget ever sees it. The macro is the identity on its argument —
+/// `list_sum([x, 0, 0, …])` is `x` — so nesting it means what it looks like it means, and the
+/// program's *real* expansion is `d` copies of one output rather than anything that compounds.
+fn nested(d: usize, width: usize) -> String {
+    let zeros = vec!["0"; width].join(", ");
+    let mut src = format!(
+        "\
+typed macro grow(x):
+    t = node_ty(x)
+    if t.name != \"Int\":
+        refuse(\"only Int\")
+    return quote:
+        list_sum([$x, {zeros}])
+
+def f() -> Int:
+    return "
+    );
+    let mut expr = String::from("1");
+    for _ in 0..d {
+        expr = format!("grow({expr})");
+    }
+    src.push_str(&expr);
+    src.push('\n');
+    src
+}
+
+/// **What a nested typed macro is charged for does not grow with the nesting.**
+///
+/// A *shape* rather than a threshold, which is [`compile_speed.rs`](compile_speed.rs)'s form and
+/// [`docs/64`](../../../../docs/64-compile-speed-report.md)'s pattern: hold the production per
+/// nesting level constant, grow the level, and what the module is charged has to stay flat. A
+/// charge that grew with the level refuses the deeper members of the sweep, and that is exactly
+/// what it did — 8,000 nodes per level was accepted two deep and refused at four and at six,
+/// because a call whose argument is another typed-macro call was expanded **twice**: once in the
+/// probe that infers the argument and once inside what the enclosing macro wrote. The probe's
+/// output is discarded, so `2^d - d` of those expansions were charges for code the program does
+/// not contain.
+///
+/// The budget is defined as a bound on what expansion *produces*
+/// ([`docs/42`](../../../../docs/42-security-assurance.md) §42.6), so this is a correctness gate
+/// and not a speed one: 48,000 nodes of real production is comfortably inside a 100,000-node
+/// budget, and a program refused for producing forty-eight thousand nodes when it produced
+/// forty-eight thousand nodes is a compiler telling the truth. One refused for producing
+/// half a million is not.
+#[test]
+fn what_a_nested_typed_macro_is_charged_for_does_not_grow_with_the_nesting() {
+    // 8,000 a level: two levels is 16,000 and six is 48,000, both well inside the budget, while
+    // the same sweep charged per *expansion* reaches 512,000 by six.
+    for depth in [2, 4, 6] {
+        let all = codes(&format!("nested-{depth}.beck"), &nested(depth, 8_000));
+        assert!(
+            all.is_empty(),
+            "8,000 nodes a level, {depth} deep, is {} nodes of production against a \
+             {}-node budget and has to compile: {all:?}",
+            depth * 8_000,
+            beck_macro::MAX_EXPANSION,
+        );
+    }
+}
+
+/// The fifteen-deep fixture the defect was reported with, compiling.
+///
+/// Three nodes a level, forty-five nodes of total expansion, and it was refused with "macro
+/// expansion produced too much … the budget is 100000 nodes for the whole module" — followed by a
+/// second diagnostic that made it worse, because once the budget is spent every later expansion
+/// produces nothing, so the macro's own `refuse` fired on a type it could no longer see and the
+/// program was told it had two problems it did not have.
+#[test]
+fn the_shape_the_defect_was_reported_with_compiles() {
+    let src = nested(15, 1);
+    let all = codes("nested-15.beck", &src);
+    assert!(
+        all.is_empty(),
+        "fifteen levels of a macro that produces a handful of nodes is not a bomb: {all:?}"
+    );
+}
+
+/// **And the hole this must not open**: a typed macro that genuinely doubles is still refused.
+///
+/// [`macro_bomb.rs`'s own doubling gate](fn.a_doubling_typed_macro_is_refused_by_its_own_budget.html)
+/// is the statement of record and is deliberately left alone; this is the same claim standing
+/// beside the sweep above, because the two are one decision. The charge that the sweep removes is
+/// the *probe's*, whose output is thrown away — not the charge for output that is really there. A
+/// macro writing `[$x, $x]` really does produce `2^d` nodes, so `2^d` is what it owes, and a fix
+/// that memoised the charge per call site rather than per use would pass the sweep and hand back
+/// the hole [`docs/102`](../../../../docs/102-the-macro-interpreter-report.md) §102.9 found the
+/// first version of this expander opening.
+#[test]
+fn a_doubling_typed_macro_is_still_refused_beside_the_sweep() {
+    let typed = bomb(24).replacen("macro pair", "typed macro pair", 1);
+    let refused = codes("still-a-bomb.beck", &typed);
+    assert!(
+        refused.iter().any(|c| c == "B0214"),
+        "output that is really produced is still charged for: {refused:?}"
+    );
+}
+
+/// **An argument nobody gets is not charged for — and is not a way to spend the compile either.**
+///
+/// The case that decides whether a probe may stop charging, and the reason the answer is not
+/// simply "the probe's output is discarded, so charge nothing". A typed macro that *throws its
+/// argument away* expands that argument in the probe and nowhere else, so nothing it produced is
+/// in the program and nothing is owed — but the walk of it was, until this was fixed, the
+/// `2^d` the budget was cutting short. Free and exponential is the one combination F17 exists to
+/// prevent ([`docs/42`](../../../../docs/42-security-assurance.md) §42.2: the playground compiles
+/// a stranger's source in a browser tab).
+///
+/// Both halves, because either alone is satisfied by the wrong fix: the program **compiles**,
+/// since a doubling macro inside a discarded argument produces nothing a doubling macro inside a
+/// *kept* one would, and it compiles **quickly**, because the expansion is remembered rather than
+/// walked once per place the checker passes it. A budget is not a schedule; what bounds this is
+/// that the work is linear, not that the meter runs out.
+#[test]
+fn a_bomb_in_an_argument_a_macro_discards_is_neither_charged_nor_walked() {
+    let src = "\
+typed macro pair(x):
+    return quote:
+        ($x + $x)
+
+typed macro drop_it(x):
+    return quote:
+        0
+
+def go() -> Int:
+    return drop_it("
+        .to_string();
+    let mut expr = String::from("1");
+    for _ in 0..24 {
+        expr = format!("pair({expr})");
+    }
+    let src = format!("{src}{expr})\n");
+
+    let started = std::time::Instant::now();
+    let all = codes("discarded.beck", &src);
+    let took = started.elapsed();
+    assert!(
+        all.is_empty(),
+        "a discarded argument produces nothing, so there is nothing to refuse: {all:?}"
+    );
+    // Twenty-four levels: `2^24` walks of the argument if the memo is not doing its job, which is
+    // minutes rather than the millisecond this takes. Generous by three orders of magnitude,
+    // because a gate that flakes gets deleted (`docs/13` §13.7) and the failure it is written
+    // against is not a slow machine.
+    assert!(
+        took < std::time::Duration::from_secs(20),
+        "a discarded argument was walked once per place it does not appear: {took:?}"
+    );
+}
+
 /// **A typed literal's parser is a macro body, and is bounded like one.**
 ///
 /// This is the half of F17 that `docs/43` §43.4 recorded as having "nothing to bound yet": the
