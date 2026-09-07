@@ -37,6 +37,7 @@ pub mod iface;
 pub mod incremental;
 pub mod liveness;
 pub mod net;
+pub mod pg;
 pub mod place;
 pub mod plan;
 pub mod pmap;

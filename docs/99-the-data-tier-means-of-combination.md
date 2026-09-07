@@ -437,7 +437,7 @@ One build item discharges five things already written down:
 |---|---|
 | [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, aggregates — **nothing**" | the operators — the join, both of its indexes and all four aggregates are built; subqueries are not |
 | [`23`](23-incremental-views-report.md) §23.19 "joins, subqueries, `group by`, aggregates other than `count(*)`" | the read-model SQL compiling **to the plan** rather than growing a second interpreter |
-| [`12`](12-standards-and-conformance.md) §12.5 `psql`'s `\d` unsupported because `pg_catalog` needs joins | the same |
+| [`12`](12-standards-and-conformance.md) §12.5 `psql`'s `\d` unsupported because `pg_catalog` needs joins | the same — the joins are what `pg_catalog` is now **built out of**, as read models over the derived schema ([`adr/0032`](adr/0032-pg-catalog-is-a-read-model.md)) |
 | [`23`](23-incremental-views-report.md) §23.19 "`count(*)` without scanning" | grouping, which is where a maintained count *per group* lives — **and both halves are now built**: the ungrouped one reads the arrangement's size, which `Op::Count` has read since the engine existed, and the grouped one is a tally the join keeps (§99.9 item 6). This row over-attributed even so: not every aggregate question is a grouping question, and the ungrouped one never needed grouping to answer it |
 | [`08`](08-roadmap.md) §8.4's Phase 5 **TPC-H/ClickBench** row, "once §5.3's engine exists" | the engine that row is conditioned on and no phase builds |
 
@@ -1070,6 +1070,6 @@ which fixes most of the plan before any cost is consulted. `ASSUMED_CARDINALITY`
 | [`05`](05-tier-lowering.md) §5.3 | The incremental-views paragraph described a joined read model updating "by delta, not by re-join" when there was no join to update and no operator related two collections. It now says that, in the past tense, and lists what has since been built |
 | [`23`](23-incremental-views-report.md) §23.19 | "Joins, subqueries, aggregates — **nothing**, unchanged" is now true of **subqueries alone**: an equi-join over either index, all four aggregates, a semi-join and anti-join by key, and `distinct` are built, and the read-model SQL reaches the join, the `group by` and the `distinct` by compiling into them (item 9) |
 | [`23`](23-incremental-views-report.md) §23.19 | Same, for the read-model half — and its `count(*)` row is grouping's, not the SQL's |
-| [`12`](12-standards-and-conformance.md) §12.5 | "`psql`'s backslash commands are **not** supported, because they query `pg_catalog` and this SQL has no joins" was two claims and only the first survives: the SQL has joins, and what is missing is `pg_catalog` itself |
+| [`12`](12-standards-and-conformance.md) §12.5 | "`psql`'s backslash commands are **not** supported, because they query `pg_catalog` and this SQL has no joins" was two claims and neither survives: the SQL has joins, and `pg_catalog` is fourteen read models those joins read |
 | [`08`](08-roadmap.md) §8.4 | The Phase 5 TPC-H row is conditioned on "§5.3's engine" that no phase builds. Phase 4 now carries the bullet |
 | [`23`](23-incremental-views-report.md) §23.8 | Its "the analysis says a plan could, the engine does not" caveat has a second instance — a captured per-element function — and it was undocumented |

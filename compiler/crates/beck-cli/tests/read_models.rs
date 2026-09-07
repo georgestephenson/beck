@@ -1062,3 +1062,197 @@ fn the_join_a_query_compiles_to_can_be_switched_off() {
         "the join left a capture behind"
     );
 }
+
+// -------------------------------------------------------------------------------------------
+// `pg_catalog`
+// -------------------------------------------------------------------------------------------
+
+/// The query `psql` sends for `\d`, verbatim, so what is measured below is what a client sends.
+const PSQL_LIST: &str = "SELECT n.nspname as \"Schema\", c.relname as \"Name\", \
+     CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' \
+     WHEN 'm' THEN 'materialized view' WHEN 'i' THEN 'index' WHEN 'S' THEN 'sequence' \
+     WHEN 't' THEN 'TOAST table' WHEN 'f' THEN 'foreign table' \
+     WHEN 'p' THEN 'partitioned table' WHEN 'I' THEN 'partitioned index' END as \"Type\", \
+     pg_catalog.pg_get_userbyid(c.relowner) as \"Owner\" \
+     FROM pg_catalog.pg_class c \
+     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+     LEFT JOIN pg_catalog.pg_am am ON am.oid = c.relam \
+     WHERE c.relkind IN ('r','p','v','m','S','f','') \
+     AND n.nspname <> 'pg_catalog' AND n.nspname !~ '^pg_toast' \
+     AND n.nspname <> 'information_schema' \
+     AND pg_catalog.pg_table_is_visible(c.oid) ORDER BY 1,2";
+
+/// A schema of `n` read models and nothing else, for measuring what the catalogue costs.
+fn schema_of_size(n: usize) -> Schema {
+    Schema {
+        tables: (0..n)
+            .map(|i| beck_core::read::Table {
+                name: Arc::from(format!("t{i:05}")),
+                columns: ["id", "name"]
+                    .iter()
+                    .map(|c| beck_core::read::Column {
+                        name: Arc::from(*c),
+                        ty: SqlTy::Text,
+                        nullable: false,
+                    })
+                    .collect(),
+                source: Source::State(vec![Arc::from(format!("t{i:05}"))]),
+                cardinality: Cardinality::Many,
+                element: Arc::from("Row"),
+            })
+            .collect(),
+        pg: beck_core::pg::relations(),
+    }
+}
+
+/// **Answering `\d` costs linear in the number of read models, measured at two sizes.**
+///
+/// The catalogue is *built* — `pg_class` has a row per relation and `pg_attribute` one per column,
+/// derived from the schema on demand rather than cached ([`beck_core::pg`]) — so the question this
+/// answers is where that building happens. Once per query it is `O(relations)`; once per row of
+/// the outer relation it is `O(relations²)`, and the two are indistinguishable at one size, which
+/// is the reason for the second.
+///
+/// The gate is on the **shape**: cost per relation must not grow with the number of relations. It
+/// is not on the rate, so it does not flake ([`docs/64`](../../../../docs/64-compile-speed-report.md)
+/// §64's pattern).
+#[test]
+fn answering_a_catalogue_query_costs_linear_in_the_relations() {
+    use beck_core::plan::Relate;
+    use beck_core::read::{Rows, Stmt};
+
+    let placed = todo_program();
+
+    /// Nothing to scan: `\d` reads only relations `Schema::builtin_rows` builds, so what this
+    /// supplies is the executor a compiled plan is prepared against and nothing else.
+    struct Catalogue(Arc<dyn beck_core::backend::Backend>);
+
+    impl Rows for Catalogue {
+        fn scan(
+            &self,
+            table: &beck_core::read::Table,
+        ) -> Result<Vec<beck_core::Value>, beck_core::read::SqlError> {
+            panic!(
+                "a catalogue query read {}, which is not a catalogue relation",
+                table.name
+            )
+        }
+        fn backend(&self) -> Option<&dyn beck_core::backend::Backend> {
+            Some(self.0.as_ref())
+        }
+    }
+
+    let select = match beck_core::read::parse(PSQL_LIST).expect("psql's own query parses") {
+        Stmt::Select(s) => s,
+        other => panic!("not a select: {other:?}"),
+    };
+
+    let work_at = |n: usize| -> u64 {
+        let schema = schema_of_size(n);
+        let rows = Catalogue(beck_eval::backend(&placed));
+        let compiled = beck_core::query::compile_with(&schema, &select, Relate::Recognise)
+            .expect("the catalogue query compiles");
+        let (joined, work) = compiled
+            .run_measured(&schema, &rows)
+            .expect("the catalogue query runs");
+        // What the plan answers is every relation, the catalogue's own included: the `where` that
+        // hides them is over a `left join`'s null-supplying side and is therefore applied to the
+        // joined rows rather than pushed into a scan.
+        assert_eq!(
+            joined.len(),
+            n + schema.pg.len(),
+            "the join answered the wrong rows"
+        );
+        // And the whole query — the residual `where` and the `order by` included — answers the
+        // program's read models and not the fourteen relations describing them. A catalogue in one
+        // namespace, or that `where` pushed into the scan, lists both.
+        let answer = schema
+            .run(PSQL_LIST, &rows)
+            .expect("the catalogue query answers");
+        assert_eq!(answer.rows.len(), n, "`\\d` listed the wrong relations");
+        println!("{n:>5} read models: {:>9} steps", work.steps);
+        work.steps
+    };
+
+    let (small, large) = (50, 400);
+    let (a, b) = (work_at(small), work_at(large));
+    let per_relation = (b as f64 / large as f64) / (a as f64 / small as f64);
+    assert!(
+        per_relation < 2.0,
+        "answering `\\d` cost {per_relation:.1}× more per relation over 8× the relations \
+         ({a} steps at {small}, {b} at {large}) — the catalogue is being built per row rather \
+         than per query"
+    );
+}
+
+/// **`pg_catalog` and `beck_columns` describe the same schema**, because both are derived from it.
+///
+/// Two descriptions that disagreed would mean one was built rather than derived. The assertion is
+/// over every corpus program rather than one, so a shape only some program has — a derived signal,
+/// a fold that is one row, a collection of scalars — cannot slip past.
+#[test]
+fn the_catalogue_describes_every_column_the_read_model_has() {
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("beck") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).unwrap();
+        let name = path.display().to_string();
+        let (placed, diags, _) = beck_core::compile_str(&name, &src);
+        let Some(placed) = placed.filter(|_| !diags.has_errors()) else {
+            continue;
+        };
+        if !placed.is_application() {
+            continue;
+        }
+        let schema = Schema::of(&placed, &beck_core::plan::Plan::compile(&placed));
+
+        // Every read model is one `pg_class` row, in `public`; every catalogue relation is one in
+        // `pg_catalog`; and nothing is in both.
+        let class = beck_core::pg::rows(beck_core::pg::Rel::Class, &schema);
+        assert_eq!(
+            class.len(),
+            schema.tables.len() + schema.pg.len(),
+            "{name}: pg_class does not have a row per relation"
+        );
+
+        // And `pg_attribute` has a row per column of each, with the type the column declares.
+        let attributes = beck_core::pg::rows(beck_core::pg::Rel::Attribute, &schema);
+        let columns: usize = schema
+            .tables
+            .iter()
+            .chain(&schema.pg)
+            .map(|t| t.columns.len())
+            .sum();
+        assert_eq!(
+            attributes.len(),
+            columns,
+            "{name}: pg_attribute is not the columns"
+        );
+
+        // The oid a relation is given is the one its columns point at — the join `\d <table>` is.
+        let oids: Vec<i64> = class
+            .iter()
+            .map(|r| r.field("oid").and_then(|v| v.as_int()).expect("an oid"))
+            .collect();
+        let mut sorted = oids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            oids.len(),
+            "{name}: two relations share an oid"
+        );
+        for a in &attributes {
+            let of = a
+                .field("attrelid")
+                .and_then(|v| v.as_int())
+                .expect("an oid");
+            assert!(
+                oids.contains(&of),
+                "{name}: a column belongs to no relation"
+            );
+        }
+    }
+}
