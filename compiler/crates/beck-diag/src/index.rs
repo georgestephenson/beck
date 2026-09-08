@@ -822,6 +822,15 @@ pub const INDEX: &[CodeEntry] = &[
         "There is no `impl Trait for Type` in scope for the receiver's type.",
     ),
     e(
+        "B0388",
+        Stage::Types,
+        "an imported module implements a trait this program does not import",
+        "The impl is dropped, so its methods cannot be called here — a trait is a name, and a name \
+         is visible where its module is imported directly rather than through somebody else's \
+         import. A warning rather than a refusal, because a module may legitimately publish an \
+         impl for a trait the importer never names; import the trait's module to use it.",
+    ),
+    e(
         "B0389",
         Stage::Types,
         "a block has more statements than the checker will follow",

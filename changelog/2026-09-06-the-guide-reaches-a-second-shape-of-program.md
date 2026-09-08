@@ -18,8 +18,9 @@
   out — which is a macro having written it, and is the assertion that goes red if `derive_json:` is
   replaced by the impl it generates.
   Two defects were found by writing it and are recorded rather than fixed:
-  [`DEFECTS.md::an-imported-impl-is-visible-only-if-its-trait-was-imported-first`](../defects/an-imported-impl-is-visible-only-if-its-trait-was-imported-first.md)
-  — swapping two `import` lines is the difference between `B0387` and `ok` — and
+  `DEFECTS.md::an-imported-impl-is-visible-only-if-its-trait-was-imported-first` — swapping two
+  `import` lines is the difference between `B0387` and `ok`; fixed since, so the entry is gone —
+  and
   `DEFECTS.md::a-stub-in-a-library-test-is-accepted-and-can-never-fire` (fixed since, so the entry
   is gone — the id is a name rather than a path for exactly this reason).
   One absence too: [`08`](../docs/08-roadmap.md) §8.5.4 now carries **a stub that fails**, because

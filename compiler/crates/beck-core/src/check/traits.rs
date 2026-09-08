@@ -62,9 +62,13 @@
 //!
 //! # What it is not
 //!
-//! **A trait does not cross a module boundary.** A `.becki` publishes neither traits nor impls, and
-//! `Interface::of` drops both the mangled definitions and any bounded one rather than publishing a
-//! signature whose dictionary parameters no source could name.
+//! **A trait crosses a module boundary as a name, not as a scope.** A `.becki` publishes the
+//! module's traits, its impls, and the *bound* on a bounded definition — what it drops is the
+//! mangled method definitions and the lowered dictionary parameters, whose names no source could
+//! write; [`Checker::import_bounded`] rebuilds those from the bound. So an imported impl is usable
+//! exactly where the trait's own module is imported **directly**, which is the rule a `def`
+//! already follows, and an impl for a trait the importer never names is dropped with `B0388`
+//! rather than in silence.
 //!
 //! **A bounded definition cannot be passed as a value.** Its dictionaries are supplied at the call
 //! site, and a reference that is never called has no call site to supply them.
@@ -997,13 +1001,20 @@ impl Checker<'_> {
         Some(Core::new(CoreKind::Global(name), ty, span))
     }
 
-    /// Register an imported module's traits and impls.
+    /// Register an imported module's **trait declarations**.
     ///
     /// An imported trait is turned back into the syntax a local one is kept as, so that everything
     /// downstream — dispatch, an impl for a local type, a bound on a local definition — cannot tell
-    /// the difference. The impl methods it names are registered as *signatures*: the bodies stayed
-    /// in the module that wrote them, and what crosses is that they exist and what they promise.
-    pub(super) fn import_traits(&mut self, traits: &[TraitSig], impls: &[ImplSig]) {
+    /// the difference.
+    ///
+    /// Separate from [`Checker::import_impls`] because the two run in different passes over the
+    /// *whole* import list, and that separation is load-bearing rather than tidy: an `impl` and a
+    /// bounded `def` both resolve a trait **by name**, so registering each module's traits and
+    /// impls together made whether an imported `impl` survived depend on the order the `import`
+    /// lines were written in — the trait's module had to be named first. Nothing gives `import` an
+    /// order (D23 fixes where a name resolves *from*, not a sequence), and the impl was dropped
+    /// silently, so the failure surfaced one module later as `B0387`.
+    pub(super) fn import_trait_decls(&mut self, traits: &[TraitSig]) {
         for t in traits {
             let methods: Vec<TraitMethod> = t
                 .methods
@@ -1053,9 +1064,50 @@ impl Checker<'_> {
                 },
             );
         }
+    }
+
+    /// Register an imported module's `impl`s, once **every** import's traits are known.
+    ///
+    /// The methods an impl names are registered as *signatures*: the bodies stayed in the module
+    /// that wrote them, and what crosses is that they exist and what they promise.
+    ///
+    /// The `module` name is for the diagnostic below, which is the other half of the fix. A
+    /// missing trait here used to mean two different things — "declared by an import this loop has
+    /// not reached yet" and "not imported at all" — and `continue` served both. The first was the
+    /// bug and the pass split above removes it; what is left is the second, and it is **not an
+    /// error**: an import is visible where it is written and not through somebody else's, so a
+    /// module may perfectly well publish an `impl` for a trait the importer never names. It is
+    /// also not nothing, because the impl is *dropped* and any later attempt to use it fails
+    /// somewhere else — which is what `B0388` exists to have said first.
+    pub(super) fn import_impls(&mut self, module: &str, impls: &[ImplSig]) {
         for i in impls {
             let head = i.head();
             let Some(decl) = self.traits.get(&i.trait_name).cloned() else {
+                self.diags.push(
+                    Diagnostic::warning(
+                        "B0388",
+                        format!(
+                            "`{module}` implements `{}`, which this program does not import",
+                            i.trait_name
+                        ),
+                        Span::NONE,
+                    )
+                    // A label needs a span and an interface has none — the impl was read out of a
+                    // `.becki`, not out of this file — so what a label would have said is a note.
+                    .with_note(format!(
+                        "`impl {} for {}` is dropped, so its methods cannot be called here",
+                        i.trait_name,
+                        i.head()
+                    ))
+                    .with_note(
+                        "a trait is a name, and a name is visible where its module is imported \
+                         directly rather than through somebody else's import",
+                    )
+                    .with_fix(format!(
+                        "import the module that declares `{}`",
+                        i.trait_name
+                    )),
+                );
                 continue;
             };
             for m in &decl.sig.methods {

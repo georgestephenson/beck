@@ -115,6 +115,18 @@ because its name is one no source could write.
 library can publish `def largest[T: Ord_]` — which is the interesting half of a library. A bodyless
 `impl` is what a header is. The orphan rule had to learn to be about two modules rather than one.
 
+What this did not say, and was found later, is **where the trait is resolved from**. Registering
+each import's traits alongside its impls made both of the above depend on the order the `import`
+lines were written in: with the trait's module named second, an imported `impl` was dropped and the
+program failed one module later with `B0387`, and a bounded import lost the dictionary parameters
+the exporting module lowered it with and failed at *run time* with `expected 2 arguments, got 1`.
+A trait is resolved by name across every import, so the registration is two passes over the whole
+list rather than one pass per module (`beck-cli/tests/imports.rs`). What is left of the same
+`continue` is `B0388`, a **warning**: an impl for a trait the importer never names is dropped,
+because a name is visible where its module is imported directly, and saying so is different from
+refusing it. Nothing in `.becki`-land is settled by that — a published interface naming a trait
+still cannot be read back at all ([`DEFECTS.md`](../DEFECTS.md)).
+
 ## 27.6 Generic arithmetic, and the directory empties
 
 `sicp/refusals/rational.beck` was the last file in it. It said the missing thing was a *type*, not
