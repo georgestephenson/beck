@@ -207,3 +207,96 @@ fn an_impl_whose_trait_this_program_does_not_import_is_said_out_loud() {
         "a program that never calls the method still compiles:\n{out}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// A published interface, read back
+// ---------------------------------------------------------------------------------------------
+
+fn iface(root: &std::path::Path) -> String {
+    let out = beck().arg("iface").arg(root).output().expect("beck runs");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+#[test]
+fn a_published_interface_naming_a_foreign_trait_can_be_read_back() {
+    // `DEFECTS.md::a-published-interface-naming-a-trait-cannot-be-read-back`. `beck iface` wrote a
+    // `.becki` that `beck check` then refused with `B0383`, because the reader checked it as a
+    // module with **no imports** and the file carried no `import` line to resolve against. So any
+    // module implementing a trait declared elsewhere, or publishing a bounded `def`, produced a
+    // contract the compiler could not read — and checking it in stopped the program building.
+    //
+    // Both halves moved: the writer emits what the contract depends on, and the reader resolves
+    // against the same interfaces the module itself was checked against.
+    for (case, imports) in [
+        ("iface-impl-then-trait", "import goods\nimport priced"),
+        ("iface-trait-then-impl", "import priced\nimport goods"),
+    ] {
+        let src = format!(
+            "{imports}
+
+def bill() -> Int:
+    return total([Book(cost=3), Book(cost=4)])
+
+test \"the contract survives the round trip\":
+    expect bill() == 7
+"
+        );
+        let root = project(
+            case,
+            &[
+                ("root.beck", &src),
+                ("goods.beck", GOODS),
+                ("priced.beck", PRICED),
+            ],
+        );
+        let goods = root.with_file_name("goods.beck");
+        let published = iface(&goods);
+        assert!(
+            published.contains("wrote"),
+            "`beck iface` did not write one:\n{published}"
+        );
+        let text = std::fs::read_to_string(root.with_file_name("goods.becki")).expect("written");
+        assert!(
+            text.contains("import priced"),
+            "the contract has to say where `Priced` comes from:\n{text}"
+        );
+
+        // And now the program builds *and runs* with that file checked in — dispatch reaches the
+        // impl through the interface, which a gate that only checked for the absence of `B0383`
+        // would not have shown.
+        let out = run("test", &root);
+        assert!(
+            out.contains("1 passed, 0 failed"),
+            "`{imports}` with the interface checked in:\n{out}"
+        );
+    }
+}
+
+#[test]
+fn an_interface_naming_a_trait_nothing_declares_still_says_so() {
+    // The half that would be forgotten: the fix must not turn `B0383` into silence. A hand-written
+    // `.becki` whose import does not declare the trait it names is still refused, and the
+    // diagnostic points into the `.becki` rather than at whoever imported it.
+    let root = project(
+        "iface-trait-nowhere",
+        &[
+            (
+                "root.beck",
+                "import goods\nimport priced\n\ndef bill() -> Int:\n    return total([Book(cost=3)])\n",
+            ),
+            (
+                "goods.becki",
+                "import priced\n\nmodel Book:\n    cost: Int\n\nimpl Nowhere for Book\n\n@on(any)\ndef total[T: Nowhere](xs: list[T]) -> Int\n",
+            ),
+            ("priced.beck", PRICED),
+        ],
+    );
+    let out = run("check", &root);
+    assert!(out.contains("B0383"), "{out}");
+    assert!(out.contains("Nowhere"), "the trait is named: {out}");
+    assert!(out.contains("goods.becki"), "and the file is: {out}");
+}

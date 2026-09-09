@@ -94,6 +94,18 @@ pub enum Kind {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Interface {
     pub module: String,
+    /// The modules this contract was checked against, rendered as `import` lines.
+    ///
+    /// A `.becki` is read back **as a module**, so a name it uses but does not declare has to be
+    /// resolvable from the file itself. A published `impl Priced for Book`, or a bound
+    /// `def total[T: Priced]`, names a trait that may live in another module — and without the
+    /// import line the reader has nothing to resolve `Priced` against and reports `B0383`, which
+    /// made `beck iface` write a file `beck check` refused.
+    ///
+    /// Deliberately **not** in [`Interface::digest`]: the digest is about the signatures published,
+    /// and this is provenance for resolving the names in them. Hashing it would report an API
+    /// change to every consumer when a module gained an import its contract never mentions.
+    pub imports: Vec<String>,
     /// Types in declaration order, so the rendered file is stable.
     pub types: Vec<TyDecl>,
     /// The `trait` declarations this module owns.
@@ -120,6 +132,11 @@ impl Interface {
             .collect();
         let traits = program.traits.clone();
         let impls = program.impls.clone();
+        // Every import, rather than the subset the published signatures reach. Nothing records
+        // which import a trait name arrived through — the checker's table is flat — and
+        // over-approximating costs a reader nothing, while guessing the subset wrong costs them a
+        // `B0383` on a file they did not write.
+        let imports = program.imports.clone();
 
         let mut items = Vec::new();
         for name in &program.def_order {
@@ -171,6 +188,7 @@ impl Interface {
 
         Interface {
             module: program.name.clone(),
+            imports,
             types,
             traits,
             impls,
@@ -225,6 +243,14 @@ impl Interface {
              # here is an API change, and `beck check --wire-compat` will say which kind.\n",
             self.module
         );
+        // First, because the file is read back as a module and everything below may name something
+        // one of these declares.
+        for m in &self.imports {
+            let _ = writeln!(out, "import {m}");
+        }
+        if !self.imports.is_empty() {
+            out.push('\n');
+        }
         for t in &self.types {
             out.push_str(&render_type(t));
             out.push('\n');
@@ -265,12 +291,34 @@ impl Interface {
         map: &mut SourceMap,
         diags: &mut Diagnostics,
     ) -> Interface {
+        Interface::parse_with(module, src, &[], map, diags)
+    }
+
+    /// The same, against the interfaces of the modules this one imports.
+    ///
+    /// A `.becki` is checked as a module, so a name it uses but does not declare needs the same
+    /// thing a `.beck` needs: the contract of whatever declares it. A published `impl Priced for
+    /// Book` or a bound `def total[T: Priced]` names a trait that may live elsewhere, and reading
+    /// the file with nothing to resolve against reported `B0383` — `beck iface` wrote a file
+    /// `beck check` refused. [`crate::project`] has every dependency's interface in hand by the
+    /// time it reads this one, because it works in dependency order, deepest first.
+    ///
+    /// [`Interface::parse`] passing none is still right for a caller that has none — comparing an
+    /// old contract to a new one for `--wire-compat` reads signatures, and a trait it cannot
+    /// resolve is reported rather than silently accepted.
+    pub fn parse_with(
+        module: &str,
+        src: &str,
+        imports: &[(String, Interface)],
+        map: &mut SourceMap,
+        diags: &mut Diagnostics,
+    ) -> Interface {
         let file = map.add(format!("{module}.becki"), src);
         let node = beck_syntax::parse_file(file, module, src, diags);
         // An interface is checked as a module: the same resolver, the same type syntax, the same
         // diagnostics. What makes it an interface is that every `def` in it is bodyless.
         let program =
-            crate::check::check_module_with(&node, crate::check::Mode::Interface, &[], diags);
+            crate::check::check_module_with(&node, crate::check::Mode::Interface, imports, diags);
         for name in &program.def_order {
             if let Some(d) = program.defs.get(name) {
                 if !d.is_declaration {
@@ -293,6 +341,18 @@ impl Interface {
         // and one derived from `orders.beck` agree on what module they describe — otherwise the
         // digest would differ for a reason nobody wrote down.
         iface.module = beck_syntax::module_ident(module);
+        // From the **file**, not from what this call was handed. `Interface::of` reads
+        // `Program::imports`, which is the list the checker was given, so a contract read with none
+        // supplied would re-render without the `import` lines it was written with — a round trip
+        // that loses what the reader needs on the next pass.
+        iface.imports = node
+            .args
+            .iter()
+            .skip(1)
+            .filter(|n| n.is_form(beck_syntax::sym::IMPORT))
+            .filter_map(|n| n.args.first().and_then(|a| a.as_var()))
+            .map(|s| s.as_str().to_string())
+            .collect();
         // `Interface::of` reads placement off the program, and a parsed interface has no solver
         // behind it — the tiers are the ones written in the file, which is what `@on(…)` means.
         iface
@@ -845,6 +905,34 @@ mod tests {
             original.digest(),
             reread.digest(),
             "rendered:\n{text}\n\noriginal {original:#?}\n\nreread {reread:#?}"
+        );
+    }
+
+    #[test]
+    fn the_import_lines_survive_the_file_form() {
+        // The digest deliberately excludes them, so the round-trip test above cannot see them go.
+        // They still have to come back: `Interface::of` reads the list the *checker* was given, so
+        // a contract parsed with none supplied would report an empty `imports` while its own file
+        // said otherwise — and re-rendering it would drop the lines the reader needs to resolve
+        // what it publishes.
+        let src = "\
+import vocab
+
+model Book:
+    cost: Int
+";
+        let mut diags = Diagnostics::new();
+        let mut map = SourceMap::new();
+        let reread = Interface::parse("goods", src, &mut map, &mut diags);
+        assert_eq!(
+            reread.imports,
+            vec!["vocab".to_string()],
+            "the file says what it imports, whatever the caller supplied"
+        );
+        assert!(
+            reread.render().contains("import vocab"),
+            "and rendering it again keeps them:\n{}",
+            reread.render()
         );
     }
 

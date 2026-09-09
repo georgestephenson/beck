@@ -376,7 +376,10 @@ pub fn check_project(
         // module happens to compile to today. That is the difference between a contract and a
         // description, and it is the reason `beck iface` writes a file rather than a cache entry.
         if let Some(text) = &src.interface {
-            let published = Interface::parse(name, text, map, diags);
+            // Against `deps`, for the reason a module is: a published `impl` or bound names a
+            // trait that may live in another module, and a contract read with nothing to resolve
+            // it against reports `B0383` on a file `beck iface` wrote.
+            let published = Interface::parse_with(name, text, &deps, map, diags);
             interfaces.insert(name.clone(), published);
         }
 
