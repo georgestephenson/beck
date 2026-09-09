@@ -183,7 +183,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0601` | error | **defined in more than one module** — Phase 2 links modules into one namespace and has no qualified reference to tell two definitions apart, so a clash is an error rather than a shadowing rule. |
 | `B0602` | error | **a module imports itself, directly or through a cycle** — A module's interface is derived from its body, so a cycle would mean each module needed the other's contract before either had one. The cycle is printed. |
 | `B0603` | error | **cannot find module** — The loader looked for `<name>.becki` and `<name>.beck` beside the root module, and for a standard-library module of that name, and found neither. |
-| `B0604` | error | **has an interface but no implementation** — An interface is enough to compile against and never enough to run. |
+| `B0604` | error | **has an interface but no implementation** — An interface is enough to compile against and never enough to run. `beck check` and `beck iface` work against a `.becki` with no `.beck` beside it — that is what §3.6's separate compilation is — so this is reported where a runnable program is produced, and for the root module wherever it is read, because a project whose root is a contract is not a program at all. |
 | `B0605` | error | **does not match its published interface** — The checked-in `.becki` and the module compile to different digests. Regenerate it with `beck iface`, and review the diff — the difference is an API change. |
 
 ## Tests written in Beck — `B0700–B0708`

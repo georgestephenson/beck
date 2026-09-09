@@ -1238,7 +1238,11 @@ pub const INDEX: &[CodeEntry] = &[
         "B0604",
         Stage::Modules,
         "has an interface but no implementation",
-        "An interface is enough to compile against and never enough to run.",
+        "An interface is enough to compile against and never enough to run. `beck check` and \
+         `beck iface` work against a `.becki` with no `.beck` beside it — that is what §3.6's \
+         separate compilation is — so this is reported where a runnable program is produced, and \
+         for the root module wherever it is read, because a project whose root is a contract is \
+         not a program at all.",
     ),
     e(
         "B0605",

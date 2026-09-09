@@ -300,3 +300,62 @@ fn an_interface_naming_a_trait_nothing_declares_still_says_so() {
     assert!(out.contains("Nowhere"), "the trait is named: {out}");
     assert!(out.contains("goods.becki"), "and the file is: {out}");
 }
+
+#[test]
+fn a_dependency_with_no_implementation_is_refused_where_the_program_would_run() {
+    // `DEFECTS.md::an-interface-only-dependency-links-to-nothing-and-says-nothing`. A module with
+    // a `.becki` and no `.beck` contributed no bodies, so it was simply absent from the link and
+    // every call into it arrived as `no such definition` — an absence, with nothing naming the
+    // module or saying why. `B0604` says exactly the right thing and was reachable only when such
+    // a module was the *root*.
+    //
+    // Nothing to do with traits: this is a plain `def`.
+    let root = project(
+        "no-implementation",
+        &[
+            (
+                "root.beck",
+                "import helper\n\ndef four() -> Int:\n    return double(2)\n\ntest \"it runs\":\n    expect four() == 4\n",
+            ),
+            (
+                "helper.becki",
+                "@on(any)\ndef double(n: Int) -> Int\n",
+            ),
+        ],
+    );
+    let out = run("test", &root);
+    assert!(out.contains("B0604"), "{out}");
+    assert!(out.contains("helper"), "the module is named: {out}");
+    assert!(
+        !out.contains("no such definition"),
+        "the linker must not be the one to find this:\n{out}"
+    );
+}
+
+#[test]
+fn checking_against_a_contract_alone_is_still_the_feature() {
+    // The half that would be forgotten. §3.6's separate compilation *is* compiling against a
+    // `.becki` with no `.beck` beside it, so the refusal above belongs where a runnable program is
+    // produced and nowhere earlier — a fix that put it in `check_project` would pass the gate
+    // above and delete the feature.
+    let root = project(
+        "contract-only-checks",
+        &[
+            (
+                "root.beck",
+                "import helper\n\ndef four() -> Int:\n    return double(2)\n",
+            ),
+            ("helper.becki", "@on(any)\ndef double(n: Int) -> Int\n"),
+        ],
+    );
+    let out = run("check", &root);
+    assert!(out.contains("ok:"), "`beck check` has to answer:\n{out}");
+    assert!(!out.contains("B0604"), "{out}");
+
+    // And so does the other command that works against contracts rather than bodies.
+    let published = run("iface", &root);
+    assert!(
+        !published.contains("B0604"),
+        "`beck iface` reads signatures, and this program has them:\n{published}"
+    );
+}
