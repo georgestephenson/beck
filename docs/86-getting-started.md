@@ -217,6 +217,9 @@ def view(s: Shelf, session: Session) -> Html:
         main:
             h1: "reading list"
             p: (str(map_len(s.books)) + " books")
+            ul:
+                for b in map_values(s.books):
+                    li(key=b.title): b.title
 
 proposals: Stream[Proposal] = merge_clients()
 events: Stream[Event] = decide(proposals, shelf, validate)
@@ -362,6 +365,43 @@ reaching a browser.
 `beck iface` writes the module's published contract — every signature with its row and its tier —
 which is what a downstream module compiles against and what `beck check --wire-compat` diffs when
 you change it.
+
+**It also worked out what not to recompute.** The page counts the shelf and lists it, and the
+obvious question about any such page is what it costs when the shelf holds a million books and
+somebody adds one:
+
+```text
+$ beck explain incremental shelf.beck
+Views are **maintained by delta** as far as the plan can decompose them: 2 of
+this view's 16 operators update from the change itself, 14 are recomputed when
+an input moves, and the page's children are still assembled in full every time
+(docs/23 §23.8).
+
+  page  incremental    (per session)
+          html_el        a subtree delta — what the patch protocol already streams
+          html_text      a text patch
+          +              pointwise
+          str            pointwise
+          map_len        ±1 per insert or remove
+          concat_lists   a union of delta streams
+          map_list       a delta in, the same delta mapped out
+          map_values     the arrangement, read by value
+          html_key       the key a keyed-children diff is by
+```
+
+`map_len  ±1 per insert or remove` is the answer: the count is **not** recomputed from the map, it
+is moved by the change. Nothing in the program asked for that and there is no annotation to write —
+the view is a pure function of the state, so the compiler is free to compile it into a dataflow
+whose operators each have a delta rule, and `beck explain incremental` is how you find out which
+ones did. [`23`](23-incremental-views-report.md) §23.8 has the measurement: nine units of work for
+one event, whether the collection holds ten rows or five thousand.
+
+Read the first paragraph again, though, because the tool is telling you where it stops: *the page's
+children are still assembled in full every time*. The elements the view computes are `O(δ)`; the
+page those elements are assembled into is still `O(n)`, and 14 of the 16 operators here have no
+delta rule and are recomputed — which, as the report goes on to say, still only happens when one of
+their inputs actually moved. A command that printed the good half would be worth less than one that
+prints both.
 
 ## 86.6 What a deploy is
 
@@ -986,14 +1026,16 @@ and this document cannot make it true on its own.
   requires an outside developer, and nobody outside this project has read this. What has changed is
   that the answer to "from what?" is no longer "there is nothing" — which was the stated blocker.
 * **It covers two shapes of program and there are more.** Neither one is optimistic about a client:
-  nothing here shows `gestures`, presence or awareness ([`94`](94-the-client-report.md)), or a view
-  the engine maintains by delta rather than recomputing
-  ([`99`](99-the-data-tier-means-of-combination.md)). Those are in the reports and in
-  [`compiler/corpus/`](../compiler/corpus/), and they are not here. **Two that were on this list are
-  now in §86.4**: a capability a chokepoint has to hold (`cap.*`,
+  nothing here shows `gestures`, presence or awareness ([`94`](94-the-client-report.md)), and
+  nothing here **relates two collections** — the join, the aggregates and the arrangement
+  [`99`](99-the-data-tier-means-of-combination.md) builds are in the reports and in
+  [`compiler/corpus/`](../compiler/corpus/), and they are not here. **Three that were on this list
+  are now in §86.4 and §86.5**: a capability a chokepoint has to hold (`cap.*`,
   [`03`](03-type-and-effect-system.md) §3.5), shown as the four table rows it moves and as the
-  `B0412` that arrives when the check is dropped; and a `property` block, shown with the
-  counterexample it shrinks to.
+  `B0412` that arrives when the check is dropped; a `property` block, shown with the counterexample
+  it shrinks to; and a view the engine maintains by delta rather than recomputing, shown as the
+  report `beck explain incremental` prints — including the half of it that says where the
+  maintenance stops.
 * ~~**There is no installation story.**~~ There is one — §86.1 — and it is
   [`92`](92-supply-chain-and-release-report.md)'s work: an installer that verifies what it
   downloaded, and a tag-triggered pipeline that builds what it installs. §92.13 is careful about

@@ -429,3 +429,55 @@ fn the_placement_table_in_the_guide_is_the_one_the_compiler_prints() {
         );
     }
 }
+
+/// The maintenance report §86.5 prints is the one the compiler produces.
+///
+/// The sibling of `the_placement_table_in_the_guide_is_the_one_the_compiler_prints`, and for the
+/// same reason: a transcript is prose that looks like evidence. This one is quoted in **part** —
+/// the full report is forty lines and the guide wants the operator table — so the assertion is
+/// that every line quoted appears, rather than that the two are equal. That is the weaker of the
+/// two checks and it is the strongest one an elided quotation admits; the place table is quoted
+/// whole and is held to equality.
+#[test]
+fn the_maintenance_report_in_the_guide_is_what_the_compiler_prints() {
+    let src = std::fs::read_to_string(guide()).expect("readable");
+    let programs = programs(&src);
+
+    let shown: Vec<Vec<String>> = blocks(&src, "text")
+        .iter()
+        .filter_map(|b| {
+            let mut lines = b.lines();
+            lines.find(|l| l.trim_start().starts_with("$ beck explain incremental"))?;
+            let rows: Vec<String> = lines
+                .map(|l| l.trim_end().to_string())
+                .filter(|l| !l.trim().is_empty())
+                .collect();
+            (!rows.is_empty()).then_some(rows)
+        })
+        .collect();
+    assert!(
+        !shown.is_empty(),
+        "docs/86 no longer shows what the compiler maintains, and this test is why it was \
+         trustworthy"
+    );
+
+    for quoted in &shown {
+        let printed: Vec<String> = programs
+            .iter()
+            .filter_map(|p| {
+                let (placed, d, _) = compile(&programs, p);
+                let placed = placed.filter(|_| !d.has_errors())?;
+                Some(beck_core::incremental::report(&placed, None))
+            })
+            .collect();
+        assert!(
+            printed
+                .iter()
+                .any(|r| quoted.iter().all(|l| r.lines().any(|p| p.trim_end() == *l))),
+            "the maintenance report in docs/86 §86.5 is not what any program in the guide \
+             produces.\nshown:\n{}\n\nthe guide's programs report:\n{}",
+            quoted.join("\n"),
+            printed.join("\n\n---\n\n")
+        );
+    }
+}
