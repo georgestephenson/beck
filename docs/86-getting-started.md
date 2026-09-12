@@ -781,6 +781,7 @@ derive_json:
 
 model Shelf:
     books: Map[Str, Book]
+    nominators: Map[Str, Str]
 
 model Readers:
     finished: Map[Str, Int]
@@ -800,7 +801,10 @@ impl ToJson for Event:
 def apply_book(s: Shelf, env: Envelope[Event]) -> Shelf:
     match env.body:
         case Nominated(book):
-            return s.with(books=map_insert(s.books, book.isbn, book))
+            return s.with(
+                books=map_insert(s.books, book.isbn, book),
+                nominators=map_insert(s.nominators, book.isbn, env.actor),
+            )
         case Finished(isbn):
             return s
 
@@ -893,20 +897,23 @@ def validate(s: Shelf, p: Proposal) -> Result[list[Event], Rejection]:
                 return Err(error=NotOnTheShelf)
             return Ok(value=announced(Finished(isbn=isbn)))
 
+def nominator(s: Shelf, isbn: Str) -> Str:
+    return unwrap_or(map_get(s.nominators, isbn), "nobody")
+
 def render(s: Shelf, r: Readers) -> Html:
     return ui:
         main:
             h1: "the club"
             ul:
                 for b in map_values(s.books):
-                    li(key=b.isbn): (b.title + " — " + str(b.copies) + " copies")
+                    li(key=b.isbn): (b.title + " — " + str(b.copies) + " copies, nominated by " + nominator(s, b.isbn))
             ul:
                 for who in map_keys(r.finished):
                     li: (who + " has finished " + str(read_count(r, who)))
 
 proposals: Stream[Proposal] = merge_clients()
 events: Stream[Event] = decide(proposals, shelf, validate)
-shelf: Signal[Shelf] = durable(fold(apply_book, Shelf(books={}), events))
+shelf: Signal[Shelf] = durable(fold(apply_book, Shelf(books={}, nominators={}), events))
 readers: Signal[Readers] = durable(fold(apply_reader, Readers(finished={}), events))
 page: Signal[Html] = map2(render, shelf, readers)
 
@@ -926,6 +933,10 @@ test "a chat that refuses the message does not cost the club what a member did":
     given [Nominated(book=Book(isbn="0262510871", title="SICP", copies=2))]
     when Finish(isbn="0262510871")
     expect events == [Finished(isbn="0262510871")]
+
+test "the page says who put each book there":
+    given [Nominated(book=Book(isbn="0262510871", title="SICP", copies=2))] by "ana"
+    expect page contains "nominated by ana"
 ```
 
 `derive_json:` is a **macro**. It reads the fields out of the declaration it is handed and writes
@@ -944,6 +955,33 @@ knowing nothing about its argument except that it can be written. `announced` is
 decides what a chat outage costs it, and the answer is nothing: `try:` makes the failure a value,
 and `_ =` is the club saying it will not read it. Whether the chat heard is not the club's state;
 what a member did is, and an outage at somebody else's host is not a reason to lose it.
+
+**And one line of `render` is a join.** `nominator(s, b.isbn)` sits inside
+`for b in map_values(s.books)`, which is a lookup per book: a thousand books is a thousand lookups,
+and a thousand more every time anything on the shelf changes. That is not what runs:
+
+```text
+$ beck explain query club.beck
+  #15  map_values     ← #14        shared       
+                      ordered by the map's key
+  #16  recompute      ← #4         shared       
+  #17  map_values     ← #16        shared       
+                      ordered by the map's key
+  #18  join           ← #15 #17    shared       
+                      ordered by the left input's key — left-order-major, as the loop was
+```
+
+Nothing in the program says `join`, and there is no query language to learn: a `for` whose body asks
+another collection for a key **is** an equi-join, so the compiler builds the index and maintains it
+from both sides ([`99`](99-the-data-tier-means-of-combination.md) §99.6). You write the loop you
+would have written anyway. The order is the loop's, too — "left-order-major, as the loop was" — so
+the page is the page you wrote rather than whatever order an index happened to hold.
+
+The club has a **second** join it did not ask for either. `read_count(r, who)` inside
+`for who in map_keys(r.finished)` is the same shape, and it was there before this section added
+anything; `beck explain query` has been reporting it since §86.8. That is the part worth taking
+away: the recogniser is not looking for a pattern you were taught to write, it is looking at what
+the loop reads.
 
 The split itself is one `import` and one contract:
 
@@ -1026,16 +1064,19 @@ and this document cannot make it true on its own.
   requires an outside developer, and nobody outside this project has read this. What has changed is
   that the answer to "from what?" is no longer "there is nothing" — which was the stated blocker.
 * **It covers two shapes of program and there are more.** Neither one is optimistic about a client:
-  nothing here shows `gestures`, presence or awareness ([`94`](94-the-client-report.md)), and
-  nothing here **relates two collections** — the join, the aggregates and the arrangement
-  [`99`](99-the-data-tier-means-of-combination.md) builds are in the reports and in
-  [`compiler/corpus/`](../compiler/corpus/), and they are not here. **Three that were on this list
-  are now in §86.4 and §86.5**: a capability a chokepoint has to hold (`cap.*`,
-  [`03`](03-type-and-effect-system.md) §3.5), shown as the four table rows it moves and as the
-  `B0412` that arrives when the check is dropped; a `property` block, shown with the counterexample
-  it shrinks to; and a view the engine maintains by delta rather than recomputing, shown as the
-  report `beck explain incremental` prints — including the half of it that says where the
-  maintenance stops.
+  nothing here shows `gestures`, presence or awareness ([`94`](94-the-client-report.md)). Those are
+  in the reports and in [`compiler/corpus/`](../compiler/corpus/), and they are not here. **Four
+  that were on this list are now in the guide**: a capability a chokepoint has to hold (`cap.*`,
+  [`03`](03-type-and-effect-system.md) §3.5, §86.4), shown as the four table rows it moves and as
+  the `B0412` that arrives when the check is dropped; a `property` block (§86.4), shown with the
+  counterexample it shrinks to; a view the engine maintains by delta rather than recomputing
+  (§86.5), shown as the report `beck explain incremental` prints — including the half of it that
+  says where the maintenance stops; and **two collections related** (§86.9), which turned out to
+  need no new program, because a `for` whose body asks another collection for a key already
+  compiles to a join and the guide had simply never said so
+  ([`99`](99-the-data-tier-means-of-combination.md) §99.6). What is still absent from here is the
+  rest of §99 — the aggregates, `arrange_by`, the difference — which answer a *question about* a
+  group rather than reading one.
 * ~~**There is no installation story.**~~ There is one — §86.1 — and it is
   [`92`](92-supply-chain-and-release-report.md)'s work: an installer that verifies what it
   downloaded, and a tag-triggered pipeline that builds what it installs. §92.13 is careful about

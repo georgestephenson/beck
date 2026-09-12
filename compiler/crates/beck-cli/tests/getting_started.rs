@@ -430,51 +430,76 @@ fn the_placement_table_in_the_guide_is_the_one_the_compiler_prints() {
     }
 }
 
-/// The maintenance report §86.5 prints is the one the compiler produces.
+/// Every other `beck explain` transcript in the guide is one the compiler produces.
 ///
 /// The sibling of `the_placement_table_in_the_guide_is_the_one_the_compiler_prints`, and for the
-/// same reason: a transcript is prose that looks like evidence. This one is quoted in **part** —
-/// the full report is forty lines and the guide wants the operator table — so the assertion is
-/// that every line quoted appears, rather than that the two are equal. That is the weaker of the
-/// two checks and it is the strongest one an elided quotation admits; the place table is quoted
-/// whole and is held to equality.
+/// same reason: a transcript is prose that looks like evidence. These are quoted in **part** — the
+/// maintenance report is forty lines and the plan is longer, and what the guide wants from each is
+/// a handful of rows — so the assertion is that every line quoted appears, rather than that the two
+/// are equal. That is the weaker of the two checks and it is the strongest one an elided quotation
+/// admits; the place table is quoted whole and is held to equality.
+///
+/// It dispatches on the subcommand rather than naming the two the guide shows today, so a
+/// transcript added later is covered by having been written rather than by somebody remembering to
+/// come back here. An `explain` the guide starts quoting and this does not know how to produce
+/// fails loudly for that reason.
 #[test]
-fn the_maintenance_report_in_the_guide_is_what_the_compiler_prints() {
+fn every_explain_transcript_in_the_guide_is_what_the_compiler_prints() {
     let src = std::fs::read_to_string(guide()).expect("readable");
     let programs = programs(&src);
 
-    let shown: Vec<Vec<String>> = blocks(&src, "text")
+    let shown: Vec<(String, Vec<String>)> = blocks(&src, "text")
         .iter()
         .filter_map(|b| {
             let mut lines = b.lines();
-            lines.find(|l| l.trim_start().starts_with("$ beck explain incremental"))?;
-            let rows: Vec<String> = lines
-                .map(|l| l.trim_end().to_string())
-                .filter(|l| !l.trim().is_empty())
-                .collect();
-            (!rows.is_empty()).then_some(rows)
+            let command = lines.find(|l| l.trim_start().starts_with("$ beck explain "))?;
+            let sub = command.split_whitespace().nth(3)?.to_string();
+            // `place` is quoted whole and held to equality by the test above.
+            (sub != "place").then(|| {
+                let rows: Vec<String> = lines
+                    .map(|l| l.trim_end().to_string())
+                    .filter(|l| !l.trim().is_empty())
+                    .collect();
+                (sub, rows)
+            })
         })
+        .filter(|(_, rows)| !rows.is_empty())
         .collect();
     assert!(
-        !shown.is_empty(),
-        "docs/86 no longer shows what the compiler maintains, and this test is why it was \
-         trustworthy"
+        shown.len() >= 2,
+        "docs/86 shows fewer `beck explain` transcripts than the two this held, and this test is \
+         why they were trustworthy"
     );
 
-    for quoted in &shown {
+    for (sub, quoted) in &shown {
         let printed: Vec<String> = programs
             .iter()
             .filter_map(|p| {
                 let (placed, d, _) = compile(&programs, p);
                 let placed = placed.filter(|_| !d.has_errors())?;
-                Some(beck_core::incremental::report(&placed, None))
+                Some(match sub.as_str() {
+                    "incremental" => beck_core::incremental::report(&placed, None),
+                    "query" => {
+                        let plan = beck_core::plan::Plan::unfused(&placed);
+                        let (plan, fusions) = beck_core::fuse::fuse(plan);
+                        format!(
+                            "{}{}",
+                            beck_core::plan::query_report(&plan),
+                            beck_core::fuse::report(&fusions)
+                        )
+                    }
+                    other => panic!(
+                        "docs/86 quotes `beck explain {other}` and this test cannot produce it — \
+                         teach it how, rather than leaving the transcript unheld"
+                    ),
+                })
             })
             .collect();
         assert!(
             printed
                 .iter()
                 .any(|r| quoted.iter().all(|l| r.lines().any(|p| p.trim_end() == *l))),
-            "the maintenance report in docs/86 §86.5 is not what any program in the guide \
+            "the `beck explain {sub}` transcript in docs/86 is not what any program in the guide \
              produces.\nshown:\n{}\n\nthe guide's programs report:\n{}",
             quoted.join("\n"),
             printed.join("\n\n---\n\n")
