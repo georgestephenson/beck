@@ -152,6 +152,7 @@ holds the accumulator:
 model Book:
     title: Str
     read: Bool
+    owner: Str
 
 model Shelf:
     books: Map[Str, Book]
@@ -167,11 +168,12 @@ union Event:
 union Rejection:
     Blank
     NotOnTheShelf
+    NotYours
 
 def apply_event(s: Shelf, env: Envelope[Event]) -> Shelf:
     match env.body:
         case Added(title):
-            return s.with(books=map_insert(s.books, title, Book(title=title, read=False)))
+            return s.with(books=map_insert(s.books, title, Book(title=title, read=False, owner=env.actor)))
         case Finished(title):
             return finished(s, title)
 
@@ -189,9 +191,26 @@ def validate(s: Shelf, p: Proposal) -> Result[list[Event], Rejection]:
                 return Err(error=Blank)
             return Ok(value=[Added(title=title)])
         case Finish(title):
-            if not map_contains(s.books, title):
-                return Err(error=NotOnTheShelf)
+            return owned(s, p, title)
+
+def owned(s: Shelf, p: Proposal, title: Str) -> Result[list[Event], Rejection] uses cap.session:
+    match map_get(s.books, title):
+        case Some(book):
+            if book.owner != p.session.actor:
+                return Err(error=NotYours)
             return Ok(value=[Finished(title=title)])
+        case None:
+            return Err(error=NotOnTheShelf)
+
+def additions(log: list[Event]) -> Int:
+    return list_len(filter_list(log, is_addition))
+
+def is_addition(e: Event) -> Bool:
+    match e:
+        case Added(title):
+            return True
+        case Finished(title):
+            return False
 
 def view(s: Shelf, session: Session) -> Html:
     return ui:
@@ -216,9 +235,18 @@ test "finishing a book nobody added is refused":
     when Finish(title="SICP")
     expect Err(error=NotOnTheShelf)
 
+test "somebody else's book is not yours to finish":
+    given [Added(title="SICP")] by "ana"
+    when session("bo") sends Finish(title="SICP")
+    expect Err(error=NotYours)
+
 test "the page counts what is on the shelf":
     given [Added(title="SICP"), Added(title="HtDP")]
     expect page contains "2 books"
+
+property "no log puts more books on the shelf than it added"(log: list[Event]):
+    given log
+    expect map_len(state.books) <= additions(log)
 ```
 
 That is a complete application. The four lines at the bottom of the definitions are the whole
@@ -236,15 +264,55 @@ $ beck test shelf.beck
 test "a book lands on the shelf" … ok
 test "a blank title is refused" … ok
 test "finishing a book nobody added is refused" … ok
+test "somebody else's book is not yours to finish" … ok
 test "the page counts what is on the shelf" … ok
+test "no log puts more books on the shelf than it added" … ok (100 inputs)
 
-4 passed, 0 failed, 0 skipped
+6 passed, 0 failed, 0 skipped
 ```
 
 Look at what the tests did *not* need. No fixture, because `given` is a list of events and the state
 is a fold of them. No mock, because `when` goes through the real `validate`. No server, because the
 page is a pure function. [`21`](21-tests-in-beck-and-proof.md) is the design; the short version is
 that a test names a log, an input and an expectation.
+
+**`uses cap.session` is the line that makes this section's title true.** `owned` says it needs a
+session's authority, and a `Session` reaches exactly one place in a Beck program: `validate`, which
+is the only function handed a `Proposal`. So a `cap.*` anywhere the validator does not reach is a
+requirement with no holder — which is what a missing auth check looks like from the type system's
+side. Delete the call and keep the function:
+
+```text
+$ beck check shelf.beck
+error[B0412]: `owned` requires a capability nothing can discharge
+  --> shelf.beck:45:1
+   |
+45 | def owned(s: Shelf, p: Proposal, title: Str) -> Result[list[Event], Rejection] uses cap.session:
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ needs {cap.session}
+   |
+  = note: a `Session` reaches exactly one place in a Beck program: the validator `decide` is given, which is the only function handed a `Proposal`. Authority is one chokepoint (docs/03 §3.5), so a capability required outside it has no holder
+  = help: call this from `validate` — or, if it genuinely needs no authority, drop the `cap.*` from its `uses`
+```
+
+That is [`03`](03-type-and-effect-system.md) §3.5's claim as a compile error rather than a
+convention: *forgetting the check is a build failure, not a pentest finding.* The capability is
+declared rather than inferred because it is the one effect a body cannot be read off — checking
+ownership is ordinary comparison, and nothing about `book.owner != p.session.actor` says that the
+right to do it was the point.
+
+**The last block is a `property`, not a `test`.** It names a typed input, and the generator supplies
+a hundred of them from the type — `list[Event]` is a log, so what it generates is logs, folded
+through the same `apply_event` as everything else. Break the fold so that `Finished` inserts a book
+and it does not merely fail, it *shrinks*:
+
+```text
+test "no log puts more books on the shelf than it added" … FAILED (4 inputs)
+  expected true, got false
+    with log = [Finished{title: }]
+```
+
+One event, the shortest title there is — because a counterexample nobody can read is a counterexample
+nobody acts on ([`21`](21-tests-in-beck-and-proof.md) §21.3 rule 5).
 
 Run it:
 
@@ -265,23 +333,31 @@ $ beck explain place shelf.beck
 name                 tier     kind       effects
 apply_event          any      definition {}
 finished             any      definition {}
-validate             any      definition {}
+validate             server   definition {cap.session}
+owned                server   definition {cap.session}
+additions            any      definition {}
+is_addition          any      definition {}
 view                 any      definition {}
 proposals            server   signal     {ingress}
-events               data     signal     {}
+events               server   signal     {cap.session}
 shelf                data     signal     {durable}
 page                 client   signal     {}
 ```
 
 Every one of those is **derived from the effect row**, and the rows are inferred. `proposals`
-performs `ingress`, which only a server can discharge. `shelf` performs `durable`. The four
+performs `ingress`, which only a server can discharge. `shelf` performs `durable`. Five of the
 definitions perform nothing, so they are `any` — which means they compile to *every* tier that needs
 them, and the duplication is the payoff rather than waste.
 
 This is the property worth understanding before anything else: **you do not choose a tier, you write
-what a function does, and the placement follows.** If you later give `validate` a call that reads a
-secret, the secret provably cannot reach the browser — not because a reviewer noticed, but because
-the row no longer fits the client tier, and the build fails.
+what a function does, and the placement follows.** The previous section is the demonstration rather
+than a promise about one: `owned` is the only function that gained a line, and `uses cap.session`
+moved *four* rows of this table. `owned` is on the server because no tier below one discharges a
+capability; `validate` followed it there because it calls it; `events` followed `validate`, and it
+had been on the data tier. Nothing about placement was edited, and nothing could have been — a
+`@on(client)` on `owned` would not be an override, it would be `B0401: `owned` is placed on
+`client`, which cannot discharge `cap.session``. That is the same mechanism that stops a secret
+reaching a browser.
 
 `beck iface` writes the module's published contract — every signature with its row and its tier —
 which is what a downstream module compiles against and what `beck check --wire-compat` diffs when
@@ -910,11 +986,14 @@ and this document cannot make it true on its own.
   requires an outside developer, and nobody outside this project has read this. What has changed is
   that the answer to "from what?" is no longer "there is nothing" — which was the stated blocker.
 * **It covers two shapes of program and there are more.** Neither one is optimistic about a client:
-  nothing here shows `gestures`, presence or awareness ([`94`](94-the-client-report.md)), a
-  capability a chokepoint has to hold (`cap.*`, [`03`](03-type-and-effect-system.md) §3.5), a
-  `property` block, or a view the engine maintains by delta rather than recomputing
+  nothing here shows `gestures`, presence or awareness ([`94`](94-the-client-report.md)), or a view
+  the engine maintains by delta rather than recomputing
   ([`99`](99-the-data-tier-means-of-combination.md)). Those are in the reports and in
-  [`compiler/corpus/`](../compiler/corpus/), and they are not here.
+  [`compiler/corpus/`](../compiler/corpus/), and they are not here. **Two that were on this list are
+  now in §86.4**: a capability a chokepoint has to hold (`cap.*`,
+  [`03`](03-type-and-effect-system.md) §3.5), shown as the four table rows it moves and as the
+  `B0412` that arrives when the check is dropped; and a `property` block, shown with the
+  counterexample it shrinks to.
 * ~~**There is no installation story.**~~ There is one — §86.1 — and it is
   [`92`](92-supply-chain-and-release-report.md)'s work: an installer that verifies what it
   downloaded, and a tag-triggered pipeline that builds what it installs. §92.13 is careful about
