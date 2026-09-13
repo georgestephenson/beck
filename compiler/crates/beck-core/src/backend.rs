@@ -37,6 +37,16 @@ use crate::core::{Core, Value};
 pub struct ExecError {
     pub message: String,
     pub span: Span,
+    /// The value a `raise` failed with and that value's type name, when this failure is one the
+    /// program *chose* rather than a fault.
+    ///
+    /// A raise is a row label (§3.2, [`crate::row::Effect::Raises`]) and `try:` matches on the
+    /// type name, so a raise that crossed this seam as a message alone would arrive at a handler
+    /// as something it could not catch — the failure would be real and the `Result` the program
+    /// was checked against unreachable. It is on the seam rather than inside a backend for the
+    /// reason every other thing here is: a stub that fails is a `beck-rt` facility and `beck-rt`
+    /// may not name a backend crate (`docs/19` §19.9).
+    pub raised: Option<Box<(Arc<str>, Value)>>,
 }
 
 impl ExecError {
@@ -44,7 +54,22 @@ impl ExecError {
         ExecError {
             message: message.into(),
             span,
+            raised: None,
         }
+    }
+
+    /// A failure a program chose: `raise Declined(…)`, carrying the value and its type.
+    pub fn raise(ty: Arc<str>, value: Value, span: Span) -> ExecError {
+        ExecError {
+            message: format!("raised `{}`", value.display()),
+            span,
+            raised: Some(Box::new((ty, value))),
+        }
+    }
+
+    /// The type name this failure raised, if it raised at all.
+    pub fn raised_type(&self) -> Option<&str> {
+        self.raised.as_ref().map(|r| r.0.as_ref())
     }
 }
 
@@ -77,7 +102,13 @@ pub type Callable = Arc<dyn Fn(Vec<Value>) -> Result<Value, ExecError> + Send + 
 pub trait Interceptor: Send + Sync {
     /// Called before a top-level definition named `name` is applied to `args`. Returning `Some`
     /// replaces the call; returning `None` runs the real body.
-    fn intercept(&self, name: &str, args: &[Value]) -> Option<Value>;
+    ///
+    /// The answer is a `Result` because a definition's failure is one of its answers: a stub
+    /// stands in for the definition, so it stands in for the `raises(E)` its signature already
+    /// declares (`docs/22` §22.6). `Err` carrying an [`ExecError::raise`] unwinds exactly as the
+    /// real body's `raise` would, so the program's own `try:` catches it; `Err` without one is a
+    /// fault in the stub itself.
+    fn intercept(&self, name: &str, args: &[Value]) -> Option<Result<Value, ExecError>>;
 }
 
 /// A backend's running count of what it has executed, if it keeps one.

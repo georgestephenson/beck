@@ -2166,6 +2166,10 @@ fn test_cmd(
     // ones a developer most wants to run (docs/22 §22.6, docs/25 §25.6 item 1, docs/27 §27.2).
     // `slice_or_library` gives one back instead of refusing it; every other diagnostic still does.
     let (project, map, mut diags) = checked_project(file)?;
+    // A test *runs*, so an import with a contract and no bodies is refused here for the reason
+    // `beck build` refuses it — every call into such a module would arrive at the linker as
+    // `no such definition`, with nothing naming the module.
+    let project = project.filter(|p| beck_core::project::require_implementations(p, &mut diags));
     let placed = project.and_then(|p| beck_core::project::slice_or_library(p, &mut diags));
     print!("{}", diags.render(&map));
     let placed = placed.ok_or_else(|| anyhow::anyhow!("{} does not compile", file.display()))?;

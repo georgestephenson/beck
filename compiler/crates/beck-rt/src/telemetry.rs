@@ -395,6 +395,120 @@ impl Telemetry {
         })
     }
 
+    /// Every scalar this runtime records: the name, what it means, and whether it only rises.
+    ///
+    /// **One table, read by both exports.** The OTLP JSON and the OpenMetrics text are two
+    /// spellings of the same numbers, and a metric added to one and not the other is the obvious
+    /// way for them to drift. Adding a counter here adds it to both, which is a structure rather
+    /// than a thing to remember.
+    ///
+    /// The names are OTLP's, dotted. [`Telemetry::openmetrics`] transliterates them, because a
+    /// Prometheus name cannot hold a dot.
+    fn scalars(&self) -> Vec<Scalar> {
+        let counter = |name, help, value| Scalar {
+            name,
+            help,
+            monotonic: true,
+            value,
+        };
+        let gauge = |name, help, value| Scalar {
+            name,
+            help,
+            monotonic: false,
+            value,
+        };
+        vec![
+            counter(
+                "beck.events.appended",
+                "events appended to the log",
+                self.events_appended.get(),
+            ),
+            counter(
+                "beck.proposals.rejected",
+                "proposals `validate` refused",
+                self.rejected.get(),
+            ),
+            counter(
+                "beck.connections.unauthenticated",
+                "connections that presented no usable identity",
+                self.unauthenticated.get(),
+            ),
+            counter(
+                "beck.proposals.deduplicated",
+                "proposals already seen, by idempotency key",
+                self.deduplicated.get(),
+            ),
+            counter(
+                "beck.log.append.failures",
+                "appends the store refused",
+                self.append_failures.get(),
+            ),
+            counter(
+                "beck.snapshot.failures",
+                "snapshots the store refused",
+                self.snapshot_failures.get(),
+            ),
+            counter(
+                "beck.messages.malformed",
+                "client messages that did not parse",
+                self.bad_messages.get(),
+            ),
+            counter(
+                "beck.navigations",
+                "route changes a client reported",
+                self.navigations.get(),
+            ),
+            counter(
+                "beck.patch.frames",
+                "patch frames sent to clients",
+                self.patch_frames.get(),
+            ),
+            counter(
+                "beck.patch.bytes",
+                "bytes of patch payload sent to clients",
+                self.patch_bytes.get(),
+            ),
+            counter(
+                "beck.views.shared_releases",
+                "shared arrangements released when their last reader left",
+                self.shared_releases.get(),
+            ),
+            gauge(
+                "beck.sessions.active",
+                "sessions currently connected",
+                self.sessions.get(),
+            ),
+            gauge("beck.log.head", "the log's head `seq`", self.head.get()),
+            gauge(
+                "beck.views.shared_arranged",
+                "arrangements held once for every subscriber",
+                self.shared_arranged.get(),
+            ),
+            gauge(
+                "beck.views.session_arranged",
+                "arrangements held per subscriber",
+                self.session_arranged.get(),
+            ),
+            gauge(
+                "beck.views.shared_retained",
+                "readers holding a shared arrangement",
+                self.shared_retained.get(),
+            ),
+        ]
+    }
+
+    /// Every duration this runtime records. The same table rule as [`Telemetry::scalars`].
+    fn histograms(&self) -> Vec<(&'static str, &Histogram)> {
+        vec![
+            ("beck.fold.duration", &self.fold),
+            ("beck.view.duration", &self.view),
+            ("beck.diff.duration", &self.diff),
+            ("beck.log.append.duration", &self.append),
+            ("beck.snapshot.duration", &self.snapshot),
+            ("beck.replay.duration", &self.replay),
+        ]
+    }
+
     /// OTLP/HTTP JSON for metrics — the body of a POST to `/v1/metrics`.
     ///
     /// Field names and the numeric enums (`aggregationTemporality: 2` is CUMULATIVE) are the
@@ -406,30 +520,32 @@ impl Telemetry {
         let start = start_unix_nanos().to_string();
         let now = now_unix_nanos().to_string();
 
-        let sum = |name: &str, v: u64, monotonic: bool| {
-            json!({
-                "name": name,
-                "unit": "1",
-                "sum": {
-                    "dataPoints": [{
-                        "asInt": v.to_string(),
-                        "startTimeUnixNano": start,
-                        "timeUnixNano": now,
-                    }],
-                    "aggregationTemporality": 2,
-                    "isMonotonic": monotonic,
-                }
-            })
-        };
-        let gauge = |name: &str, v: u64| {
-            json!({
-                "name": name,
-                "unit": "1",
-                "gauge": { "dataPoints": [{ "asInt": v.to_string(), "timeUnixNano": now }] }
-            })
-        };
-        let histogram = |name: &str, h: &Histogram| {
-            json!({
+        let mut metrics: Vec<J> = Vec::new();
+        for m in self.scalars() {
+            metrics.push(if m.monotonic {
+                json!({
+                    "name": m.name,
+                    "unit": "1",
+                    "sum": {
+                        "dataPoints": [{
+                            "asInt": m.value.to_string(),
+                            "startTimeUnixNano": start,
+                            "timeUnixNano": now,
+                        }],
+                        "aggregationTemporality": 2,
+                        "isMonotonic": true,
+                    }
+                })
+            } else {
+                json!({
+                    "name": m.name,
+                    "unit": "1",
+                    "gauge": { "dataPoints": [{ "asInt": m.value.to_string(), "timeUnixNano": now }] }
+                })
+            });
+        }
+        for (name, h) in self.histograms() {
+            metrics.push(json!({
                 "name": name,
                 "unit": "us",
                 "histogram": {
@@ -443,45 +559,94 @@ impl Telemetry {
                     }],
                     "aggregationTemporality": 2,
                 }
-            })
-        };
+            }));
+        }
 
         json!({
             "resourceMetrics": [{
                 "resource": { "attributes": resource_attributes(service) },
                 "scopeMetrics": [{
                     "scope": { "name": "beck" },
-                    "metrics": [
-                        sum("beck.events.appended", self.events_appended.get(), true),
-                        sum("beck.proposals.rejected", self.rejected.get(), true),
-                        sum(
-                            "beck.connections.unauthenticated",
-                            self.unauthenticated.get(),
-                            true,
-                        ),
-                        sum("beck.proposals.deduplicated", self.deduplicated.get(), true),
-                        sum("beck.log.append.failures", self.append_failures.get(), true),
-                        sum("beck.snapshot.failures", self.snapshot_failures.get(), true),
-                        sum("beck.messages.malformed", self.bad_messages.get(), true),
-                        sum("beck.navigations", self.navigations.get(), true),
-                        sum("beck.patch.frames", self.patch_frames.get(), true),
-                        sum("beck.patch.bytes", self.patch_bytes.get(), true),
-                        gauge("beck.sessions.active", self.sessions.get()),
-                        gauge("beck.log.head", self.head.get()),
-                        gauge("beck.views.shared_arranged", self.shared_arranged.get()),
-                        gauge("beck.views.session_arranged", self.session_arranged.get()),
-                        gauge("beck.views.shared_retained", self.shared_retained.get()),
-                        sum("beck.views.shared_releases", self.shared_releases.get(), true),
-                        histogram("beck.fold.duration", &self.fold),
-                        histogram("beck.view.duration", &self.view),
-                        histogram("beck.diff.duration", &self.diff),
-                        histogram("beck.log.append.duration", &self.append),
-                        histogram("beck.snapshot.duration", &self.snapshot),
-                        histogram("beck.replay.duration", &self.replay),
-                    ]
+                    "metrics": metrics
                 }]
             }]
         })
+    }
+
+    /// OpenMetrics 1.0.0 text, for a Prometheus scraper — `docs/12` §12.8's chartered row.
+    ///
+    /// The same numbers [`Telemetry::otlp_metrics`] exports, read off the same tables, in the other
+    /// exposition format the ecosystem speaks. It **adds no measurement**: every value is already
+    /// recorded on the serving path, which is what makes a second export cheap rather than a second
+    /// cost.
+    ///
+    /// Three things the format requires and the JSON does not, so they are decided here:
+    ///
+    /// * **A name is `[a-zA-Z_:][a-zA-Z0-9_:]*`**, so `beck.events.appended` cannot be spelled. The
+    ///   dots become underscores, which is the ecosystem's own transliteration of an OTLP name.
+    /// * **A counter's name ends `_total`.** OpenMetrics requires it; the older Prometheus text
+    ///   format merely prefers it, so satisfying the stricter reader satisfies both.
+    /// * **Durations are seconds.** The histograms hold microseconds and Prometheus's convention is
+    ///   base units, so the values are divided by a million and the names end `_seconds`. The
+    ///   *boundary* is unchanged: a bucket holding observations at or below 1 µs holds the same ones
+    ///   at or below 1e-6 s.
+    ///
+    /// `# UNIT` and `# EOF` are OpenMetrics lines an older 0.0.4 parser reads as comments, so one
+    /// body serves both readers rather than content-negotiating between them.
+    pub fn openmetrics(&self, service: &str) -> String {
+        use std::fmt::Write;
+        let mut out = String::new();
+        // The service every sample is about. The JSON hangs it on a `resource`; a text exposition
+        // has no resource, so it is a label — `job` being the name a scraper already uses for it.
+        let job = escape_label(service);
+
+        for m in self.scalars() {
+            let name = prometheus_name(m.name);
+            let name = if m.monotonic {
+                format!("{name}_total")
+            } else {
+                name
+            };
+            let _ = writeln!(
+                out,
+                "# TYPE {name} {}",
+                if m.monotonic { "counter" } else { "gauge" }
+            );
+            let _ = writeln!(out, "# HELP {name} {}", escape_help(m.help));
+            let _ = writeln!(out, "{name}{{job=\"{job}\"}} {}", m.value);
+        }
+
+        for (dotted, h) in self.histograms() {
+            let name = format!("{}_seconds", prometheus_name(dotted));
+            let _ = writeln!(out, "# TYPE {name} histogram");
+            let _ = writeln!(out, "# UNIT {name} seconds");
+            let _ = writeln!(out, "# HELP {name} how long this took, in seconds");
+            // Cumulative, which is what the format means by a bucket: the stored counts are per
+            // bucket and the last is the overflow, so the running total is the answer and its final
+            // value is the `+Inf` bucket — equal, by construction, to `_count`.
+            let counts = h.counts();
+            let bounds = Histogram::bounds();
+            let mut running = 0u64;
+            for (i, c) in counts.iter().enumerate() {
+                running += c;
+                let le = match bounds.get(i) {
+                    Some(us) => canonical_number(us / 1.0e6),
+                    None => "+Inf".to_string(),
+                };
+                let _ = writeln!(out, "{name}_bucket{{job=\"{job}\",le=\"{le}\"}} {running}");
+            }
+            let _ = writeln!(
+                out,
+                "{name}_sum{{job=\"{job}\"}} {}",
+                canonical_number(h.sum_us() as f64 / 1.0e6)
+            );
+            let _ = writeln!(out, "{name}_count{{job=\"{job}\"}} {}", h.count());
+        }
+
+        // OpenMetrics requires it, and it is the one line that distinguishes a complete body from a
+        // truncated one — which is why the specification has it at all.
+        out.push_str("# EOF\n");
+        out
     }
 
     /// OTLP/HTTP JSON for logs — the body of a POST to `/v1/logs`.
@@ -529,6 +694,83 @@ fn severity_number(level: &str) -> u8 {
         "ERROR" => 17,
         _ => 9,
     }
+}
+
+/// One scalar metric, as both exports need it: the name, what it means, and its value.
+///
+/// `monotonic` is the whole distinction between the two kinds — a counter only rises and a gauge
+/// moves either way — and both exports read it rather than being told twice.
+struct Scalar {
+    name: &'static str,
+    help: &'static str,
+    monotonic: bool,
+    value: u64,
+}
+
+/// An OTLP name as a Prometheus one: `beck.log.head` → `beck_log_head`.
+///
+/// A Prometheus metric name is `[a-zA-Z_:][a-zA-Z0-9_:]*`, so a dot cannot appear in one. Replacing
+/// it with an underscore is what the ecosystem's own OTLP-to-Prometheus translation does, which
+/// matters more than it looks: a dashboard written against a collector's output and one written
+/// against this endpoint should name the same series.
+fn prometheus_name(dotted: &str) -> String {
+    dotted
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == ':' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// A float as OpenMetrics' **Canonical Numbers** rule renders it.
+///
+/// The specification does not leave this to the runtime, because an `le` is a *label value* and an
+/// end user reads it: "the target rendering is equivalent to the default Go rendering of float64
+/// values (i.e. `%g`), with a `.0` appended in case there is no decimal point or exponent". Its own
+/// examples pin the two thresholds — `0.0001` and `1e-05`, `100000.0` and `1e+06` — so exponent
+/// form is used exactly when the decimal exponent is below -4 or at least 6, with the exponent
+/// itself signed and at least two digits.
+///
+/// Rust's own two formats are each half of this: `{}` never uses exponent form and `{:e}` always
+/// does, and neither pads the exponent. So `{:e}` supplies the shortest mantissa and the exponent,
+/// and this chooses between them.
+fn canonical_number(x: f64) -> String {
+    // `{:e}` is always `<mantissa>e<exp>`, and the mantissa is the shortest that round-trips —
+    // which is what "default Go rendering" means by its digits.
+    let sci = format!("{x:e}");
+    let (mantissa, exp) = sci.split_once('e').expect("`{:e}` always has an exponent");
+    let exp: i32 = exp.parse().expect("`{:e}` always has an integer exponent");
+    // Below -4 or at least 6, which are the two boundaries the examples above pin.
+    if !(-4..6).contains(&exp) {
+        return format!(
+            "{mantissa}e{}{:02}",
+            if exp < 0 { '-' } else { '+' },
+            exp.abs()
+        );
+    }
+    let decimal = format!("{x}");
+    if decimal.contains('.') {
+        decimal
+    } else {
+        format!("{decimal}.0")
+    }
+}
+
+/// `HELP` text, escaped as the format requires: a backslash and a newline are the two that matter.
+fn escape_help(help: &str) -> String {
+    help.replace('\\', "\\\\").replace('\n', "\\n")
+}
+
+/// A label value, escaped as the format requires — the quote as well, since it closes the value.
+fn escape_label(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }
 
 fn resource_attributes(service: &str) -> J {
@@ -610,6 +852,228 @@ mod tests {
             "records() must be newest first"
         );
         assert_eq!(records[0].seq, Some((RING_CAPACITY + 499) as u64));
+    }
+
+    /// `canonical_number` against **the specification's own published values**.
+    ///
+    /// Every number below is copied out of OpenMetrics 1.0.0 — the two "Exposers SHOULD produce
+    /// output for…" lists in *Considerations: Canonical Numbers*, and the `le` values of the
+    /// histogram example that section governs. They are the oracle for the same reason `clbg/`
+    /// rebuilds its constants from the Game's own output: a rendering checked against a rule
+    /// somebody restated is a rendering checked against their reading of it.
+    ///
+    /// The two thresholds are what this is really about. `0.0001` renders as a decimal and `1e-05`
+    /// does not; `100000.0` renders as a decimal and `1e+06` does not. Both boundaries are one
+    /// comparison away from being wrong in a way no round trip could see, because a parser reads
+    /// either spelling perfectly well — it is the *human* comparing two dashboards who cannot.
+    #[test]
+    fn the_le_rendering_is_the_specifications_own() {
+        for (value, want) in [
+            // "the values 0.0 up to 10.0 in 0.001 increments"
+            (0.0, "0.0"),
+            (0.001, "0.001"),
+            (0.002, "0.002"),
+            (0.01, "0.01"),
+            (0.1, "0.1"),
+            (0.9, "0.9"),
+            (0.95, "0.95"),
+            (0.99, "0.99"),
+            (0.999, "0.999"),
+            (1.0, "1.0"),
+            (1.7, "1.7"),
+            (10.0, "10.0"),
+            // "the values 1e-10 up to 1e+10 in powers of ten"
+            (1e-10, "1e-10"),
+            (1e-9, "1e-09"),
+            (1e-5, "1e-05"),
+            (0.0001, "0.0001"),
+            (100000.0, "100000.0"),
+            (1e6, "1e+06"),
+            (1e10, "1e+10"),
+            // …and the wide, deliberately atypical `le` values of the histogram example.
+            (1e23, "1e+23"),
+            (1.1e23, "1.1e+23"),
+        ] {
+            assert_eq!(
+                canonical_number(value),
+                want,
+                "the specification renders {value:?} as `{want}`"
+            );
+        }
+    }
+
+    /// The exposition obeys the rules OpenMetrics states, checked as rules rather than by a parser.
+    ///
+    /// **Nothing in this workspace is a Prometheus scraper**, so this is not a foreign reader
+    /// accepting the body — it is the specification's own MUSTs, encoded, which is the same position
+    /// [`adr/0030`](../../../../../docs/adr/0030-the-webassembly-emitter-writes-its-own-bytes.md) takes
+    /// about a format with no local reader. What it buys over a round trip is that a writer checked
+    /// by its own reader agrees with itself: the rules below are about the *bytes*, and a reader
+    /// written here would have been written to accept whatever these emit.
+    #[test]
+    fn the_exposition_obeys_the_rules_the_specification_states() {
+        let t = Telemetry::default();
+        t.events_appended.add(7);
+        t.sessions.set(2);
+        t.fold.record_us(3);
+        t.fold.record_us(9_000);
+        let body = t.openmetrics("todo");
+
+        // "Expositions MUST end with EOF and SHOULD end with 'EOF\n'."
+        assert!(body.ends_with("# EOF\n"), "{body}");
+        // "Line endings ... MUST NOT contain carriage returns."
+        assert!(!body.contains('\r'));
+
+        let mut types: std::collections::BTreeMap<String, String> = Default::default();
+        let mut units: std::collections::BTreeMap<String, String> = Default::default();
+        let mut samples: Vec<(String, String, String)> = Vec::new();
+        for line in body.lines() {
+            if let Some(rest) = line.strip_prefix("# TYPE ") {
+                let (name, kind) = rest.split_once(' ').expect("`# TYPE <name> <kind>`");
+                assert!(
+                    types.insert(name.to_string(), kind.to_string()).is_none(),
+                    "MUST NOT be more than one of each type of metadata line: {name}"
+                );
+            } else if let Some(rest) = line.strip_prefix("# UNIT ") {
+                let (name, unit) = rest.split_once(' ').expect("`# UNIT <name> <unit>`");
+                // "an underscore and the unit MUST be the suffix of the MetricFamily name"
+                assert!(
+                    name.ends_with(&format!("_{unit}")),
+                    "`{name}` does not end with `_{unit}`"
+                );
+                units.insert(name.to_string(), unit.to_string());
+            } else if line.starts_with("# HELP ") || line == "# EOF" {
+                // Metadata, and the terminator.
+            } else {
+                // "Aside from this metadata and the EOF line ... you MUST NOT expose lines
+                // beginning with a #."
+                assert!(!line.starts_with('#'), "stray comment line: {line}");
+                let (name, value) = line.rsplit_once(' ').expect("`<series> <value>`");
+                let (name, labels) = match name.split_once('{') {
+                    Some((n, l)) => (n, l.trim_end_matches('}')),
+                    None => (name, ""),
+                };
+                // The ABNF for a metric name, and the reason a dot cannot survive transliteration.
+                assert!(
+                    name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_' || c == ':')
+                        && name
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':'),
+                    "`{name}` is not a metric name the ABNF admits"
+                );
+                samples.push((name.to_string(), labels.to_string(), value.to_string()));
+            }
+        }
+
+        assert!(!types.is_empty() && !samples.is_empty());
+        // "A counter's Total Value Sample MetricName MUST have the suffix `_total`."
+        for (family, kind) in &types {
+            if kind == "counter" {
+                assert!(family.ends_with("_total"), "counter `{family}`");
+            }
+        }
+        // Every sample belongs to a family that declared its type — the rule that makes the
+        // exposition self-describing rather than a list of numbers.
+        for (name, _, _) in &samples {
+            assert!(
+                types.keys().any(|f| name == f
+                    || ["_bucket", "_sum", "_count"]
+                        .iter()
+                        .any(|s| name == &format!("{f}{s}"))),
+                "`{name}` has no `# TYPE` line"
+            );
+        }
+
+        // "Buckets MUST be sorted in number increasing order of `le`", and "if and only if a Sum
+        // Value is present ... the +Inf Bucket value MUST also appear ... with the suffix `_count`".
+        for (family, kind) in &types {
+            if kind != "histogram" {
+                continue;
+            }
+            let buckets: Vec<(&str, u64)> = samples
+                .iter()
+                .filter(|(n, _, _)| n == &format!("{family}_bucket"))
+                .map(|(_, labels, v)| {
+                    let le = labels
+                        .split(',')
+                        .find_map(|l| l.strip_prefix("le=\""))
+                        .expect("a bucket has an `le`")
+                        .trim_end_matches('"');
+                    (le, v.parse::<u64>().expect("a bucket count"))
+                })
+                .collect();
+            assert_eq!(buckets.last().expect("buckets").0, "+Inf", "{family}");
+            let mut previous = f64::NEG_INFINITY;
+            for (le, _) in &buckets {
+                let n = if *le == "+Inf" {
+                    f64::INFINITY
+                } else {
+                    le.parse().expect("an `le` is a number")
+                };
+                assert!(n > previous, "{family}: {le} does not increase");
+                previous = n;
+            }
+            let counts: Vec<u64> = buckets.iter().map(|(_, c)| *c).collect();
+            assert!(
+                counts.windows(2).all(|w| w[1] >= w[0]),
+                "{family}: buckets are cumulative"
+            );
+            let total = samples
+                .iter()
+                .find(|(n, _, _)| n == &format!("{family}_count"))
+                .expect("a histogram with a sum has a count")
+                .2
+                .parse::<u64>()
+                .expect("a count");
+            assert_eq!(
+                total,
+                *counts.last().expect("buckets"),
+                "{family}: `_count` is the `+Inf` bucket"
+            );
+        }
+    }
+
+    /// The two exports carry the same numbers, because they read the same table.
+    ///
+    /// They share [`Telemetry::scalars`] now, so this cannot drift by one export being edited — but
+    /// the *transliteration* can, and a name that reaches Prometheus as something else is a
+    /// dashboard that silently stops matching a collector's.
+    #[test]
+    fn both_exports_carry_the_same_scalars() {
+        let t = Telemetry::default();
+        t.events_appended.add(7);
+        t.sessions.set(2);
+        let json = t.otlp_metrics("todo");
+        let text = t.openmetrics("todo");
+
+        let metrics = json["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
+            .as_array()
+            .expect("metrics")
+            .clone();
+        assert!(metrics.len() >= 20, "{}", metrics.len());
+        for m in &metrics {
+            let dotted = m["name"].as_str().expect("a name");
+            let (value, suffix) = if let Some(p) = m.get("sum") {
+                (
+                    p["dataPoints"][0]["asInt"].as_str().map(str::to_string),
+                    "_total",
+                )
+            } else if let Some(p) = m.get("gauge") {
+                (p["dataPoints"][0]["asInt"].as_str().map(str::to_string), "")
+            } else {
+                // A histogram: renamed to seconds, and held by the rules test above.
+                continue;
+            };
+            let want = format!(
+                "{}{suffix}{{job=\"todo\"}} {}",
+                dotted.replace('.', "_"),
+                value.expect("an integer point")
+            );
+            assert!(
+                text.lines().any(|l| l == want),
+                "the JSON has `{dotted}` and the text has no `{want}`"
+            );
+        }
     }
 
     #[test]

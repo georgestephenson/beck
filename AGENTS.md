@@ -217,8 +217,8 @@ fusion,
 gestures, shared-arrangement, subscription, view-metrics, read-model, psql, columns, style, SICP, Are We Fast Yet, Benchmarks Game,
 tests-in-Beck, UI, workflow-cross-check, documentation, getting-started, outbound, compile-speed,
 concurrency, round-trip, runtime-edge, grammar-fuzz, supply-chain, image, init-ci, native-backend,
-mode-B, browser, client, playground, identity, OIDC, presence, cranelift, wasm-backend, release and
-diagnostic-snapshot
+mode-B, browser, client, playground, identity, OIDC, presence, cranelift, wasm-backend, imports,
+release and diagnostic-snapshot
 suites, plus the nine
 release-only measurement suites. **Keep them green.**
 

@@ -174,6 +174,8 @@ pub fn compile_or_library_str(name: &str, src: &str) -> (Option<Placed>, Diagnos
             program,
             solution,
             interface,
+            // A single source string imports nothing, so there is nothing that could be missing.
+            unimplemented: Vec::new(),
         },
         &mut diags,
     );

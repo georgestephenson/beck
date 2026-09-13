@@ -4,7 +4,7 @@
 
 Every diagnostic the compiler can raise carries a stable code. `beck explain error B0341` prints one of these entries at the terminal.
 
-The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **151 codes.**
+The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans every non-test source file for a `"Bnnnn"` literal and fails if the set differs from this table in either direction. **153 codes.**
 
 
 ## Reading the source — `B0100–B0122`
@@ -114,6 +114,7 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0385` | error | **orphan impl** — An impl belongs with the trait or with the type. Implementing somebody else's trait for somebody else's type is what lets two modules supply one and disagree. |
 | `B0386` | error | **no implementation can be chosen here** — An implementation comes from a concrete type or from a bound on a type parameter — write `[T: Trait]` to say the parameter has one. A trait method and a bounded definition are both called rather than passed: the implementation is supplied at the call site, so a reference that is never called has nowhere to receive it. |
 | `B0387` | error | **the type does not implement the trait** — There is no `impl Trait for Type` in scope for the receiver's type. |
+| `B0388` | error | **an imported module implements a trait this program does not import** — The impl is dropped, so its methods cannot be called here — a trait is a name, and a name is visible where its module is imported directly rather than through somebody else's import. A warning rather than a refusal, because a module may legitimately publish an impl for a trait the importer never names; import the trait's module to use it. |
 | `B0389` | error | **a block has more statements than the checker will follow** — A block is a chain of `let`s however flat it looks in source, so the checker recurses once per statement and a long enough body reaches the end of the host stack. The bound is `beck_diag::depth::MAX_BLOCK` — much larger than the nesting ceiling, because 256 levels of nesting is pathological and 256 sequential bindings is merely a long function. It is a fixed count rather than a reading of the stack, so the same file is accepted or refused identically in a debug and a release build; without it, a long enough body aborted the process with no span at all. |
 | `B0390` | error | **the expression nests too deep to check** — The checker walks an expression and a type as deeply as they nest, and stops at `beck_diag::depth::MAX_NESTING` levels — the same count the reader stops at, because the checker can be handed a tree a macro produced rather than one anybody typed. Everything downstream walks the `Core` this pass built, so it is bounded by the same number. |
 | `B0391` | error | **a raised value must have a declared type** — `raise` performs `raises(T)`, and the atom names `T` so that a handler can say what it catches. A builtin will not do: `raises(Int)` would make every integer failure in a program the same failure, and a handler could not tell them apart. |
@@ -182,10 +183,10 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0601` | error | **defined in more than one module** — Phase 2 links modules into one namespace and has no qualified reference to tell two definitions apart, so a clash is an error rather than a shadowing rule. |
 | `B0602` | error | **a module imports itself, directly or through a cycle** — A module's interface is derived from its body, so a cycle would mean each module needed the other's contract before either had one. The cycle is printed. |
 | `B0603` | error | **cannot find module** — The loader looked for `<name>.becki` and `<name>.beck` beside the root module, and for a standard-library module of that name, and found neither. |
-| `B0604` | error | **has an interface but no implementation** — An interface is enough to compile against and never enough to run. |
+| `B0604` | error | **has an interface but no implementation** — An interface is enough to compile against and never enough to run. `beck check` and `beck iface` work against a `.becki` with no `.beck` beside it — that is what §3.6's separate compilation is — so this is reported where a runnable program is produced, and for the root module wherever it is read, because a project whose root is a contract is not a program at all. |
 | `B0605` | error | **does not match its published interface** — The checked-in `.becki` and the module compile to different digests. Regenerate it with `beck iface`, and review the diff — the difference is an API change. |
 
-## Tests written in Beck — `B0700–B0707`
+## Tests written in Beck — `B0700–B0708`
 
 | Code | | Meaning |
 |---|---|---|
@@ -197,4 +198,5 @@ The index is held to the compiler by a test: `beck-cli/tests/docs.rs` scans ever
 | `B0705` | error | **only `given`, `when`, `stub` and `expect` may appear in a test** — §21.2: a test names a log, an input and an expectation — there is no fixture to build and no `setUp` to write. |
 | `B0706` | error | **a clause needs something this program does not have** — The state a test arranges is a fold over the program's own event stream, so a program with no `merge_clients` → `decide` → `durable(fold(…))` has nothing for `given` and `when` to mean. |
 | `B0707` | error | **an atom is performed by more than one definition, so a stub cannot answer from the call** — The performers are named. A stub is a value for an effect atom; where two definitions perform the same atom with different result types, one value cannot serve both. |
+| `B0708` | error | **a stub raises what the definition it stands in for cannot** — A stub stands in for a definition, so it may answer the way that definition may answer — failure included, because a `raises(E)` the signature declares is an answer rather than an act. Callers were type-checked against the row the signature publishes, so a raise it does not declare would unwind through code that provably cannot fail. |
 

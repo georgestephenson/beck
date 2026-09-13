@@ -180,6 +180,11 @@ to be than "retry it three times".
   auto-stubbed per §21.3 rule 1 rather than demanded. So the error a person meets is "you wrote an
   effect into your test", not "you forgot to stub something"
   ([`22`](22-phase-3-report.md) §22.5 item 4).
+  What "its own" means is the third half, and it is what a `stub` clause decides: a stub stands in
+  for the definitions that *perform* the atom, so those definitions do not run and their row is not
+  the block's — an expectation may call one. That is also why a stub may **fail** the way the
+  definition it stands in for declares it can, and why a stub that *performs* is still the block's
+  own row ([`22`](22-phase-3-report.md) §22.6).
 * **Property tests** (`property "…" (events: list[Event])`, §11.10) need generated values, which is
   the same machinery §21.3 needs for stub returns. Build the generator once.
   **Built once**, in `beck-core/src/gen.rs`, and used by both.
@@ -196,8 +201,8 @@ to be than "retry it three times".
 
 ## 21.3 Mocks nobody writes
 
-*Built ([`22`](22-phase-3-report.md) §22.3), with two exceptions marked where they appear: rule 3
-(`case` inside a stub) is not built, and rule 1's auto-stubbing excludes `nondet` and `cap.*` for
+*Built ([`22`](22-phase-3-report.md) §22.3), including rule 3's `case` arms, and with one exception
+marked where it appears: rule 1's auto-stubbing excludes `nondet` and `cap.*` for
 reasons §22.3 gives. This section also **understates one rule**: a stub replaces the definition that
 *performs* an atom, not every definition whose row inherits it — see §22.3, because getting that
 wrong replaces the authority chokepoint itself.*

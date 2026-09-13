@@ -156,9 +156,11 @@ pub struct Def {
     pub declared_effects: Vec<Effect>,
     /// The trait bounds on this definition's type parameters, in written order.
     ///
-    /// Empty for almost everything. A bounded definition is **not published**: its dictionary
-    /// parameters carry names no source could write, and a trait does not cross a module boundary,
-    /// so `beck iface` drops it rather than publishing a signature nobody could call.
+    /// Empty for almost everything. A bounded definition **is** published — `beck iface` writes
+    /// `def total[T: Priced](xs: list[T]) -> Int`, bound and all — and the importer rebuilds the
+    /// dictionary parameters this module lowered it with from that bound
+    /// (`Checker::import_bounded`). It is the *bound* that crosses rather than the lowered
+    /// parameters, whose names no source could write.
     pub bounds: Vec<(Arc<str>, Vec<Arc<str>>)>,
     /// True when the signature **stated** its row — so an empty one is a bound of "performs
     /// nothing" rather than an absent declaration.
@@ -442,16 +444,38 @@ pub fn check_module_importing(
     // The language's own traits, before anything local is read. `Num` is what `+`, `-`, `*` and `/`
     // resolve through for a type that is neither `Int` nor `Float` nor `Str`, and it arrives by the
     // same door an imported trait does — so nothing downstream has a special case for it.
-    ck.import_traits(&prelude::traits(), &[]);
+    ck.import_trait_decls(&prelude::traits());
 
-    // Imported names arrive before anything local is collected, so a local definition may shadow
-    // one and the diagnostic points at the local.
+    // **Two passes over the whole import list, traits before everything that resolves one.**
+    //
+    // Not one pass per module. An `impl` and a bounded `def` both name a trait, and registering
+    // each module's traits alongside its impls made whether an imported `impl` survived depend on
+    // the order the `import` lines were written in: `import thing` before `import vocab` dropped
+    // `impl Labelled for Thing` silently, and the program failed one module later with `B0387`
+    // asking for an impl that `beck iface thing.beck` publishes. Nothing gives `import` an order —
+    // D23 fixes where a name resolves *from*, and a module's contract is derived from its body
+    // rather than from its position — so the resolution may not have one either.
+    //
+    // `exports()` clones every published type and rebuilds every scheme, so it is called **once**
+    // per import and its names carried to the second pass rather than derived again there.
+    let mut exported = Vec::with_capacity(imports.len());
     for (module_name, iface) in imports {
         let (types, names) = iface.exports();
         for (n, d) in types {
             ck.types.insert(n, d);
         }
-        ck.import_traits(&iface.traits, &iface.impls);
+        ck.import_trait_decls(&iface.traits);
+        exported.push((module_name, iface, names));
+    }
+
+    // Imported names arrive before anything local is collected, so a local definition may shadow
+    // one and the diagnostic points at the local. They are in this pass rather than the one above
+    // because `import_bounded` resolves a trait by name too, and a bounded import whose trait was
+    // declared in a later `import` would otherwise lose the dictionary parameters the exporting
+    // module lowered it with — the same defect one line down, and one that failed at run time
+    // rather than as a diagnostic.
+    for (module_name, iface, names) in exported {
+        ck.import_impls(module_name, &iface.impls);
         for (n, e) in names {
             // A bounded import is given back the dictionary parameters the exporting module lowered
             // it with, so a call site here supplies exactly what a call site there would.
@@ -468,7 +492,6 @@ pub fn check_module_importing(
                 kind: BindKind::Global(n),
             });
         }
-        let _ = module_name;
     }
 
     let items: Vec<&Node> = module.args.iter().skip(1).collect();

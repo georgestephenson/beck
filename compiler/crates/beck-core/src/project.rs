@@ -239,6 +239,13 @@ pub struct Project {
     pub solution: place::Solution,
     /// The root module's published contract.
     pub interface: Interface,
+    /// Modules reached through an `import` that have a `.becki` and **no** `.beck`.
+    ///
+    /// Checking against one is the whole of §3.6 and is not an error — the contract is enough to
+    /// compile against. It is never enough to *run*, because there are no bodies to link, so it is
+    /// recorded here rather than refused, and [`require_implementations`] is the question a caller
+    /// that means to execute the program asks.
+    pub unimplemented: Vec<String>,
 }
 
 /// Check and link a project, stopping before the slicer.
@@ -354,6 +361,7 @@ pub fn check_project(
     // Still not every module: both questions are pre-filtered by the same cheap text test, so a
     // build with no macros anywhere parses nothing twice.
     let mut macro_sources: BTreeMap<String, beck_syntax::Node> = BTreeMap::new();
+    let mut unimplemented: Vec<String> = Vec::new();
     let needed_by_a_macro = imports_of_modules_declaring_a_macro(&order, &sources);
     // What each module imports, filled in as the modules are checked. Dependency order is what
     // makes a lookup here answer: a module's imports are recorded before anything that imports it.
@@ -376,12 +384,19 @@ pub fn check_project(
         // module happens to compile to today. That is the difference between a contract and a
         // description, and it is the reason `beck iface` writes a file rather than a cache entry.
         if let Some(text) = &src.interface {
-            let published = Interface::parse(name, text, map, diags);
+            // Against `deps`, for the reason a module is: a published `impl` or bound names a
+            // trait that may live in another module, and a contract read with nothing to resolve
+            // it against reports `B0383` on a file `beck iface` wrote.
+            let published = Interface::parse_with(name, text, &deps, map, diags);
             interfaces.insert(name.clone(), published);
         }
 
         let Some(module_src) = &src.module else {
             // Interface only: it can be checked against, but there is no code to link.
+            //
+            // The **root** is refused here, because a project whose root is a contract is not a
+            // program at all and nothing downstream could make it one. A *dependency* is only a
+            // problem for running, so it is recorded and [`require_implementations`] asks.
             if name == root {
                 diags.push(
                     Diagnostic::error(
@@ -391,6 +406,8 @@ pub fn check_project(
                     )
                     .with_note("an interface is enough to compile against and never enough to run"),
                 );
+            } else {
+                unimplemented.push(name.clone());
             }
             continue;
         };
@@ -491,7 +508,37 @@ pub fn check_project(
         program: merged,
         solution,
         interface,
+        unimplemented,
     })
+}
+
+/// Refuse a project that cannot run because one of its modules has no implementation.
+///
+/// Separate from [`check_project`] because "this typechecks against the contracts it was given"
+/// and "this can be executed" are two questions, and §3.6's separate compilation is the first one
+/// being useful on its own: `beck check` and `beck iface` work against a `.becki` with no `.beck`
+/// beside it, and refusing that would delete the feature.
+///
+/// Executing is the other question. A module that contributed no bodies is simply absent from the
+/// link, so every call into it dangles and the failure arrives from the linker as `no such
+/// definition` — an absence, with nothing naming the module or saying why. `B0604` already says
+/// the right thing and was reachable only when such a module was the *root*.
+pub fn require_implementations(project: &Project, diags: &mut Diagnostics) -> bool {
+    for name in &project.unimplemented {
+        diags.push(
+            Diagnostic::error(
+                "B0604",
+                format!("`{name}` has an interface but no implementation"),
+                Span::NONE,
+            )
+            .with_note("an interface is enough to compile against and never enough to run")
+            .with_note(format!(
+                "`{name}.becki` was found and `{name}.beck` was not, so nothing this program calls \
+                 in it has a body to link"
+            )),
+        );
+    }
+    project.unimplemented.is_empty()
 }
 
 /// Slice a checked project into the roles the runtime drives.
@@ -555,6 +602,11 @@ pub fn compile_project(
     diags: &mut Diagnostics,
 ) -> Option<Placed> {
     let project = check_project(root, loader, lock, map, diags)?;
+    // This entry point builds something to run, so a module with no bodies is refused here rather
+    // than discovered by the linker as `no such definition`.
+    if !require_implementations(&project, diags) {
+        return None;
+    }
     slice(project, diags)
 }
 

@@ -115,6 +115,24 @@ because its name is one no source could write.
 library can publish `def largest[T: Ord_]` — which is the interesting half of a library. A bodyless
 `impl` is what a header is. The orphan rule had to learn to be about two modules rather than one.
 
+What this did not say, and was found later, is **where the trait is resolved from**. Registering
+each import's traits alongside its impls made both of the above depend on the order the `import`
+lines were written in: with the trait's module named second, an imported `impl` was dropped and the
+program failed one module later with `B0387`, and a bounded import lost the dictionary parameters
+the exporting module lowered it with and failed at *run time* with `expected 2 arguments, got 1`.
+A trait is resolved by name across every import, so the registration is two passes over the whole
+list rather than one pass per module (`beck-cli/tests/imports.rs`). What is left of the same
+`continue` is `B0388`, a **warning**: an impl for a trait the importer never names is dropped,
+because a name is visible where its module is imported directly, and saying so is different from
+refusing it. Reading one back is settled too, and it was the same shape a third time: `beck iface`
+wrote a `.becki` naming a trait declared in *another* module, and the reader checked that file as a
+module with **no imports**, so `Priced` resolved against nothing and `B0383` refused a file the
+tool had just written. Both halves moved — the contract now opens with the `import` lines it
+depends on, and the reader resolves them against the same interfaces the module itself was checked
+against. The import list is deliberately outside the digest: it is provenance for resolving the
+published names rather than one of them, and hashing it would report an API change to every
+consumer whenever a module gained an import its contract never mentions.
+
 ## 27.6 Generic arithmetic, and the directory empties
 
 `sicp/refusals/rational.beck` was the last file in it. It said the missing thing was a *type*, not
@@ -160,7 +178,7 @@ Five defects, none of them in the feature being built, all found because the fea
 | `sicp/` | Two chapters against **the book's own printed answers**, including four IEEE 754 equalities to the digit. `sicp/refusals/` is empty, and its README says what puts a file back |
 | `corpus/` | 32 programs with no placement annotations; every feature here had to survive them |
 | `patterns.rs`, `records.rs`, `errors.rs` | What a *program* sees when a feature is wrong, rather than what the checker prints |
-| `beck iface` round trips | Every published signature must read back — which is what caught the type-parameter cases that would otherwise have failed silently across a `.becki` |
+| `beck iface` round trips | Every published signature must read back — which is what caught the type-parameter cases that would otherwise have failed silently across a `.becki`. It held for a trait declared in the *same* module as its impl, which is what its fixture had; `beck-cli/tests/imports.rs` is where the two-module case is now, because that one did not read back at all |
 | `--wire-compat` | A breaking change to a published contract is named before a deploy, including the ones these features introduced |
 | `docs/reference/errors.md` | Two diagnostic codes were **retired** here, and a retired code is a code the index must stop describing |
 

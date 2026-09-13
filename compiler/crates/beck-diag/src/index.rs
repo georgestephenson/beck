@@ -822,6 +822,15 @@ pub const INDEX: &[CodeEntry] = &[
         "There is no `impl Trait for Type` in scope for the receiver's type.",
     ),
     e(
+        "B0388",
+        Stage::Types,
+        "an imported module implements a trait this program does not import",
+        "The impl is dropped, so its methods cannot be called here — a trait is a name, and a name \
+         is visible where its module is imported directly rather than through somebody else's \
+         import. A warning rather than a refusal, because a module may legitimately publish an \
+         impl for a trait the importer never names; import the trait's module to use it.",
+    ),
+    e(
         "B0389",
         Stage::Types,
         "a block has more statements than the checker will follow",
@@ -1229,7 +1238,11 @@ pub const INDEX: &[CodeEntry] = &[
         "B0604",
         Stage::Modules,
         "has an interface but no implementation",
-        "An interface is enough to compile against and never enough to run.",
+        "An interface is enough to compile against and never enough to run. `beck check` and \
+         `beck iface` work against a `.becki` with no `.beck` beside it — that is what §3.6's \
+         separate compilation is — so this is reported where a runnable program is produced, and \
+         for the root module wherever it is read, because a project whose root is a contract is \
+         not a program at all.",
     ),
     e(
         "B0605",
@@ -1295,6 +1308,15 @@ pub const INDEX: &[CodeEntry] = &[
         "an atom is performed by more than one definition, so a stub cannot answer from the call",
         "The performers are named. A stub is a value for an effect atom; where two definitions \
          perform the same atom with different result types, one value cannot serve both.",
+    ),
+    e(
+        "B0708",
+        Stage::Tests,
+        "a stub raises what the definition it stands in for cannot",
+        "A stub stands in for a definition, so it may answer the way that definition may answer — \
+         failure included, because a `raises(E)` the signature declares is an answer rather than \
+         an act. Callers were type-checked against the row the signature publishes, so a raise it \
+         does not declare would unwind through code that provably cannot fail.",
     ),
 ];
 

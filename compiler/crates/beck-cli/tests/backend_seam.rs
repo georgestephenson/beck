@@ -285,7 +285,11 @@ fn the_seam_carries_how_much_host_stack_a_backend_needs() {
 
 struct NeverIntercepts;
 impl beck_core::backend::Interceptor for NeverIntercepts {
-    fn intercept(&self, _: &str, _: &[Value]) -> Option<Value> {
+    fn intercept(
+        &self,
+        _: &str,
+        _: &[Value],
+    ) -> Option<Result<Value, beck_core::backend::ExecError>> {
         None
     }
 }

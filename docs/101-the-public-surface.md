@@ -270,11 +270,14 @@ log, not a production cost**:
   D17 put it — recorded at the boundaries, correlated by `beck.seq`, which is precisely the join
   key between the two: a boundary record names a `seq`, and `beck trace` expands that `seq` to any
   depth on demand.
-- The two runtime gaps worth closing are small and additive: a **push exporter** (an optional
+- **One runtime gap is left**, and it is small and additive: a **push exporter** (an optional
   `BECK_OTLP_ENDPOINT` that ships the same OTLP JSON to a collector on an interval — the doc
-  comment that claimed this exists has been corrected to say it does not), and **OpenMetrics
-  exposition** for Prometheus scrapers ([`12`](12-standards-and-conformance.md) §12.8's unticked
-  row). Both export what is already recorded; neither adds a measurement to the fold's path.
+  comment that claimed this exists has been corrected to say it does not). It exports what is
+  already recorded and adds no measurement to the fold's path.
+  **OpenMetrics exposition is built** — `/_beck/openmetrics`, off the same table as the OTLP export
+  ([`12`](12-standards-and-conformance.md) §12.8, whose row now says what is and is not held). It
+  cost nothing on the serving path for the same reason: the numbers were already recorded, and a
+  second export is a second spelling.
 - Cross-tier boundary spans on by default remain Phase 4's item ([`08`](08-roadmap.md)),
   unchanged.
 

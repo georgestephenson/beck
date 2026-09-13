@@ -24,7 +24,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use beck_core::backend::{Backend, Callable, Interceptor};
+use beck_core::backend::{Backend, Callable, ExecError, Interceptor};
 use beck_core::core::{Core, CoreKind, VarId};
 use beck_core::testing::{Clause, Count, Expectation, TestDef};
 use beck_core::{digest, Effect, Placed, Tier, Ty, Value};
@@ -124,8 +124,12 @@ pub struct Stubbed {
     pub atom: String,
     /// What it answered. `None` for a stub that answers from the call (§21.3 rule 3) and was never
     /// called — there is no single value to name, and inventing one for the report would be the
-    /// same mistake the stub itself exists to avoid.
+    /// same mistake the stub itself exists to avoid. `None` too for a stub that *failed*, which
+    /// [`Stubbed::raised`] names instead.
     pub returned: Option<Value>,
+    /// What it raised, for a stub that answers by failing. §21.3 rule 1's obligation is to say
+    /// what the default did, and "returned nothing" is not what a raise did.
+    pub raised: Option<String>,
     pub calls: usize,
     /// True when the test named it, false when §21.3 rule 1 supplied it.
     pub explicit: bool,
@@ -146,6 +150,12 @@ pub struct Stubbed {
 /// stubbing a stub would be a loop.
 enum Answer {
     Value(Value),
+    /// `stub net.out(pay.example.com): raise Declined(...)` — the peer is down, and the branch a
+    /// program writes for that is the branch this makes reachable (`docs/22` §22.6). It is
+    /// evaluated once, like any other value, and the failure it produced is replayed at every
+    /// interception: a stub is a *value* for an effect and a failure is one of the values a
+    /// definition that declares `raises(E)` can answer with.
+    Fails(ExecError),
     FromTheCall(Callable),
 }
 
@@ -166,7 +176,9 @@ struct Entry {
 struct Call {
     def: Arc<str>,
     args: Vec<Value>,
-    returned: Value,
+    /// `None` when this call answered by failing — see [`Call::raised`].
+    returned: Option<Value>,
+    raised: Option<String>,
 }
 
 #[derive(Default)]
@@ -179,7 +191,7 @@ struct Recorder {
 }
 
 impl Interceptor for Recorder {
-    fn intercept(&self, name: &str, args: &[Value]) -> Option<Value> {
+    fn intercept(&self, name: &str, args: &[Value]) -> Option<Result<Value, ExecError>> {
         let e = self.entries.get(name)?;
         if let Some(why) = &e.refused {
             let atom = e.atom.name();
@@ -188,25 +200,34 @@ impl Interceptor for Recorder {
                  write the stub out: `stub {atom}: <value>`"
             ));
         }
-        let returned = match &e.answer {
-            Answer::Value(v) => v.clone(),
+        // A `raise` is an answer and anything else is a fault. The difference is the value the
+        // failure carries: the checker has already held a stub's raise to what the definition it
+        // stands in for declares (`B0708`), so one that arrives here is a failure the program was
+        // compiled against and unwinds like the real body's; one that arrives without a raised
+        // value is the stub itself going wrong, and belongs in the report rather than in the
+        // program.
+        let answered: Result<Value, ExecError> = match &e.answer {
+            Answer::Value(v) => Ok(v.clone()),
+            Answer::Fails(err) => Err(err.clone()),
             Answer::FromTheCall(f) => match f(args.to_vec()) {
-                Ok(v) => v,
+                Ok(v) => Ok(v),
+                Err(err) if err.raised.is_some() => Err(err),
                 Err(err) => {
                     self.problems
                         .lock()
                         .expect("stub log")
                         .push(format!("the stub for `{}` failed: {err}", e.atom.name()));
-                    Value::Unit
+                    Ok(Value::Unit)
                 }
             },
         };
         self.calls.lock().expect("stub log").push(Call {
             def: Arc::from(name),
             args: args.to_vec(),
-            returned: returned.clone(),
+            returned: answered.as_ref().ok().cloned(),
+            raised: answered.as_ref().err().map(|e| e.message.clone()),
         });
-        Some(returned)
+        Some(answered)
     }
 }
 
@@ -242,9 +263,15 @@ impl Recorder {
                     atom: e.atom.name(),
                     returned: match &e.answer {
                         Answer::Value(v) => Some(v.clone()),
+                        Answer::Fails(_) => None,
                         // The last answer it gave, which is the only honest single value a stub
                         // that varies with the call has.
-                        Answer::FromTheCall(_) => mine.last().map(|c| c.returned.clone()),
+                        Answer::FromTheCall(_) => mine.last().and_then(|c| c.returned.clone()),
+                    },
+                    raised: match &e.answer {
+                        Answer::Fails(err) => Some(err.message.clone()),
+                        Answer::Value(_) => None,
+                        Answer::FromTheCall(_) => mine.last().and_then(|c| c.raised.clone()),
                     },
                     calls: mine.len(),
                     explicit: e.explicit,
@@ -483,11 +510,15 @@ fn build_stubs(
         } = c
         {
             let answer = if params.is_empty() {
-                Answer::Value(
-                    backend
-                        .constant(value)
-                        .map_err(|e| format!("evaluating the stub for `{}`: {e}", atom.name()))?,
-                )
+                match backend.constant(value) {
+                    Ok(v) => Answer::Value(v),
+                    // A stub whose body is `raise …` produced its answer by failing, and that is
+                    // the answer. Anything else went wrong while evaluating it.
+                    Err(e) if e.raised.is_some() => Answer::Fails(e),
+                    Err(e) => {
+                        return Err(format!("evaluating the stub for `{}`: {e}", atom.name()))
+                    }
+                }
             } else {
                 let lam = Core {
                     kind: CoreKind::Lam {
@@ -534,6 +565,7 @@ fn build_stubs(
         let Some(atom) = atom.cloned() else { continue };
         let (answer, refused, is_explicit) = match explicit.get(&atom) {
             Some(Answer::Value(v)) => (Answer::Value(v.clone()), None, true),
+            Some(Answer::Fails(e)) => (Answer::Fails(e.clone()), None, true),
             Some(Answer::FromTheCall(f)) => (Answer::FromTheCall(f.clone()), None, true),
             None => match beck_core::gen::canonical(&def.ret, &program.types) {
                 Ok(v) => (Answer::Value(v), None, false),
@@ -1131,9 +1163,10 @@ pub fn render(report: &Report, verbose: bool) -> String {
                     (true, false) => "named",
                     (false, _) => "automatically",
                 };
-                let answered = match &s.returned {
-                    Some(v) => v.display(),
-                    None => "—".into(),
+                let answered = match (&s.returned, &s.raised) {
+                    (Some(v), _) => v.display(),
+                    (None, Some(why)) => why.clone(),
+                    (None, None) => "—".into(),
                 };
                 out.push_str(&format!(
                     "    {:<24} by `{}`  → {answered}   called {}× ({how})\n",
