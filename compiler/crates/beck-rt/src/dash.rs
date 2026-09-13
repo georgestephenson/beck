@@ -111,6 +111,16 @@ impl Dashboard {
                 "application/json",
                 telemetry().otlp_logs(&self.app_name, 200).to_string(),
             )),
+            // The same numbers again, for a scraper rather than a collector (`docs/12` §12.8).
+            //
+            // Named for the format, as `otlp/` above is, and under `_beck/` rather than at the
+            // conventional `/metrics`: that path belongs to the program's own URL space, and a
+            // runtime that took it would be a runtime that decided a route for you. A scraper's
+            // `metrics_path` is one line of its configuration.
+            "/_beck/openmetrics" => Some((
+                "application/openmetrics-text; version=1.0.0; charset=utf-8",
+                telemetry().openmetrics(&self.app_name),
+            )),
             _ => None,
         }
     }

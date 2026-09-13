@@ -161,10 +161,11 @@ read it.**
   `ecosystem-oracles` job, [`21`](21-tests-in-beck-and-proof.md) §21.4 rung 6); the Phase 4 form
   of the same idea is `beck init ci` emitting the scanner step into a *user's* workflow, with the
   suppression list the emitter already knows it deserves.
-- OpenTelemetry cross-tier tracing on by default; `beck tune` right-sizing. The two export gaps
-  from [`101`](101-the-public-surface.md) §101.8: a push exporter (`BECK_OTLP_ENDPOINT`, currently a
-  corrected-away claim) and OpenMetrics exposition — both export what is already recorded, neither
-  adds a measurement to the fold's path.
+- OpenTelemetry cross-tier tracing on by default; `beck tune` right-sizing. **One export gap** is
+  left of the two [`101`](101-the-public-surface.md) §101.8 named: a push exporter
+  (`BECK_OTLP_ENDPOINT`, currently a corrected-away claim). OpenMetrics exposition is built —
+  `/_beck/openmetrics` — and cost nothing on the fold's path, which is what §101.8 predicted of
+  both: they export what is already recorded.
 - **The public surface** ([`101`](101-the-public-surface.md), D28), in §101.10's order: first the
   `@public` boundary itself — what is exposed, versioning and auth semantics, the diagnostics for
   what may not cross — **with §101.7's two prerequisites landed before any form ships**: F15's
@@ -694,10 +695,14 @@ rows.
 - **The presence roster's second clock** (S, and it has a successor, which is why it is here rather
   than in a report's tail): [`48`](48-identity-report.md) §48.13's first row — a `(seq, roster)` pair
   or a render epoch — is what would let the shared dataflow hold the roster once instead of per
-  subscriber, and §48.13 says "one file would change". It was in no phase. Its successor is
-  [`99`](99-the-data-tier-means-of-combination.md) decision 3: presence moves when `seq` does not, so
-  a join against presence is the one case the algebra above must refuse, and it should refuse it with
-  a diagnostic rather than a surprise until this exists. **`awareness(f)` now sits on the same
+  subscriber, and §48.13 says "one file would change". It was in no phase. **It has no successor, and this line used to claim one**:
+  [`99`](99-the-data-tier-means-of-combination.md) decision 3 expected a join against presence to
+  need refusing until the clock existed, and building it showed otherwise — the second clock is a
+  problem for **sharing**, not for **joining**, because everything downstream of `Op::Awareness` is
+  already per-subscriber and inside one subscriber's engine the index and the left side advance in
+  the same tick. `corpus/33-awareness.beck` joins against a roster today and
+  `incremental.rs::a_loop_that_looks_up_twice_becomes_two_joins_and_captures_nothing` is the gate.
+  So what is owed here is the sharing and nothing else. **`awareness(f)` now sits on the same
   clock and doubles what this row is worth**: a second roster, per subscriber for the same reason,
   moving more often than the first because it follows navigations rather than connections.
 - **Awareness over a client-local value** (M): `awareness(f)` is built for `f : Session -> T`
@@ -718,9 +723,12 @@ rows.
   than an order**, which is how it stayed unpositioned for as long as it did.
 - **Chapters 4 and 5 of SICP** (S): no predecessors, and they never acquire any.
 - **Trusted publishing** (R, above): an account setting rather than a branch.
-- **Grammar-aware fuzzing and Kani proofs of the solver's invariants** (S, due rather than
-  pending): [`42`](42-security-assurance.md) §42.9 pinned the first with the trigger "the bound
-  lands", and the bound has landed. The second still wants a solver that has stopped moving.
+- **Kani proofs of the solver's invariants** (S): it still wants a solver that has stopped moving.
+  **Grammar-aware fuzzing, which this item was paired with, is built** —
+  `beck-cli/tests/grammar_fuzz.rs`, three gates green, generating *structure* rather than mutating
+  bytes because [`42`](42-security-assurance.md) §42.1 measured that byte mutation is blind to the
+  one crash class the front end has. §42.9's trigger was "the bound lands"; it landed, and this
+  line went on saying the work was due after it was done.
 - **The standards ledger** (S — small artefacts, each a day rather than a phase, from
   [`12`](12-standards-and-conformance.md)'s audit; each closes a chartered row, and the row names
   it back). Free now: a JSONTestSuite-class vector run for the JSON library; an Autobahn-class
@@ -728,10 +736,13 @@ rows.
   vulnerability matrix**, whose CWE half is **done** ([`43`](43-threat-model.md) §43.8, gated by
   `docs.rs::every_test_the_vulnerability_matrix_names_exists`) and whose ISO/IEC 24772-1 half is
   **blocked on the standard's text** rather than on time — paywalled, not in this tree, and recorded
-  as blocked in the matrix itself ([`35`](35-standards-landscape.md) §35.2); a
-  Prometheus exposition endpoint beside the JSON dashboard; a Scorecard workflow and REUSE
+  as blocked in the matrix itself ([`35`](35-standards-landscape.md) §35.2); a Scorecard workflow and REUSE
   per-file metadata; a semantic-conventions check over the attributes
-  telemetry actually emits. **A TLS-1.2-only peer is refused** — and that row turned out to be
+  telemetry actually emits. **The Prometheus exposition endpoint is done** —
+  `/_beck/openmetrics`, off the same table as the OTLP export, held to the specification's own
+  MUSTs and to the Canonical Numbers rule against the values it publishes
+  ([`12`](12-standards-and-conformance.md) §12.8 says what is *not* held, which is a foreign
+  reader). **A TLS-1.2-only peer is refused** — and that row turned out to be
   missing its implementation rather than its gate, since rustls's safe defaults are 1.2 and 1.3
   ([`12`](12-standards-and-conformance.md)). **The CLI exit-status table is done** — generated into
   [`docs/reference/cli.md`](reference/cli.md) from the compiler's own constant and gated against
